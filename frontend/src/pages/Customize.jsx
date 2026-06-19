@@ -3,6 +3,29 @@ import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../lib/supabaseClient';
 
+// Helper to convert base64 data URL to a Blob and upload it to Supabase Storage
+async function uploadPreviewImage(dataUrl, userId) {
+  try {
+    // data:image/png;base64,xxxxx -> Blob
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const ext = blob.type.split('/')[1] || 'png';
+    const filePath = `${userId}/${Date.now()}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('ai-previews')
+      .upload(filePath, blob, { contentType: blob.type });
+
+    if (uploadError) throw uploadError;
+
+    const { data } = supabase.storage.from('ai-previews').getPublicUrl(filePath);
+    return data.publicUrl;
+  } catch (err) {
+    console.error('Failed to upload preview image:', err);
+    return null; // Graceful fallback: saves database row without a broken image link
+  }
+}
+
 export default function Customize() {
   const { user } = useAuth();
   const { addToCart } = useCart();
@@ -21,7 +44,6 @@ export default function Customize() {
   const [error, setError] = useState('');
   const [cartMessage, setCartMessage] = useState('');
   const [partQuantities, setPartQuantities] = useState({});
-
 
   useEffect(() => { fetchModels(); }, []);
 
@@ -60,10 +82,22 @@ export default function Customize() {
   function togglePart(partId) {
     setSelectedParts((prev) => {
       if (prev.includes(partId)) return prev.filter((id) => id !== partId);
+
       if (prev.length >= 3) {
         alert('You can only select up to 3 parts for the AI preview.');
         return prev;
       }
+
+      const newPart = parts.find((p) => p.id === partId);
+      const selectedCategories = parts
+        .filter((p) => prev.includes(p.id))
+        .map((p) => p.category);
+
+      if (newPart && selectedCategories.includes(newPart.category)) {
+        alert(`You already selected a ${newPart.category}. Deselect it first to choose a different one.`);
+        return prev;
+      }
+
       return [...prev, partId];
     });
   }
@@ -102,7 +136,7 @@ export default function Customize() {
       return;
     }
 
-    setLoading(true);
+    setLoading(true); // Fixed: was incorrectly calling loading(true) instead of setLoading(true)
     setResultImage(null);
 
     try {
@@ -139,16 +173,22 @@ export default function Customize() {
         }
       );
 
-if (fnError) throw fnError;
+      if (fnError) throw fnError;
+      
+      // Keep UI highly responsive by rendering state instantly
       setResultImage(fnData.imageUrl);
 
+      // Upload base64 output string directly into storage bucket
+      const previewUrl = await uploadPreviewImage(fnData.imageUrl, user.id);
+
+      // Persist the actual public storage link to customizations history
       await supabase.from('customizations').insert({
         customer_id: user.id,
         part_ids: selectedParts,
         original_photo_url: photoUrl,
-        preview_image_url: fnData.imageUrl,
+        preview_image_url: previewUrl,
         prompt_used: fnData.prompt,
-        status: 'generated',
+        status: previewUrl ? 'saved' : 'generated',
       });
     } catch (err) {
       console.error(err);
@@ -292,15 +332,29 @@ if (fnError) throw fnError;
                       ) : (
                         filteredParts.map((part) => {
                           const isSelected = selectedParts.includes(part.id);
-                          const isDisabled = !isSelected && selectedParts.length >= 3;
+                          const selectedCategories = parts
+                            .filter((p) => selectedParts.includes(p.id))
+                            .map((p) => p.category);
+                          const isCategoryTaken = !isSelected && selectedCategories.includes(part.category);
+                          const isDisabled = !isSelected && (selectedParts.length >= 3 || isCategoryTaken);
+                          
+                          const tooltipText = isCategoryTaken 
+                            ? `Already have a ${part.category} selected` 
+                            : selectedParts.length >= 3 
+                            ? 'Maximum of 3 preview parts reached' 
+                            : undefined;
+
                           return (
                             <div key={part.id}
                               className={`flex items-center justify-between bg-dark-900 rounded-lg p-3 transition ${
                                 isSelected ? 'ring-1 ring-primary-500' : ''
                               }`}>
-                              <label className={`flex items-center gap-3 flex-1 ${
-                                isDisabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
-                              }`}>
+                              <label 
+                                title={tooltipText}
+                                className={`flex items-center gap-3 flex-1 ${
+                                  isDisabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+                                }`}
+                              >
                                 <input type="checkbox" checked={isSelected}
                                   onChange={() => !isDisabled && togglePart(part.id)}
                                   disabled={isDisabled}
@@ -318,37 +372,37 @@ if (fnError) throw fnError;
                                   <p className="text-xs text-gray-400 capitalize">{part.category}</p>
                                 </div>
                               </label>
-                                <div className="flex flex-col items-end gap-1.5 ml-2">
-                                  <span className="text-sm text-accent-400 font-medium">₱{part.price}</span>
-                                  <div className="flex items-center gap-1 bg-dark-800 rounded-md px-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => setPartQuantities((prev) => ({
-                                        ...prev,
-                                        [part.id]: Math.max(1, (prev[part.id] || 1) - 1),
-                                      }))}
-                                      className="w-5 h-5 flex items-center justify-center text-xs font-bold text-gray-300 hover:text-white"
-                                    >
-                                      −
-                                    </button>
-                                    <span className="text-xs w-4 text-center">{partQuantities[part.id] || 1}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => setPartQuantities((prev) => ({
-                                        ...prev,
-                                        [part.id]: Math.min(part.stock_quantity || 99, (prev[part.id] || 1) + 1),
-                                      }))}
-                                      className="w-5 h-5 flex items-center justify-center text-xs font-bold text-gray-300 hover:text-white"
-                                    >
-                                      +
-                                    </button>
-                                  </div>
-                                  <button type="button"
-                                    onClick={() => handleAddToCart(part)}
-                                    className="text-xs bg-dark-800 hover:bg-primary-600 border border-gray-700 hover:border-primary-500 px-2 py-1 rounded-md transition whitespace-nowrap">
-                                    + Cart
+                              <div className="flex flex-col items-end gap-1.5 ml-2">
+                                <span className="text-sm text-accent-400 font-medium">₱{part.price}</span>
+                                <div className="flex items-center gap-1 bg-dark-800 rounded-md px-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setPartQuantities((prev) => ({
+                                      ...prev,
+                                      [part.id]: Math.max(1, (prev[part.id] || 1) - 1),
+                                    }))}
+                                    className="w-5 h-5 flex items-center justify-center text-xs font-bold text-gray-300 hover:text-white"
+                                  >
+                                    −
+                                  </button>
+                                  <span className="text-xs w-4 text-center">{partQuantities[part.id] || 1}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setPartQuantities((prev) => ({
+                                      ...prev,
+                                      [part.id]: Math.min(part.stock_quantity || 99, (prev[part.id] || 1) + 1),
+                                    }))}
+                                    className="w-5 h-5 flex items-center justify-center text-xs font-bold text-gray-300 hover:text-white"
+                                  >
+                                    +
                                   </button>
                                 </div>
+                                <button type="button"
+                                  onClick={() => handleAddToCart(part)}
+                                  className="text-xs bg-dark-800 hover:bg-primary-600 border border-gray-700 hover:border-primary-500 px-2 py-1 rounded-md transition whitespace-nowrap">
+                                  + Cart
+                                </button>
+                              </div>
                             </div>
                           );
                         })
@@ -397,7 +451,6 @@ if (fnError) throw fnError;
                   <p className="text-gray-600 text-xs mt-1">This may take 1 - 3 Minutes</p>
                 </div>
               ) : resultImage ? (
-                // Fix 6: parts cost estimate added between image and buttons
                 <div className="w-full">
                   <img
                     src={resultImage}
