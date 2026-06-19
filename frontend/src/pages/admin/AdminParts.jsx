@@ -7,6 +7,12 @@ const EMPTY_FORM = {
   reorder_threshold: '5', compatible_models: '', image_url: '',
 };
 
+const STOCK_BADGE_STYLES = {
+  ok: 'bg-green-500/20 text-green-400',
+  low: 'bg-yellow-500/20 text-yellow-400',
+  out: 'bg-red-500/20 text-red-400',
+};
+
 export default function AdminParts() {
   const { user } = useAuth();
   const [parts, setParts] = useState([]);
@@ -244,6 +250,21 @@ export default function AdminParts() {
           />
         </div>
 
+        {/* Filter pills (category) — mirrors AdminOrders status tabs */}
+        <div className="flex gap-2 mb-4 flex-wrap">
+          {categories.map((c) => (
+            <button
+              key={c}
+              onClick={() => setCategoryFilter(c)}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium capitalize transition ${
+                categoryFilter === c ? 'bg-primary-600 text-white' : 'bg-dark-800 text-gray-400 hover:text-white'
+              }`}
+            >
+              {c === 'all' ? 'All Categories' : c}
+            </button>
+          ))}
+        </div>
+
         {/* Toolbar */}
         <div className="bg-dark-800 rounded-xl p-4 mb-6 flex flex-col md:flex-row gap-3">
           <input
@@ -253,15 +274,6 @@ export default function AdminParts() {
             onChange={(e) => setSearch(e.target.value)}
             className="flex-1 px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500"
           />
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 capitalize"
-          >
-            {categories.map((c) => (
-              <option key={c} value={c} className="capitalize">{c === 'all' ? 'All Categories' : c}</option>
-            ))}
-          </select>
           <select
             value={stockFilter}
             onChange={(e) => setStockFilter(e.target.value)}
@@ -292,7 +304,7 @@ export default function AdminParts() {
         {loading ? (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[1, 2, 3, 4, 5, 6].map((i) => (
-              <div key={i} className="bg-dark-800 rounded-xl h-48 animate-pulse" />
+              <div key={i} className="bg-dark-800 rounded-xl h-56 animate-pulse" />
             ))}
           </div>
         ) : filteredParts.length === 0 ? (
@@ -319,6 +331,7 @@ export default function AdminParts() {
             {filteredParts.map((p) => {
               const isOut = p.stock_quantity <= 0;
               const isLow = !isOut && p.stock_quantity <= p.reorder_threshold;
+              const stockState = isOut ? 'out' : isLow ? 'low' : 'ok';
               const stockPct = p.reorder_threshold > 0
                 ? Math.min(100, (p.stock_quantity / (p.reorder_threshold * 3)) * 100)
                 : p.stock_quantity > 0 ? 100 : 0;
@@ -327,100 +340,105 @@ export default function AdminParts() {
               return (
                 <div
                   key={p.id}
-                  className={`bg-dark-800 rounded-xl overflow-hidden flex flex-col border transition ${
-                    isOut ? 'border-red-500/30' : isLow ? 'border-yellow-500/20' : 'border-transparent hover:border-primary-500/30'
-                  }`}
+                  className="bg-dark-800 rounded-xl p-5 flex flex-col gap-4 hover:bg-dark-800/70 transition"
                 >
-                  {/* Image + category badge */}
-                  <div className="relative h-32 bg-dark-900 flex items-center justify-center overflow-hidden">
-                    {p.image_url ? (
-                      <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="text-3xl opacity-50">⚙️</div>
-                    )}
-                    {p.category && (
-                      <span className="absolute top-2 left-2 text-xs bg-black/60 backdrop-blur text-gray-200 px-2 py-0.5 rounded-full capitalize">
-                        {p.category}
-                      </span>
-                    )}
-                    {(isOut || isLow) && (
-                      <span className={`absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full font-medium ${
-                        isOut ? 'bg-red-500/90 text-white' : 'bg-yellow-400/90 text-dark-900'
-                      }`}>
-                        {isOut ? 'Out of stock' : 'Low stock'}
-                      </span>
-                    )}
+                  {/* Top row — image + name/price + stock badge, echoes AdminOrders' top row */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-12 h-12 rounded-lg bg-dark-900 flex items-center justify-center overflow-hidden flex-shrink-0">
+                        {p.image_url ? (
+                          <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-xl opacity-50">⚙️</span>
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-sm truncate" title={p.name}>{p.name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {p.category ? <span className="capitalize">{p.category}</span> : 'Uncategorized'}
+                        </p>
+                      </div>
+                    </div>
+                    <span className={`text-xs px-3 py-1 rounded-full capitalize font-medium whitespace-nowrap ${STOCK_BADGE_STYLES[stockState]}`}>
+                      {stockState === 'ok' ? 'In Stock' : stockState === 'low' ? 'Low Stock' : 'Out of Stock'}
+                    </span>
                   </div>
 
-                  {/* Body */}
-                  <div className="p-4 flex flex-col flex-1 gap-3">
-                    <div>
-                      <p className="font-semibold text-sm truncate" title={p.name}>{p.name}</p>
-                      <p className="text-accent-400 font-bold mt-0.5">₱{Number(p.price).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                      {p.compatible_models?.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {p.compatible_models.slice(0, 2).map((m, i) => (
-                            <span key={i} className="text-xs bg-primary-500/10 text-primary-400 px-2 py-0.5 rounded-full">
-                              {m}
-                            </span>
-                          ))}
-                          {p.compatible_models.length > 2 && (
-                            <span className="text-xs text-gray-500">+{p.compatible_models.length - 2} more</span>
-                          )}
-                        </div>
+                  {/* Compatible models */}
+                  {p.compatible_models?.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {p.compatible_models.slice(0, 3).map((m, i) => (
+                        <span key={i} className="text-xs bg-primary-500/10 text-primary-400 px-2 py-0.5 rounded-full">
+                          {m}
+                        </span>
+                      ))}
+                      {p.compatible_models.length > 3 && (
+                        <span className="text-xs text-gray-500 self-center">+{p.compatible_models.length - 3} more</span>
                       )}
                     </div>
+                  )}
 
-                    {/* Stock control */}
-                    <div className="bg-dark-900 rounded-lg p-3 mt-auto">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-xs text-gray-400">Stock</span>
-                        <span className="text-xs text-gray-500">Reorder at {p.reorder_threshold}</span>
-                      </div>
-                      <div className="w-full bg-dark-700 rounded-full h-1.5 mb-2.5">
-                        <div className={`h-1.5 rounded-full transition-all ${barColor}`} style={{ width: `${stockPct}%` }} />
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => adjustStock(p, -1)}
-                          disabled={p.stock_quantity <= 0}
-                          className="w-7 h-7 rounded-md bg-dark-800 border border-gray-700 hover:border-primary-500 disabled:opacity-40 flex items-center justify-center text-sm transition"
-                        >
-                          −
-                        </button>
-                        <input
-                          type="number"
-                          value={stockEdits[p.id] ?? p.stock_quantity}
-                          onChange={(e) => setStockEdits((prev) => ({ ...prev, [p.id]: e.target.value }))}
-                          onBlur={() => commitStockInput(p)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') { e.target.blur(); } }}
-                          className="w-full px-2 py-1 rounded bg-dark-800 border border-gray-700 text-sm text-center focus:outline-none focus:border-primary-500"
-                        />
-                        <button
-                          onClick={() => adjustStock(p, 1)}
-                          className="w-7 h-7 rounded-md bg-dark-800 border border-gray-700 hover:border-primary-500 flex items-center justify-center text-sm transition"
-                        >
-                          +
-                        </button>
-                      </div>
+                  {/* Cost / stock summary grid — mirrors AdminOrders' cost summary grid */}
+                  <div className="bg-dark-900 rounded-lg p-3 grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs text-gray-500 mb-0.5">Price</p>
+                      <p className="font-medium text-accent-400">₱{Number(p.price).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                     </div>
+                    <div>
+                      <p className="text-xs text-gray-500 mb-0.5">Reorder At</p>
+                      <p className="font-medium">{p.reorder_threshold}</p>
+                    </div>
+                  </div>
 
-                    {/* Actions */}
-                    <div className="flex gap-2">
+                  {/* Stock control */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-xs text-gray-500">Stock Quantity</p>
+                      <p className="text-xs text-gray-500">{p.stock_quantity} on hand</p>
+                    </div>
+                    <div className="w-full bg-dark-700 rounded-full h-1.5 mb-2.5">
+                      <div className={`h-1.5 rounded-full transition-all ${barColor}`} style={{ width: `${stockPct}%` }} />
+                    </div>
+                    <div className="flex items-center gap-1.5">
                       <button
-                        onClick={() => openEditPanel(p)}
-                        className="flex-1 text-xs bg-dark-900 hover:bg-dark-900/70 border border-gray-700 hover:border-primary-500/50 rounded-md py-1.5 transition"
+                        onClick={() => adjustStock(p, -1)}
+                        disabled={p.stock_quantity <= 0}
+                        className="w-8 h-8 rounded-md bg-dark-900 border border-gray-700 hover:border-primary-500 disabled:opacity-40 flex items-center justify-center text-sm transition"
                       >
-                        ✎ Edit
+                        −
                       </button>
+                      <input
+                        type="number"
+                        value={stockEdits[p.id] ?? p.stock_quantity}
+                        onChange={(e) => setStockEdits((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                        onBlur={() => commitStockInput(p)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.target.blur(); } }}
+                        className="w-full px-2 py-1.5 rounded-md bg-dark-900 border border-gray-700 text-sm text-center focus:outline-none focus:border-primary-500"
+                      />
                       <button
-                        onClick={() => deletePart(p)}
-                        disabled={deletingId === p.id}
-                        className="flex-1 text-xs text-red-400 hover:text-red-300 border border-red-500/30 hover:bg-red-500/10 rounded-md py-1.5 transition disabled:opacity-50"
+                        onClick={() => adjustStock(p, 1)}
+                        className="w-8 h-8 rounded-md bg-dark-900 border border-gray-700 hover:border-primary-500 flex items-center justify-center text-sm transition"
                       >
-                        {deletingId === p.id ? 'Deleting...' : '🗑 Delete'}
+                        +
                       </button>
                     </div>
+                  </div>
+
+                  {/* Actions — styled like AdminOrders' status action buttons */}
+                  <div className="flex gap-2 flex-wrap pt-1 border-t border-gray-800">
+                    <button
+                      onClick={() => openEditPanel(p)}
+                      className="text-xs px-3 py-1.5 rounded-md transition capitalize bg-primary-500/20 text-primary-400 hover:bg-primary-500/30 mt-3"
+                    >
+                      ✎ Edit
+                    </button>
+                    <button
+                      onClick={() => deletePart(p)}
+                      disabled={deletingId === p.id}
+                      className="text-xs px-3 py-1.5 rounded-md transition capitalize bg-red-500/20 text-red-400 hover:bg-red-500/30 disabled:opacity-50 mt-3"
+                    >
+                      {deletingId === p.id ? 'Deleting...' : '🗑 Delete'}
+                    </button>
                   </div>
                 </div>
               );

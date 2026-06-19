@@ -15,7 +15,7 @@ export default function AdminServices() {
   });
   const [savingService, setSavingService] = useState(false);
   const [serviceMessage, setServiceMessage] = useState('');
-  
+
   // Service Editing State
   const [editingServiceId, setEditingServiceId] = useState(null);
   const [editServiceForm, setEditServiceForm] = useState({
@@ -265,7 +265,6 @@ export default function AdminServices() {
     setSavingEdit(false);
   }
 
-  // Missing function context from original file
   async function deleteModel(id) {
     if (!confirm('Delete this motorcycle model?')) return;
     await supabase.from('motorcycle_models').delete().eq('id', id);
@@ -282,41 +281,37 @@ export default function AdminServices() {
   return (
     <div className="min-h-[calc(100vh-65px)] bg-dark-900 text-white px-6 py-10">
       <div className="max-w-5xl mx-auto">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold mb-2">Catalog Management</h1>
+
+        {/* Header — matches AdminOrders header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold mb-1">Catalog Management</h1>
           <p className="text-gray-400">Manage services and motorcycle models offered by your shop.</p>
         </div>
 
-        {/* Tabs */}
-        <div className="flex gap-2 mb-8 border-b border-gray-800">
+        {/* Tabs — pill style, matching AdminOrders filter row */}
+        <div className="flex gap-2 mb-6 flex-wrap">
           <button
             onClick={() => setActiveTab('services')}
-            className={`px-5 py-3 text-sm font-medium transition relative ${
-              activeTab === 'services' ? 'text-primary-400' : 'text-gray-500 hover:text-gray-300'
+            className={`px-4 py-1.5 rounded-full text-sm font-medium transition ${
+              activeTab === 'services' ? 'bg-primary-600 text-white' : 'bg-dark-800 text-gray-400 hover:text-white'
             }`}
           >
-            🛠️ Services
-            {activeTab === 'services' && (
-              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-500 rounded-full" />
-            )}
+            🛠️ Services <span className="opacity-60">({services.length})</span>
           </button>
           <button
             onClick={() => setActiveTab('motorcycles')}
-            className={`px-5 py-3 text-sm font-medium transition relative ${
-              activeTab === 'motorcycles' ? 'text-primary-400' : 'text-gray-500 hover:text-gray-300'
+            className={`px-4 py-1.5 rounded-full text-sm font-medium transition ${
+              activeTab === 'motorcycles' ? 'bg-primary-600 text-white' : 'bg-dark-800 text-gray-400 hover:text-white'
             }`}
           >
-            🏍️ Motorcycle Models
-            {activeTab === 'motorcycles' && (
-              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-500 rounded-full" />
-            )}
+            🏍️ Motorcycle Models <span className="opacity-60">({models.length})</span>
           </button>
         </div>
 
         {/* ───────────── SERVICES TAB ───────────── */}
         {activeTab === 'services' && (
           <>
-            <div className="bg-dark-800 rounded-2xl p-6 mb-8 border border-gray-800">
+            <div className="bg-dark-800 rounded-xl p-5 mb-6">
               <h2 className="text-lg font-semibold mb-1">Add New Service</h2>
               <p className="text-sm text-gray-500 mb-5">Define a service customers can book, with pricing and duration.</p>
 
@@ -365,129 +360,139 @@ export default function AdminServices() {
               </form>
             </div>
 
-            <div className="bg-dark-800 rounded-2xl p-6 border border-gray-800">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold">All Services</h2>
-                <span className="text-xs bg-dark-900 text-gray-400 px-2.5 py-1 rounded-full">{services.length} total</span>
+            {loadingServices ? (
+              <SkeletonStack />
+            ) : services.length === 0 ? (
+              <div className="bg-dark-800 rounded-xl p-10 text-center">
+                <p className="text-4xl mb-3">🛠️</p>
+                <p className="text-gray-400">No services yet. Add your first one above.</p>
               </div>
+            ) : (
+              <div className="space-y-4">
+                {services.map((s) => {
+                  const isEditingService = editingServiceId === s.id;
 
-              {loadingServices ? (
-                <SkeletonList />
-              ) : services.length === 0 ? (
-                <EmptyState icon="🛠️" text="No services yet. Add your first one above." />
-              ) : (
-                <div className="grid sm:grid-cols-2 gap-3">
-                  {services.map((s) => {
-                    const isEditingService = editingServiceId === s.id;
-
-                    if (isEditingService) {
-                      return (
-                        <div key={s.id} className="bg-dark-900 rounded-xl p-4 border border-primary-500/40 col-span-1 sm:col-span-2">
-                          {serviceEditMessage && (
-                            <div className="text-xs rounded-lg p-2.5 mb-3 bg-red-500/10 text-red-400 border border-red-500/20">
-                              {serviceEditMessage}
-                            </div>
-                          )}
-                          <div className="grid sm:grid-cols-2 gap-3 mb-3">
-                            <div>
-                              <label className="block text-xs text-gray-400 mb-1">Service Name *</label>
-                              <input name="name" value={editServiceForm.name} onChange={handleServiceEditChange} required
-                                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-gray-400 mb-1">Duration (minutes)</label>
-                              <input name="estimated_duration_minutes" type="number" value={editServiceForm.estimated_duration_minutes} onChange={handleServiceEditChange}
-                                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-gray-400 mb-1">Base Price (₱) *</label>
-                              <input name="base_price" type="number" value={editServiceForm.base_price} onChange={handleServiceEditChange} required
-                                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-gray-400 mb-1">Labor Cost (₱)</label>
-                              <input name="labor_cost" type="number" value={editServiceForm.labor_cost} onChange={handleServiceEditChange}
-                                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                            </div>
-                            <div className="sm:col-span-2">
-                              <label className="block text-xs text-gray-400 mb-1">Description</label>
-                              <textarea name="description" value={editServiceForm.description} onChange={handleServiceEditChange} rows={2}
-                                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 resize-none" />
-                            </div>
-                          </div>
-
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => saveEditService(s.id)}
-                              disabled={savingServiceEdit}
-                              className="bg-primary-600 hover:bg-primary-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-medium transition"
-                            >
-                              {savingServiceEdit ? 'Saving...' : 'Save Changes'}
-                            </button>
-                            <button
-                              onClick={cancelEditService}
-                              disabled={savingServiceEdit}
-                              className="border border-gray-700 hover:border-gray-500 px-4 py-2 rounded-lg text-sm transition"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    }
-
+                  if (isEditingService) {
                     return (
-                      <div key={s.id} className="bg-dark-900 rounded-xl p-4 border border-gray-800 hover:border-gray-700 transition">
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <p className="font-semibold text-sm">{s.name}</p>
-                          <button
-                            onClick={() => toggleActive(s.id, s.is_active)}
-                            className={`text-xs px-2.5 py-1 rounded-full border whitespace-nowrap transition ${
-                              s.is_active
-                                ? 'border-green-500/30 text-green-400 hover:bg-green-500/10'
-                                : 'border-gray-600 text-gray-500 hover:bg-gray-800'
-                            }`}
-                          >
-                            {s.is_active ? '✓ Active' : 'Inactive'}
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-3 text-xs text-gray-400 mb-2">
-                          <span>₱{s.base_price} base</span>
-                          <span>·</span>
-                          <span>₱{s.labor_cost || 0} labor</span>
-                          <span>·</span>
-                          <span>{s.estimated_duration_minutes} mins</span>
-                        </div>
-                        {s.description && (
-                          <p className="text-xs text-gray-500 mb-3 line-clamp-2">{s.description}</p>
+                      <div key={s.id} className="bg-dark-800 rounded-xl p-5 border border-primary-500/40">
+                        {serviceEditMessage && (
+                          <div className="text-sm rounded-lg p-3 mb-4 bg-red-500/10 text-red-400 border border-red-500/20">
+                            {serviceEditMessage}
+                          </div>
                         )}
+                        <div className="grid sm:grid-cols-2 gap-3 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Service Name *</label>
+                            <input name="name" value={editServiceForm.name} onChange={handleServiceEditChange} required
+                              className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Duration (minutes)</label>
+                            <input name="estimated_duration_minutes" type="number" value={editServiceForm.estimated_duration_minutes} onChange={handleServiceEditChange}
+                              className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Base Price (₱) *</label>
+                            <input name="base_price" type="number" value={editServiceForm.base_price} onChange={handleServiceEditChange} required
+                              className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Labor Cost (₱)</label>
+                            <input name="labor_cost" type="number" value={editServiceForm.labor_cost} onChange={handleServiceEditChange}
+                              className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs text-gray-400 mb-1">Description</label>
+                            <textarea name="description" value={editServiceForm.description} onChange={handleServiceEditChange} rows={2}
+                              className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 resize-none" />
+                          </div>
+                        </div>
+
                         <div className="flex gap-2">
                           <button
-                            onClick={() => startEditService(s)}
-                            className="text-xs text-primary-400 hover:text-primary-300 border border-primary-500/30 px-3 py-1.5 rounded-md transition flex-1 text-center"
+                            onClick={() => saveEditService(s.id)}
+                            disabled={savingServiceEdit}
+                            className="bg-primary-600 hover:bg-primary-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-medium transition"
                           >
-                            Edit
+                            {savingServiceEdit ? 'Saving...' : 'Save Changes'}
                           </button>
                           <button
-                            onClick={() => deleteService(s.id)}
-                            className="text-xs text-red-400 hover:text-red-300 border border-red-500/30 px-3 py-1.5 rounded-md transition flex-1 text-center"
+                            onClick={cancelEditService}
+                            disabled={savingServiceEdit}
+                            className="border border-gray-700 hover:border-gray-500 px-4 py-2 rounded-lg text-sm transition"
                           >
-                            Delete
+                            Cancel
                           </button>
                         </div>
                       </div>
                     );
-                  })}
-                </div>
-              )}
-            </div>
+                  }
+
+                  return (
+                    <div key={s.id} className="bg-dark-800 rounded-xl p-5">
+
+                      {/* Top row — mirrors AdminOrders top row */}
+                      <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+                        <div>
+                          <p className="font-semibold text-lg">{s.name}</p>
+                          {s.description && (
+                            <p className="text-sm text-gray-400 mt-0.5 line-clamp-2 max-w-xl">{s.description}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => toggleActive(s.id, s.is_active)}
+                          className={`text-xs px-3 py-1 rounded-full capitalize font-medium transition ${
+                            s.is_active ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-gray-500/20 text-gray-400 hover:bg-gray-500/30'
+                          }`}
+                        >
+                          {s.is_active ? '✓ Active' : 'Inactive'}
+                        </button>
+                      </div>
+
+                      {/* Cost summary grid — mirrors AdminOrders cost grid */}
+                      <div className="bg-dark-900 rounded-lg p-3 grid grid-cols-2 md:grid-cols-3 gap-3 text-sm mb-4">
+                        <div>
+                          <p className="text-xs text-gray-500 mb-0.5">Base Price</p>
+                          <p className="font-medium text-white">₱{s.base_price}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 mb-0.5">Labor Cost</p>
+                          <p className="font-medium text-white">₱{s.labor_cost || 0}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 mb-0.5">Duration</p>
+                          <p className="font-medium text-accent-400">{s.estimated_duration_minutes} mins</p>
+                        </div>
+                      </div>
+
+                      {/* Actions — styled like AdminOrders status actions */}
+                      <div className="flex gap-2 flex-wrap items-center">
+                        <p className="text-xs text-gray-500 mr-1">Manage:</p>
+                        <button
+                          onClick={() => startEditService(s)}
+                          className="text-xs px-3 py-1.5 rounded-md transition bg-primary-500/20 text-primary-400 hover:bg-primary-500/30"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deleteService(s.id)}
+                          className="text-xs px-3 py-1.5 rounded-md transition bg-red-500/20 text-red-400 hover:bg-red-500/30"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </>
         )}
 
         {/* ───────────── MOTORCYCLE MODELS TAB ───────────── */}
         {activeTab === 'motorcycles' && (
           <>
-            <div className="bg-dark-800 rounded-2xl p-6 mb-8 border border-gray-800">
+            <div className="bg-dark-800 rounded-xl p-5 mb-6">
               <h2 className="text-lg font-semibold mb-1">Add New Motorcycle Model</h2>
               <p className="text-sm text-gray-500 mb-5">
                 Models added here become selectable in the AI Appearance Preview and parts compatibility filters.
@@ -548,117 +553,122 @@ export default function AdminServices() {
               </form>
             </div>
 
-            <div className="bg-dark-800 rounded-2xl p-6 border border-gray-800">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold">All Motorcycle Models</h2>
-                <span className="text-xs bg-dark-900 text-gray-400 px-2.5 py-1 rounded-full">{models.length} total</span>
+            {loadingModels ? (
+              <SkeletonStack />
+            ) : models.length === 0 ? (
+              <div className="bg-dark-800 rounded-xl p-10 text-center">
+                <p className="text-4xl mb-3">🏍️</p>
+                <p className="text-gray-400">No motorcycle models yet. Add your first one above.</p>
               </div>
+            ) : (
+              <div className="space-y-4">
+                {models.map((m) => {
+                  const isEditing = editingModelId === m.id;
 
-              {loadingModels ? (
-                <SkeletonGrid />
-              ) : models.length === 0 ? (
-                <EmptyState icon="🏍️" text="No motorcycle models yet. Add your first one above." />
-              ) : (
-                <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
-                  {models.map((m) => {
-                    const isEditing = editingModelId === m.id;
-
-                    if (isEditing) {
-                      return (
-                        <div key={m.id} className="bg-dark-900 rounded-xl overflow-hidden border border-primary-500/40 sm:col-span-2 md:col-span-3 p-4">
-                          {editMessage && (
-                            <div className="text-xs rounded-lg p-2.5 mb-3 bg-red-500/10 text-red-400 border border-red-500/20">
-                              {editMessage}
-                            </div>
-                          )}
-                          <div className="grid md:grid-cols-2 gap-3 mb-3">
-                            <div>
-                              <label className="block text-xs text-gray-400 mb-1">Make</label>
-                              <input name="make" value={editForm.make} onChange={handleEditChange}
-                                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-gray-400 mb-1">Model</label>
-                              <input name="model" value={editForm.model} onChange={handleEditChange}
-                                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-gray-400 mb-1">Year Range</label>
-                              <input name="year_range" value={editForm.year_range} onChange={handleEditChange}
-                                placeholder="e.g. 2021–2024"
-                                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-gray-400 mb-1">Reference Photo URL</label>
-                              <input name="reference_photo_url" value={editForm.reference_photo_url} onChange={handleEditChange}
-                                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                            </div>
-                          </div>
-
-                          {editForm.reference_photo_url && (
-                            <div className="mb-3">
-                              <img
-                                src={editForm.reference_photo_url}
-                                alt="Preview"
-                                className="h-24 rounded-lg object-cover border border-gray-700"
-                                onError={(e) => { e.target.style.display = 'none'; }}
-                              />
-                            </div>
-                          )}
-
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => saveEditModel(m.id)}
-                              disabled={savingEdit}
-                              className="bg-primary-600 hover:bg-primary-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-medium transition"
-                            >
-                              {savingEdit ? 'Saving...' : 'Save Changes'}
-                            </button>
-                            <button
-                              onClick={cancelEditModel}
-                              disabled={savingEdit}
-                              className="border border-gray-700 hover:border-gray-500 px-4 py-2 rounded-lg text-sm transition"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    }
-
+                  if (isEditing) {
                     return (
-                      <div key={m.id} className="bg-dark-900 rounded-xl overflow-hidden border border-gray-800 hover:border-gray-700 transition">
-                        <div className="h-32 bg-dark-800 flex items-center justify-center overflow-hidden">
-                          {m.reference_photo_url ? (
-                            <img src={m.reference_photo_url} alt={`${m.make} ${m.model}`} className="w-full h-full object-cover" />
-                          ) : (
-                            <span className="text-3xl">🏍️</span>
-                          )}
-                        </div>
-                        <div className="p-4">
-                          <p className="font-semibold text-sm">{m.make} {m.model}</p>
-                          <p className="text-xs text-gray-500 mb-3">{m.year_range || 'Year range not specified'}</p>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => startEditModel(m)}
-                              className="text-xs text-primary-400 hover:text-primary-300 border border-primary-500/30 px-3 py-1.5 rounded-md transition flex-1"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => deleteModel(m.id)}
-                              className="text-xs text-red-400 hover:text-red-300 border border-red-500/30 px-3 py-1.5 rounded-md transition flex-1"
-                            >
-                              Delete
-                            </button>
+                      <div key={m.id} className="bg-dark-800 rounded-xl p-5 border border-primary-500/40">
+                        {editMessage && (
+                          <div className="text-sm rounded-lg p-3 mb-4 bg-red-500/10 text-red-400 border border-red-500/20">
+                            {editMessage}
                           </div>
+                        )}
+                        <div className="grid md:grid-cols-2 gap-3 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Make</label>
+                            <input name="make" value={editForm.make} onChange={handleEditChange}
+                              className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Model</label>
+                            <input name="model" value={editForm.model} onChange={handleEditChange}
+                              className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Year Range</label>
+                            <input name="year_range" value={editForm.year_range} onChange={handleEditChange}
+                              placeholder="e.g. 2021–2024"
+                              className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Reference Photo URL</label>
+                            <input name="reference_photo_url" value={editForm.reference_photo_url} onChange={handleEditChange}
+                              className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                          </div>
+                        </div>
+
+                        {editForm.reference_photo_url && (
+                          <div className="mb-4">
+                            <img
+                              src={editForm.reference_photo_url}
+                              alt="Preview"
+                              className="h-24 rounded-lg object-cover border border-gray-700"
+                              onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                          </div>
+                        )}
+
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => saveEditModel(m.id)}
+                            disabled={savingEdit}
+                            className="bg-primary-600 hover:bg-primary-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-medium transition"
+                          >
+                            {savingEdit ? 'Saving...' : 'Save Changes'}
+                          </button>
+                          <button
+                            onClick={cancelEditModel}
+                            disabled={savingEdit}
+                            className="border border-gray-700 hover:border-gray-500 px-4 py-2 rounded-lg text-sm transition"
+                          >
+                            Cancel
+                          </button>
                         </div>
                       </div>
                     );
-                  })}
-                </div>
-              )}
-            </div>
+                  }
+
+                  return (
+                    <div key={m.id} className="bg-dark-800 rounded-xl p-5">
+
+                      {/* Top row — photo + make/model + year badge */}
+                      <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
+                        <div className="flex items-center gap-4">
+                          <div className="w-16 h-16 rounded-lg bg-dark-900 flex items-center justify-center overflow-hidden flex-shrink-0">
+                            {m.reference_photo_url ? (
+                              <img src={m.reference_photo_url} alt={`${m.make} ${m.model}`} className="w-full h-full object-cover" />
+                            ) : (
+                              <span className="text-2xl">🏍️</span>
+                            )}
+                          </div>
+                          <div>
+                            <p className="font-semibold text-lg">{m.make} {m.model}</p>
+                            <p className="text-sm text-gray-400 mt-0.5">{m.year_range || 'Year range not specified'}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Actions — styled like AdminOrders status actions */}
+                      <div className="flex gap-2 flex-wrap items-center">
+                        <p className="text-xs text-gray-500 mr-1">Manage:</p>
+                        <button
+                          onClick={() => startEditModel(m)}
+                          className="text-xs px-3 py-1.5 rounded-md transition bg-primary-500/20 text-primary-400 hover:bg-primary-500/30"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deleteModel(m.id)}
+                          className="text-xs px-3 py-1.5 rounded-md transition bg-red-500/20 text-red-400 hover:bg-red-500/30"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </>
         )}
       </div>
@@ -666,30 +676,11 @@ export default function AdminServices() {
   );
 }
 
-function EmptyState({ icon, text }) {
+function SkeletonStack() {
   return (
-    <div className="text-center py-12">
-      <p className="text-3xl mb-3">{icon}</p>
-      <p className="text-gray-500 text-sm">{text}</p>
-    </div>
-  );
-}
-
-function SkeletonList() {
-  return (
-    <div className="grid sm:grid-cols-2 gap-3">
-      {[1, 2, 3, 4].map((i) => (
-        <div key={i} className="h-24 bg-dark-900 rounded-xl animate-pulse" />
-      ))}
-    </div>
-  );
-}
-
-function SkeletonGrid() {
-  return (
-    <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
+    <div className="space-y-4">
       {[1, 2, 3].map((i) => (
-        <div key={i} className="h-56 bg-dark-900 rounded-xl animate-pulse" />
+        <div key={i} className="h-28 bg-dark-800 rounded-xl animate-pulse" />
       ))}
     </div>
   );
