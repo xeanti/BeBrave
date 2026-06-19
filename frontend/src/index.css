@@ -133,3 +133,14 @@ html.light .border-gray-800 {
 html.light .border-gray-800\/50 {
   border-color: #e5e7eb !important;
 }
+
+/* ── Native form control color-scheme (calendar icon, etc.) ── */
+input, select, textarea {
+  color-scheme: dark;
+}
+
+html.light input,
+html.light select,
+html.light textarea {
+  color-scheme: light;
+}

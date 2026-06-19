@@ -88,7 +88,7 @@ export default function Landing() {
           </div>
 
           {/* Right: floating stat card */}
-          <div className="relative hidden lg:block">
+          <div className="relative hidden lg:block pb-10 pl-8">
             <div className="bg-dark-800 border border-gray-800 rounded-2xl p-6 shadow-2xl rotate-2 hover:rotate-0 transition-transform duration-300">
               <div className="flex items-center justify-between mb-4">
                 <p className="text-sm text-gray-400">AI Appearance Preview</p>
@@ -96,7 +96,7 @@ export default function Landing() {
                   ✨ Live
                 </span>
               </div>
-                <div className="aspect-video rounded-xl bg-dark-900 border border-primary-500/10 flex items-center justify-center text-5xl mb-4">
+              <div className="aspect-video rounded-xl bg-dark-900 border border-primary-500/10 flex items-center justify-center text-5xl mb-4">
                 🏍️
               </div>
               <div className="flex items-center justify-between text-sm">
@@ -105,7 +105,7 @@ export default function Landing() {
               </div>
             </div>
 
-            <div className="absolute -bottom-6 -left-8 bg-dark-800 border border-gray-800 rounded-xl px-4 py-3 shadow-xl -rotate-3">
+            <div className="absolute bottom-0 left-0 bg-dark-800 border border-gray-800 rounded-xl px-4 py-3 shadow-xl -rotate-3">
               <p className="text-2xl font-bold text-primary-500">15%</p>
               <p className="text-xs text-gray-400">down payment only</p>
             </div>
@@ -114,7 +114,7 @@ export default function Landing() {
       </section>
 
       {/* ───────── Ticker strip ───────── */}
-<section className="border-y border-gray-800 bg-dark-800 py-3 overflow-hidden">
+      <section className="border-y border-gray-800 bg-dark-800 py-3 overflow-hidden">
         <div className="flex gap-10 whitespace-nowrap animate-[scroll_28s_linear_infinite]">
           {Array(2)
             .fill([
@@ -152,10 +152,9 @@ export default function Landing() {
           </h2>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-4">
+        <div className="grid md:grid-cols-3 auto-rows-fr gap-4">
           {/* Big card */}
-<div className="md:col-span-2 md:row-span-2 bg-dark-800 border border-primary-500/20 rounded-2xl p-8 flex flex-col justify-between min-h-[320px]">
-
+          <div className="md:col-span-2 md:row-span-2 bg-dark-800 border border-primary-500/20 rounded-2xl p-8 flex flex-col justify-between min-h-[320px]">
             <div className="w-14 h-14 rounded-xl bg-primary-500/10 text-primary-400 flex items-center justify-center text-2xl mb-6">
               ✨
             </div>
@@ -196,7 +195,7 @@ export default function Landing() {
         <div className="max-w-5xl mx-auto">
           <h2 className="text-3xl font-bold mb-12 text-center">From idea to appointment in 3 steps</h2>
           <div className="grid md:grid-cols-3 gap-8 relative">
-            <div className="hidden md:block absolute top-7 left-[16.6%] right-[16.6%] h-px bg-gradient-to-r from-primary-500/40 via-gray-700 to-primary-500/40" />
+            <div className="hidden md:block absolute top-7 left-[calc(16.6%+1.75rem)] right-[calc(16.6%+1.75rem)] h-px bg-gradient-to-r from-primary-500/40 via-gray-700 to-primary-500/40 -z-0" />
             <Step number="1" title="Pick a service" text="Choose a service, get an instant cost estimate, no surprises." />
             <Step number="2" title="Preview & book" text="Try the AI appearance preview, then lock in your date and mechanic." />
             <Step number="3" title="Ride in, ride out" text="Pay 15% down, bring your bike, and we handle the rest." />
