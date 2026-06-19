@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 
@@ -6,13 +6,39 @@ export default function CartDrawer() {
   const { cart, removeFromCart, updateQuantity, clearCart, total, itemCount } = useCart();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  
+  // Create a reference to the drawer container
+  const drawerRef = useRef(null);
+
+  // Global listener to detect clicks completely outside of the drawer element
+  useEffect(() => {
+    function handleOutsideClick(event) {
+      // If the drawer is open and the clicked element is NOT inside the drawer...
+      if (open && drawerRef.current && !drawerRef.current.contains(event.target)) {
+        // ...and it's not the cart toggle button itself (to avoid immediate reopening)
+        if (!event.target.closest('.cart-toggle-btn')) {
+          setOpen(false);
+        }
+      }
+    }
+
+    // Attach listener when drawer opens
+    if (open) {
+      document.addEventListener('mousedown', handleOutsideClick);
+    }
+
+    // Clean up listener when drawer closes or unmounts
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+    };
+  }, [open]);
 
   return (
     <>
-      {/* Cart button */}
+      {/* Cart button (Added custom class 'cart-toggle-btn' so outside-click script ignores it) */}
       <button
-        onClick={() => setOpen(true)}
-        className="relative p-2 rounded-md text-gray-400 hover:text-white hover:bg-dark-800 transition flex-shrink-0"
+        onClick={() => setOpen(!open)}
+        className="cart-toggle-btn relative p-2 rounded-md text-gray-400 hover:text-white hover:bg-dark-800 transition flex-shrink-0"
       >
         🛒
         {itemCount > 0 && (
@@ -22,17 +48,17 @@ export default function CartDrawer() {
         )}
       </button>
 
-      {/* Backdrop */}
+      {/* BACKDROP: Background darkening cover */}
       {open && (
         <div
-          className="fixed inset-0 z-[100] bg-black/60"
-          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-[9998] bg-black/60 backdrop-blur-sm pointer-events-none"
         />
       )}
 
-      {/* Drawer — slides in from right */}
+      {/* Drawer — Added 'ref={drawerRef}' and bumped z-index extremely high */}
       <div
-        className={`fixed top-0 right-0 h-full z-[101] flex flex-col shadow-2xl transition-transform duration-300 ${
+        ref={drawerRef}
+        className={`fixed top-0 right-0 h-screen max-h-screen z-[9999] flex flex-col shadow-2xl transition-transform duration-300 overflow-hidden ${
           open ? 'translate-x-0' : 'translate-x-full'
         }`}
         style={{
@@ -68,8 +94,8 @@ export default function CartDrawer() {
           </button>
         </div>
 
-        {/* Items */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+        {/* Items (Middle Scrollable Content) */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-3">
           {cart.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center py-16">
               <div className="text-5xl mb-4">🛒</div>
@@ -169,26 +195,12 @@ export default function CartDrawer() {
           )}
         </div>
 
-        {/* Footer */}
+        {/* Footer (Always Locked to Bottom View) */}
         {cart.length > 0 && (
           <div
-            className="flex-shrink-0 px-4 py-4 space-y-3"
+            className="flex-shrink-0 px-4 py-4 space-y-3 bg-[#1a1a1a]"
             style={{ borderTop: '1px solid #2a2a2a' }}
           >
-            {/* Breakdown */}
-            <div className="space-y-1.5">
-              {cart.map((item) => (
-                <div key={item.id} className="flex justify-between text-xs">
-                  <span style={{ color: '#9ca3af' }} className="truncate mr-2">
-                    {item.name} × {item.quantity}
-                  </span>
-                  <span style={{ color: '#d1d5db' }} className="flex-shrink-0">
-                    ₱{(parseFloat(item.price) * item.quantity).toFixed(2)}
-                  </span>
-                </div>
-              ))}
-            </div>
-
             {/* Totals */}
             <div
               className="rounded-xl p-3 space-y-2"

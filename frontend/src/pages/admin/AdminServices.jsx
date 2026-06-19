@@ -15,21 +15,30 @@ export default function AdminServices() {
   });
   const [savingService, setSavingService] = useState(false);
   const [serviceMessage, setServiceMessage] = useState('');
+  
+  // Service Editing State
+  const [editingServiceId, setEditingServiceId] = useState(null);
+  const [editServiceForm, setEditServiceForm] = useState({
+    name: '', description: '', base_price: '',
+    labor_cost: '', estimated_duration_minutes: '60',
+  });
+  const [savingServiceEdit, setSavingServiceEdit] = useState(false);
+  const [serviceEditMessage, setServiceEditMessage] = useState('');
 
   // ── Motorcycle models state ──
-    const [models, setModels] = useState([]);
-    const [loadingModels, setLoadingModels] = useState(true);
-    const [modelForm, setModelForm] = useState({
-      make: '', model: '', year_range: '', reference_photo_url: '',
-    });
-    const [savingModel, setSavingModel] = useState(false);
-    const [modelMessage, setModelMessage] = useState('');
-    const [editingModelId, setEditingModelId] = useState(null);
-    const [editForm, setEditForm] = useState({
-      make: '', model: '', year_range: '', reference_photo_url: '',
-    });
-    const [savingEdit, setSavingEdit] = useState(false);
-    const [editMessage, setEditMessage] = useState('');
+  const [models, setModels] = useState([]);
+  const [loadingModels, setLoadingModels] = useState(true);
+  const [modelForm, setModelForm] = useState({
+    make: '', model: '', year_range: '', reference_photo_url: '',
+  });
+  const [savingModel, setSavingModel] = useState(false);
+  const [modelMessage, setModelMessage] = useState('');
+  const [editingModelId, setEditingModelId] = useState(null);
+  const [editForm, setEditForm] = useState({
+    make: '', model: '', year_range: '', reference_photo_url: '',
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editMessage, setEditMessage] = useState('');
 
   useEffect(() => {
     fetchServices();
@@ -40,7 +49,7 @@ export default function AdminServices() {
   async function fetchServices() {
     const { data } = await supabase.from('services').select('*').order('name');
     if (data) setServices(data);
-    setLoadingServices(false);
+    loadingServices && setLoadingServices(false);
   }
 
   function handleServiceChange(e) {
@@ -102,6 +111,59 @@ export default function AdminServices() {
     fetchServices();
   }
 
+  // Service Edit Handlers
+  function startEditService(s) {
+    setEditingServiceId(s.id);
+    setEditServiceForm({
+      name: s.name,
+      description: s.description || '',
+      base_price: s.base_price,
+      labor_cost: s.labor_cost || '0',
+      estimated_duration_minutes: s.estimated_duration_minutes || '60',
+    });
+    setServiceEditMessage('');
+  }
+
+  function cancelEditService() {
+    setEditingServiceId(null);
+    setServiceEditMessage('');
+  }
+
+  function handleServiceEditChange(e) {
+    setEditServiceForm({ ...editServiceForm, [e.target.name]: e.target.value });
+  }
+
+  async function saveEditService(id) {
+    setSavingServiceEdit(true);
+    setServiceEditMessage('');
+
+    const { error } = await supabase
+      .from('services')
+      .update({
+        name: editServiceForm.name.trim(),
+        description: editServiceForm.description.trim() || null,
+        base_price: parseFloat(editServiceForm.base_price),
+        labor_cost: parseFloat(editServiceForm.labor_cost || 0),
+        estimated_duration_minutes: parseInt(editServiceForm.estimated_duration_minutes),
+      })
+      .eq('id', id);
+
+    if (error) {
+      setServiceEditMessage('Error: ' + error.message);
+    } else {
+      await supabase.from('audit_logs').insert({
+        action: 'UPDATE_SERVICE',
+        entity: 'services',
+        entity_id: id,
+        performed_by: user.id,
+        details: { name: editServiceForm.name, base_price: parseFloat(editServiceForm.base_price) },
+      });
+      setEditingServiceId(null);
+      fetchServices();
+    }
+    setSavingServiceEdit(false);
+  }
+
   // ── Motorcycle models logic ──
   async function fetchModels() {
     const { data } = await supabase
@@ -149,7 +211,7 @@ export default function AdminServices() {
     setSavingModel(false);
   }
 
-function startEditModel(m) {
+  function startEditModel(m) {
     setEditingModelId(m.id);
     setEditForm({
       make: m.make,
@@ -201,6 +263,20 @@ function startEditModel(m) {
       fetchModels();
     }
     setSavingEdit(false);
+  }
+
+  // Missing function context from original file
+  async function deleteModel(id) {
+    if (!confirm('Delete this motorcycle model?')) return;
+    await supabase.from('motorcycle_models').delete().eq('id', id);
+    await supabase.from('audit_logs').insert({
+      action: 'DELETE_MOTORCYCLE_MODEL',
+      entity: 'motorcycle_models',
+      entity_id: id,
+      performed_by: user.id,
+      details: {},
+    });
+    fetchModels();
   }
 
   return (
@@ -301,39 +377,107 @@ function startEditModel(m) {
                 <EmptyState icon="🛠️" text="No services yet. Add your first one above." />
               ) : (
                 <div className="grid sm:grid-cols-2 gap-3">
-                  {services.map((s) => (
-                    <div key={s.id} className="bg-dark-900 rounded-xl p-4 border border-gray-800 hover:border-gray-700 transition">
-                      <div className="flex items-start justify-between gap-2 mb-2">
-                        <p className="font-semibold text-sm">{s.name}</p>
-                        <button
-                          onClick={() => toggleActive(s.id, s.is_active)}
-                          className={`text-xs px-2.5 py-1 rounded-full border whitespace-nowrap transition ${
-                            s.is_active
-                              ? 'border-green-500/30 text-green-400 hover:bg-green-500/10'
-                              : 'border-gray-600 text-gray-500 hover:bg-gray-800'
-                          }`}
-                        >
-                          {s.is_active ? '✓ Active' : 'Inactive'}
-                        </button>
+                  {services.map((s) => {
+                    const isEditingService = editingServiceId === s.id;
+
+                    if (isEditingService) {
+                      return (
+                        <div key={s.id} className="bg-dark-900 rounded-xl p-4 border border-primary-500/40 col-span-1 sm:col-span-2">
+                          {serviceEditMessage && (
+                            <div className="text-xs rounded-lg p-2.5 mb-3 bg-red-500/10 text-red-400 border border-red-500/20">
+                              {serviceEditMessage}
+                            </div>
+                          )}
+                          <div className="grid sm:grid-cols-2 gap-3 mb-3">
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Service Name *</label>
+                              <input name="name" value={editServiceForm.name} onChange={handleServiceEditChange} required
+                                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Duration (minutes)</label>
+                              <input name="estimated_duration_minutes" type="number" value={editServiceForm.estimated_duration_minutes} onChange={handleServiceEditChange}
+                                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Base Price (₱) *</label>
+                              <input name="base_price" type="number" value={editServiceForm.base_price} onChange={handleServiceEditChange} required
+                                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Labor Cost (₱)</label>
+                              <input name="labor_cost" type="number" value={editServiceForm.labor_cost} onChange={handleServiceEditChange}
+                                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <label className="block text-xs text-gray-400 mb-1">Description</label>
+                              <textarea name="description" value={editServiceForm.description} onChange={handleServiceEditChange} rows={2}
+                                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 resize-none" />
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => saveEditService(s.id)}
+                              disabled={savingServiceEdit}
+                              className="bg-primary-600 hover:bg-primary-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-medium transition"
+                            >
+                              {savingServiceEdit ? 'Saving...' : 'Save Changes'}
+                            </button>
+                            <button
+                              onClick={cancelEditService}
+                              disabled={savingServiceEdit}
+                              className="border border-gray-700 hover:border-gray-500 px-4 py-2 rounded-lg text-sm transition"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div key={s.id} className="bg-dark-900 rounded-xl p-4 border border-gray-800 hover:border-gray-700 transition">
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <p className="font-semibold text-sm">{s.name}</p>
+                          <button
+                            onClick={() => toggleActive(s.id, s.is_active)}
+                            className={`text-xs px-2.5 py-1 rounded-full border whitespace-nowrap transition ${
+                              s.is_active
+                                ? 'border-green-500/30 text-green-400 hover:bg-green-500/10'
+                                : 'border-gray-600 text-gray-500 hover:bg-gray-800'
+                            }`}
+                          >
+                            {s.is_active ? '✓ Active' : 'Inactive'}
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs text-gray-400 mb-2">
+                          <span>₱{s.base_price} base</span>
+                          <span>·</span>
+                          <span>₱{s.labor_cost || 0} labor</span>
+                          <span>·</span>
+                          <span>{s.estimated_duration_minutes} mins</span>
+                        </div>
+                        {s.description && (
+                          <p className="text-xs text-gray-500 mb-3 line-clamp-2">{s.description}</p>
+                        )}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => startEditService(s)}
+                            className="text-xs text-primary-400 hover:text-primary-300 border border-primary-500/30 px-3 py-1.5 rounded-md transition flex-1 text-center"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => deleteService(s.id)}
+                            className="text-xs text-red-400 hover:text-red-300 border border-red-500/30 px-3 py-1.5 rounded-md transition flex-1 text-center"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3 text-xs text-gray-400 mb-2">
-                        <span>₱{s.base_price} base</span>
-                        <span>·</span>
-                        <span>₱{s.labor_cost || 0} labor</span>
-                        <span>·</span>
-                        <span>{s.estimated_duration_minutes} mins</span>
-                      </div>
-                      {s.description && (
-                        <p className="text-xs text-gray-500 mb-3 line-clamp-2">{s.description}</p>
-                      )}
-                      <button
-                        onClick={() => deleteService(s.id)}
-                        className="text-xs text-red-400 hover:text-red-300 border border-red-500/30 px-3 py-1.5 rounded-md transition"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -410,7 +554,7 @@ function startEditModel(m) {
                 <span className="text-xs bg-dark-900 text-gray-400 px-2.5 py-1 rounded-full">{models.length} total</span>
               </div>
 
-{loadingModels ? (
+              {loadingModels ? (
                 <SkeletonGrid />
               ) : models.length === 0 ? (
                 <EmptyState icon="🏍️" text="No motorcycle models yet. Add your first one above." />

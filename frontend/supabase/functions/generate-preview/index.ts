@@ -14,7 +14,11 @@ async function fetchAsBase64(url: string) {
   const base64 = btoa(
     new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
   );
-  const mimeType = res.headers.get('content-type') || 'image/jpeg';
+  
+  // Extract content-type, strip away charset or extra parameters, and clean up whitespace
+  let mimeType = res.headers.get('content-type') || 'image/jpeg';
+  mimeType = mimeType.split(';')[0].trim();
+  
   return { base64, mimeType };
 }
 
@@ -211,8 +215,7 @@ Output a single real, unedited-looking photograph. No collage, no side-by-side, 
     let { imageBase64: generatedImageBase64, mimeType: generatedMimeType } = await generate();
 
     // Quick automatic retry once, specifically nudging against the "recolor only" failure mode,
-    // if a wheel/shape-sensitive job was requested. This costs one extra call but meaningfully
-    // raises the odds of a structurally correct result given how stochastic image generation is.
+    // if a wheel/shape-sensitive job was requested.
     if (!generatedImageBase64 && isWheelJob) {
       const retry = await generate(
         'Your previous attempt did not return an image. Try again: fully redraw the requested part\'s shape to match its reference photo, not just its color.'
