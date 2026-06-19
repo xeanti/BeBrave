@@ -1,166 +1,142 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
-import RatingModal from '../components/RatingModal';
 
-export default function Appointments() {
+export default function RatingModal({ booking, onClose, onSubmitted }) {
   const { user } = useAuth();
-  const [bookings, setBookings] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all');
-  const [ratingBooking, setRatingBooking] = useState(null);
-  const [ratedBookings, setRatedBookings] = useState(new Set());
-  const [ratedBookingIds, setRatedBookingIds] = useState(new Set());
+  const [rating, setRating] = useState(0);
+  const [hoverRating, setHoverRating] = useState(0);
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetchBookings();
-  }, [user]);
-
-  async function fetchBookings() {
-    const { data, error } = await supabase
-      .from('bookings')
-      .select('*, services(name, base_price), profiles!bookings_mechanic_id_fkey(first_name, last_name)')
-      .eq('customer_id', user.id)
-      .order('booking_date', { ascending: false });
-
-    if (!error) setBookings(data || []);
-
-    const { data: ratings } = await supabase
-      .from('mechanic_ratings')
-      .select('booking_id')
-      .eq('customer_id', user.id);
-
-    if (ratings) {
-      setRatedBookingIds(new Set(ratings.map((r) => r.booking_id)));
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (rating === 0) {
+      setError('Please select a star rating.');
+      return;
     }
+    setError('');
+    setSubmitting(true);
 
-    setLoading(false);
-  }
+    try {
+      const { error: insertError } = await supabase
+        .from('mechanic_ratings')
+        .insert({
+          booking_id: booking.id,
+          mechanic_id: booking.mechanic_id,
+          customer_id: user.id,
+          rating,
+          comment: comment.trim() || null,
+        });
 
-  async function cancelBooking(id) {
-    if (!confirm('Cancel this appointment?')) return;
-    const { error } = await supabase
-      .from('bookings')
-      .update({ status: 'cancelled' })
-      .eq('id', id)
-      .eq('customer_id', user.id)
-      .eq('status', 'pending');
+      if (insertError) throw insertError;
 
-    if (error) {
-      alert('Failed to cancel: ' + error.message);
-    } else {
-      fetchBookings();
+      onSubmitted();
+    } catch (err) {
+      setError(err.message || 'Failed to submit rating.');
+    } finally {
+      setSubmitting(false);
     }
   }
-
-  const filtered = bookings.filter((b) => filter === 'all' || b.status === filter);
 
   return (
-    <div className="min-h-[calc(100vh-65px)] bg-dark-900 text-white px-6 py-10">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold mb-2">My Appointments</h1>
-        <p className="text-gray-400 mb-6">View and manage your service bookings.</p>
-
-        {/* Filter tabs */}
-        <div className="flex gap-2 mb-6 flex-wrap">
-          {['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled'].map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`px-4 py-1.5 rounded-full text-sm font-medium capitalize transition ${
-                filter === f
-                  ? 'bg-primary-600 text-white'
-                  : 'bg-dark-800 text-gray-400 hover:text-white'
-              }`}
-            >
-              {f.replace('_', ' ')}
-            </button>
-          ))}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      style={{ backdropFilter: 'blur(8px)', backgroundColor: 'rgba(0,0,0,0.6)' }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl p-6"
+        style={{
+          background: 'rgba(15, 15, 15, 0.95)',
+          border: '1px solid rgba(236, 72, 153, 0.2)',
+          backdropFilter: 'blur(20px)',
+          boxShadow: '0 25px 50px rgba(0,0,0,0.5)',
+          color: 'white',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-lg font-bold" style={{ color: 'white' }}>
+            Rate Your Service
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-white text-xl leading-none"
+          >
+            ✕
+          </button>
         </div>
 
-        {loading ? (
-          <p className="text-gray-400">Loading...</p>
-        ) : filtered.length === 0 ? (
-          <div className="bg-dark-800 rounded-xl p-10 text-center">
-            <p className="text-gray-400">No appointments found.</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {filtered.map((b) => (
-              <div key={b.id} className="bg-dark-800 rounded-xl p-5 flex items-center justify-between flex-wrap gap-4">
-                <div>
-                  <p className="font-semibold">{b.services?.name || 'Service'}</p>
-                  <p className="text-sm text-gray-400 mt-1">
-                    {b.booking_date} at {b.booking_time}
-                  </p>
-                  {b.profiles && (
-                    <p className="text-sm text-gray-400 mt-1">
-                      Mechanic: {b.profiles.first_name} {b.profiles.last_name}
-                    </p>
-                  )}
-                  {b.notes && <p className="text-sm text-gray-500 mt-1">Note: {b.notes}</p>}
-                  {b.services?.base_price && (
-                    <p className="text-sm text-primary-400 mt-1">₱{b.services.base_price}</p>
-                  )}
-                </div>
+        <p className="text-sm mb-1" style={{ color: '#9ca3af' }}>
+          {booking.services?.name || 'Service'}
+        </p>
+        <p className="text-xs mb-5" style={{ color: '#6b7280' }}>
+          {booking.booking_date} at {booking.booking_time}
+        </p>
 
-                <div className="flex items-center gap-3">
-                  <StatusBadge status={b.status} />
-                  {b.status === 'pending' && (
-                    <button
-                      onClick={() => cancelBooking(b.id)}
-                      className="text-xs text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-500/50 px-3 py-1.5 rounded-md transition"
-                    >
-                      Cancel
-                    </button>
-                  )}
-                  {b.status === 'completed' && (
-                    ratedBookings.has(b.id) || ratedBookingIds.has(b.id) ? (
-                      <span className="text-xs text-yellow-400 border border-yellow-500/30 px-3 py-1.5 rounded-md">
-                        ★ Rated
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => setRatingBooking(b)}
-                        className="text-xs text-primary-400 hover:text-primary-300 border border-primary-500/30 hover:border-primary-500/50 px-3 py-1.5 rounded-md transition"
-                      >
-                        ★ Rate
-                      </button>
-                    )
-                  )}
-                </div>
-              </div>
-            ))}
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg p-3 mb-4">
+            {error}
           </div>
         )}
+
+        <form onSubmit={handleSubmit}>
+          {/* Star picker */}
+          <div className="flex justify-center gap-2 mb-5">
+            {[1, 2, 3, 4, 5].map((star) => (
+              <button
+                key={star}
+                type="button"
+                onClick={() => setRating(star)}
+                onMouseEnter={() => setHoverRating(star)}
+                onMouseLeave={() => setHoverRating(0)}
+                className="text-4xl transition-transform hover:scale-110"
+              >
+                <span
+                  className={
+                    star <= (hoverRating || rating) ? 'text-yellow-400' : 'text-gray-600'
+                  }
+                >
+                  ★
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="mb-5">
+            <label className="block text-sm mb-1.5" style={{ color: '#d1d5db' }}>
+              Comment <span style={{ color: '#6b7280' }}>(optional)</span>
+            </label>
+            <textarea
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              rows={3}
+              placeholder="How was your experience with this mechanic?"
+              className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 resize-none"
+            />
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 border border-gray-700 hover:border-gray-500 py-2.5 rounded-lg text-sm transition"
+              style={{ color: '#d1d5db' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="flex-1 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg transition text-sm"
+            >
+              {submitting ? 'Submitting...' : 'Submit Rating'}
+            </button>
+          </div>
+        </form>
       </div>
-
-      {ratingBooking && (
-        <RatingModal
-          booking={ratingBooking}
-          onClose={() => setRatingBooking(null)}
-          onSubmitted={() => {
-            setRatedBookings((prev) => new Set(prev).add(ratingBooking.id));
-            setRatedBookingIds((prev) => new Set(prev).add(ratingBooking.id));
-            setRatingBooking(null);
-          }}
-        />
-      )}
     </div>
-  );
-}
-
-function StatusBadge({ status }) {
-  const styles = {
-    confirmed: 'bg-green-500/20 text-green-400',
-    pending: 'bg-yellow-500/20 text-yellow-400',
-    in_progress: 'bg-blue-500/20 text-blue-400',
-    completed: 'bg-gray-500/20 text-gray-400',
-    cancelled: 'bg-red-500/20 text-red-400',
-  };
-  return (
-    <span className={`text-xs px-3 py-1 rounded-full capitalize whitespace-nowrap ${styles[status] || styles.pending}`}>
-      {status?.replace('_', ' ')}
-    </span>
   );
 }

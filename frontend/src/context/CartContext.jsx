@@ -19,15 +19,16 @@ export function CartProvider({ children }) {
     localStorage.setItem(CART_KEY, JSON.stringify(cart));
   }, [cart]);
 
-  function addToCart(part) {
+  function addToCart(part, quantity = 1) {
+    const qty = Math.max(1, parseInt(quantity) || 1);
     setCart((prev) => {
       const existing = prev.find((item) => item.id === part.id);
       if (existing) {
         return prev.map((item) =>
-          item.id === part.id ? { ...item, quantity: item.quantity + 1 } : item
+          item.id === part.id ? { ...item, quantity: item.quantity + qty } : item
         );
       }
-      return [...prev, { ...part, quantity: 1 }];
+      return [...prev, { ...part, quantity: qty }];
     });
   }
 

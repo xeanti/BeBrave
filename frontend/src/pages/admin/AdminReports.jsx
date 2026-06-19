@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabaseClient';
+import { fetchPaymentsFor, summarizePayments } from '../../lib/payments';
 
 export default function AdminReports() {
   const { user } = useAuth();
@@ -8,6 +9,8 @@ export default function AdminReports() {
   const [bookings, setBookings] = useState([]);
   const [orders, setOrders] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
+  const [bookingPayments, setBookingPayments] = useState({}); // bookingId -> [payments]
+  const [orderPayments, setOrderPayments] = useState({}); // orderId -> [payments]
   const [loading, setLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -22,7 +25,7 @@ export default function AdminReports() {
     const [b, o, a] = await Promise.all([
       supabase
         .from('bookings')
-        .select('*, services(name, base_price), profiles!bookings_customer_id_fkey(first_name, last_name, email), mechanic:profiles!bookings_mechanic_id_fkey(first_name, last_name)')
+        .select('*, services(name, base_price, labor_cost), profiles!bookings_customer_id_fkey(first_name, last_name, email), mechanic:profiles!bookings_mechanic_id_fkey(first_name, last_name)')
         .order('created_at', { ascending: false }),
       supabase
         .from('orders')
@@ -38,6 +41,27 @@ export default function AdminReports() {
     if (b.data) setBookings(b.data);
     if (o.data) setOrders(o.data);
     if (a.data) setAuditLogs(a.data);
+
+    // Fetch payments for all bookings + orders, group by id
+    if (b.data?.length) {
+      const allBP = await fetchPaymentsFor({ bookingIds: b.data.map((x) => x.id) });
+      const groupedBP = {};
+      allBP.forEach((p) => {
+        if (!groupedBP[p.booking_id]) groupedBP[p.booking_id] = [];
+        groupedBP[p.booking_id].push(p);
+      });
+      setBookingPayments(groupedBP);
+    }
+    if (o.data?.length) {
+      const allOP = await fetchPaymentsFor({ orderIds: o.data.map((x) => x.id) });
+      const groupedOP = {};
+      allOP.forEach((p) => {
+        if (!groupedOP[p.order_id]) groupedOP[p.order_id] = [];
+        groupedOP[p.order_id].push(p);
+      });
+      setOrderPayments(groupedOP);
+    }
+
     setLoading(false);
   }
 
@@ -48,6 +72,21 @@ export default function AdminReports() {
       if (dateTo && date > new Date(dateTo + 'T23:59:59')) return false;
       return true;
     });
+  }
+
+  // Returns { totalPaid, balance, isFullyPaid, lastProcessedBy }
+  function getPaymentInfo(records, recordId, total) {
+    const list = records[recordId] || [];
+    const { totalPaid } = summarizePayments(list);
+    const balance = Math.max(total - totalPaid, 0);
+    const isFullyPaid = total > 0 && balance <= 0;
+    const last = list.length ? list[list.length - 1] : null;
+    const lastProcessedBy = last?.profiles
+      ? `${last.profiles.first_name} ${last.profiles.last_name}`
+      : last
+      ? 'System'
+      : '—';
+    return { totalPaid, balance, isFullyPaid, lastProcessedBy };
   }
 
   function downloadCSV(data, filename) {
@@ -94,11 +133,14 @@ export default function AdminReports() {
 
   const bookingRevenue = filteredBookings
     .filter(b => b.status === 'completed')
-    .reduce((sum, b) => sum + (b.down_payment || 0), 0);
+    .reduce((sum, b) => {
+      const total = (b.services?.base_price || 0) + (b.services?.labor_cost || 0);
+      return sum + getPaymentInfo(bookingPayments, b.id, total).totalPaid;
+    }, 0);
 
   const orderRevenue = filteredOrders
     .filter(o => o.status === 'completed')
-    .reduce((sum, o) => sum + (o.total_amount || 0), 0);
+    .reduce((sum, o) => sum + getPaymentInfo(orderPayments, o.id, o.total_amount || 0).totalPaid, 0);
 
   return (
     <div className="min-h-[calc(100vh-65px)] bg-dark-900 text-white px-6 py-10">
@@ -118,26 +160,41 @@ export default function AdminReports() {
             <button
               onClick={() => {
                 if (activeTab === 'bookings') {
-                  downloadCSV(filteredBookings.map(b => ({
-                    id: b.id.slice(0,8),
-                    customer: `${b.profiles?.first_name} ${b.profiles?.last_name}`,
-                    email: b.profiles?.email,
-                    service: b.services?.name,
-                    date: b.booking_date,
-                    time: b.booking_time,
-                    status: b.status,
-                    down_payment: b.down_payment,
-                    mechanic: b.mechanic ? `${b.mechanic.first_name} ${b.mechanic.last_name}` : 'Unassigned',
-                  })), 'bookings-report.csv');
+                  downloadCSV(filteredBookings.map(b => {
+                    const total = (b.services?.base_price || 0) + (b.services?.labor_cost || 0);
+                    const info = getPaymentInfo(bookingPayments, b.id, total);
+                    return {
+                      id: b.id.slice(0,8),
+                      customer: `${b.profiles?.first_name} ${b.profiles?.last_name}`,
+                      email: b.profiles?.email,
+                      service: b.services?.name,
+                      date: b.booking_date,
+                      time: b.booking_time,
+                      status: b.status,
+                      mechanic: b.mechanic ? `${b.mechanic.first_name} ${b.mechanic.last_name}` : 'Unassigned',
+                      service_total: total.toFixed(2),
+                      total_paid: info.totalPaid.toFixed(2),
+                      balance: info.balance.toFixed(2),
+                      payment_status: info.isFullyPaid ? 'Fully Paid' : 'Partial/Unpaid',
+                      processed_by: info.lastProcessedBy,
+                    };
+                  }), 'bookings-report.csv');
                 } else if (activeTab === 'orders') {
-                  downloadCSV(filteredOrders.map(o => ({
-                    id: o.id.slice(0,8),
-                    customer: `${o.profiles?.first_name} ${o.profiles?.last_name}`,
-                    email: o.profiles?.email,
-                    total: o.total_amount,
-                    status: o.status,
-                    date: new Date(o.created_at).toLocaleDateString(),
-                  })), 'orders-report.csv');
+                  downloadCSV(filteredOrders.map(o => {
+                    const info = getPaymentInfo(orderPayments, o.id, o.total_amount || 0);
+                    return {
+                      id: o.id.slice(0,8),
+                      customer: `${o.profiles?.first_name} ${o.profiles?.last_name}`,
+                      email: o.profiles?.email,
+                      total: o.total_amount,
+                      status: o.status,
+                      total_paid: info.totalPaid.toFixed(2),
+                      balance: info.balance.toFixed(2),
+                      payment_status: info.isFullyPaid ? 'Fully Paid' : 'Partial/Unpaid',
+                      processed_by: info.lastProcessedBy,
+                      date: new Date(o.created_at).toLocaleDateString(),
+                    };
+                  }), 'orders-report.csv');
                 } else {
                   downloadCSV(filteredAuditLogs.map(l => ({
                     id: l.id.slice(0,8),
@@ -183,7 +240,7 @@ export default function AdminReports() {
           <SummaryCard label="Total Bookings" value={filteredBookings.length} color="text-blue-400" />
           <SummaryCard label="Completed Bookings" value={filteredBookings.filter(b => b.status === 'completed').length} color="text-green-400" />
           <SummaryCard label="Total Orders" value={filteredOrders.length} color="text-purple-400" />
-          <SummaryCard label="Order Revenue" value={`₱${orderRevenue.toFixed(2)}`} color="text-accent-400" />
+          <SummaryCard label="Collected Revenue" value={`₱${(bookingRevenue + orderRevenue).toFixed(2)}`} color="text-accent-400" />
         </div>
 
         {/* Tabs */}
@@ -213,33 +270,44 @@ export default function AdminReports() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-gray-700">
-                        {['ID', 'Customer', 'Service', 'Date', 'Time', 'Mechanic', 'Status', 'Down Payment'].map(h => (
-                          <th key={h} className="text-left px-4 py-3 text-xs text-gray-400 font-medium">{h}</th>
+                        {['ID', 'Customer', 'Service', 'Date', 'Time', 'Mechanic', 'Status', 'Total', 'Paid', 'Balance', 'Processed By'].map(h => (
+                          <th key={h} className="text-left px-4 py-3 text-xs text-gray-400 font-medium whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredBookings.map((b) => (
-                        <tr key={b.id} className="border-b border-gray-800 hover:bg-dark-900/50">
-                          <td className="px-4 py-3 text-xs text-gray-500">{b.id.slice(0,8)}</td>
-                          <td className="px-4 py-3">
-                            <p className="font-medium">{b.profiles?.first_name} {b.profiles?.last_name}</p>
-                            <p className="text-xs text-gray-500">{b.profiles?.email}</p>
-                          </td>
-                          <td className="px-4 py-3">{b.services?.name}</td>
-                          <td className="px-4 py-3">{b.booking_date}</td>
-                          <td className="px-4 py-3">{b.booking_time}</td>
-                          <td className="px-4 py-3">
-                            {b.mechanic ? `${b.mechanic.first_name} ${b.mechanic.last_name}` : '—'}
-                          </td>
-                          <td className="px-4 py-3">
-                            <StatusBadge status={b.status} />
-                          </td>
-                          <td className="px-4 py-3 text-accent-400 font-medium">
-                            ₱{b.down_payment || 0}
-                          </td>
-                        </tr>
-                      ))}
+                      {filteredBookings.map((b) => {
+                        const total = (b.services?.base_price || 0) + (b.services?.labor_cost || 0);
+                        const info = getPaymentInfo(bookingPayments, b.id, total);
+                        return (
+                          <tr key={b.id} className="border-b border-gray-800 hover:bg-dark-900/50">
+                            <td className="px-4 py-3 text-xs text-gray-500">{b.id.slice(0,8)}</td>
+                            <td className="px-4 py-3">
+                              <p className="font-medium">{b.profiles?.first_name} {b.profiles?.last_name}</p>
+                              <p className="text-xs text-gray-500">{b.profiles?.email}</p>
+                            </td>
+                            <td className="px-4 py-3">{b.services?.name}</td>
+                            <td className="px-4 py-3">{b.booking_date}</td>
+                            <td className="px-4 py-3">{b.booking_time}</td>
+                            <td className="px-4 py-3">
+                              {b.mechanic ? `${b.mechanic.first_name} ${b.mechanic.last_name}` : '—'}
+                            </td>
+                            <td className="px-4 py-3">
+                              <StatusBadge status={b.status} />
+                            </td>
+                            <td className="px-4 py-3 text-gray-300">₱{total.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-green-400 font-medium">₱{info.totalPaid.toFixed(2)}</td>
+                            <td className="px-4 py-3">
+                              {info.isFullyPaid ? (
+                                <span className="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded-full">Paid</span>
+                              ) : (
+                                <span className="text-yellow-400 font-medium">₱{info.balance.toFixed(2)}</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-xs text-gray-400">{info.lastProcessedBy}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                   {filteredBookings.length === 0 && (
@@ -259,35 +327,47 @@ export default function AdminReports() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-gray-700">
-                        {['ID', 'Customer', 'Items', 'Total', 'Status', 'Date'].map(h => (
-                          <th key={h} className="text-left px-4 py-3 text-xs text-gray-400 font-medium">{h}</th>
+                        {['ID', 'Customer', 'Items', 'Total', 'Paid', 'Balance', 'Status', 'Processed By', 'Date'].map(h => (
+                          <th key={h} className="text-left px-4 py-3 text-xs text-gray-400 font-medium whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredOrders.map((o) => (
-                        <tr key={o.id} className="border-b border-gray-800 hover:bg-dark-900/50">
-                          <td className="px-4 py-3 text-xs text-gray-500">{o.id.slice(0,8)}</td>
-                          <td className="px-4 py-3">
-                            <p className="font-medium">{o.profiles?.first_name} {o.profiles?.last_name}</p>
-                            <p className="text-xs text-gray-500">{o.profiles?.email}</p>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="space-y-0.5">
-                              {o.order_items?.map((item, i) => (
-                                <p key={i} className="text-xs text-gray-400">
-                                  {item.parts?.name} × {item.quantity}
-                                </p>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 font-bold text-accent-400">₱{o.total_amount}</td>
-                          <td className="px-4 py-3"><StatusBadge status={o.status} /></td>
-                          <td className="px-4 py-3 text-xs text-gray-400">
-                            {new Date(o.created_at).toLocaleDateString()}
-                          </td>
-                        </tr>
-                      ))}
+                      {filteredOrders.map((o) => {
+                        const info = getPaymentInfo(orderPayments, o.id, o.total_amount || 0);
+                        return (
+                          <tr key={o.id} className="border-b border-gray-800 hover:bg-dark-900/50">
+                            <td className="px-4 py-3 text-xs text-gray-500">{o.id.slice(0,8)}</td>
+                            <td className="px-4 py-3">
+                              <p className="font-medium">{o.profiles?.first_name} {o.profiles?.last_name}</p>
+                              <p className="text-xs text-gray-500">{o.profiles?.email}</p>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="space-y-0.5">
+                                {o.order_items?.map((item, i) => (
+                                  <p key={i} className="text-xs text-gray-400">
+                                    {item.parts?.name} × {item.quantity}
+                                  </p>
+                                ))}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 font-bold text-accent-400">₱{o.total_amount}</td>
+                            <td className="px-4 py-3 text-green-400 font-medium">₱{info.totalPaid.toFixed(2)}</td>
+                            <td className="px-4 py-3">
+                              {info.isFullyPaid ? (
+                                <span className="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded-full">Paid</span>
+                              ) : (
+                                <span className="text-yellow-400 font-medium">₱{info.balance.toFixed(2)}</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3"><StatusBadge status={o.status} /></td>
+                            <td className="px-4 py-3 text-xs text-gray-400">{info.lastProcessedBy}</td>
+                            <td className="px-4 py-3 text-xs text-gray-400">
+                              {new Date(o.created_at).toLocaleDateString()}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                   {filteredOrders.length === 0 && (
@@ -323,6 +403,7 @@ export default function AdminReports() {
                               log.action.includes('DELETE') ? 'bg-red-500/20 text-red-400' :
                               log.action.includes('CREATE') || log.action.includes('INSERT') ? 'bg-green-500/20 text-green-400' :
                               log.action.includes('UPDATE') ? 'bg-blue-500/20 text-blue-400' :
+                              log.action.includes('PAYMENT') ? 'bg-accent-500/20 text-accent-400' :
                               log.action.includes('EXPORT') || log.action.includes('PRINT') ? 'bg-purple-500/20 text-purple-400' :
                               'bg-gray-500/20 text-gray-400'
                             }`}>

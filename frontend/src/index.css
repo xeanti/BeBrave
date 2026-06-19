@@ -121,3 +121,15 @@ html.light table td,
 html.light table th {
   color: #111827 !important;
 }
+
+html.light .bg-dark-800\/60 {
+  background-color: #ffffff !important;
+}
+
+html.light .border-gray-800 {
+  border-color: #e5e7eb !important;
+}
+
+html.light .border-gray-800\/50 {
+  border-color: #e5e7eb !important;
+}

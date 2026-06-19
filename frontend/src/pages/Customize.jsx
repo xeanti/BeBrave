@@ -20,6 +20,8 @@ export default function Customize() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [cartMessage, setCartMessage] = useState('');
+  const [partQuantities, setPartQuantities] = useState({});
+
 
   useEffect(() => { fetchModels(); }, []);
 
@@ -75,8 +77,10 @@ export default function Customize() {
   }
 
   function handleAddToCart(part) {
-    addToCart(part);
-    setCartMessage(`${part.name} added to cart!`);
+    const qty = partQuantities[part.id] || 1;
+    addToCart(part, qty);
+    setCartMessage(`${qty} × ${part.name} added to cart!`);
+    setPartQuantities((prev) => ({ ...prev, [part.id]: 1 }));
     setTimeout(() => setCartMessage(''), 2000);
   }
 
@@ -135,14 +139,14 @@ export default function Customize() {
         }
       );
 
-      if (fnError) throw fnError;
+if (fnError) throw fnError;
       setResultImage(fnData.imageUrl);
 
       await supabase.from('customizations').insert({
         customer_id: user.id,
         part_ids: selectedParts,
         original_photo_url: photoUrl,
-preview_image_url: null,
+        preview_image_url: fnData.imageUrl,
         prompt_used: fnData.prompt,
         status: 'generated',
       });
@@ -314,14 +318,37 @@ preview_image_url: null,
                                   <p className="text-xs text-gray-400 capitalize">{part.category}</p>
                                 </div>
                               </label>
-                              <div className="flex flex-col items-end gap-1 ml-2">
-                                <span className="text-sm text-accent-400 font-medium">₱{part.price}</span>
-                                <button type="button"
-                                  onClick={() => handleAddToCart(part)}
-                                  className="text-xs bg-dark-800 hover:bg-primary-600 border border-gray-700 hover:border-primary-500 px-2 py-1 rounded-md transition whitespace-nowrap">
-                                  + Cart
-                                </button>
-                              </div>
+                                <div className="flex flex-col items-end gap-1.5 ml-2">
+                                  <span className="text-sm text-accent-400 font-medium">₱{part.price}</span>
+                                  <div className="flex items-center gap-1 bg-dark-800 rounded-md px-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => setPartQuantities((prev) => ({
+                                        ...prev,
+                                        [part.id]: Math.max(1, (prev[part.id] || 1) - 1),
+                                      }))}
+                                      className="w-5 h-5 flex items-center justify-center text-xs font-bold text-gray-300 hover:text-white"
+                                    >
+                                      −
+                                    </button>
+                                    <span className="text-xs w-4 text-center">{partQuantities[part.id] || 1}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setPartQuantities((prev) => ({
+                                        ...prev,
+                                        [part.id]: Math.min(part.stock_quantity || 99, (prev[part.id] || 1) + 1),
+                                      }))}
+                                      className="w-5 h-5 flex items-center justify-center text-xs font-bold text-gray-300 hover:text-white"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                  <button type="button"
+                                    onClick={() => handleAddToCart(part)}
+                                    className="text-xs bg-dark-800 hover:bg-primary-600 border border-gray-700 hover:border-primary-500 px-2 py-1 rounded-md transition whitespace-nowrap">
+                                    + Cart
+                                  </button>
+                                </div>
                             </div>
                           );
                         })
@@ -367,7 +394,7 @@ preview_image_url: null,
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
                   </svg>
                   <p className="text-gray-400 text-sm">Generating your preview...</p>
-                  <p className="text-gray-600 text-xs mt-1">This may take 10–30 seconds</p>
+                  <p className="text-gray-600 text-xs mt-1">This may take 1 - 3 Minutes</p>
                 </div>
               ) : resultImage ? (
                 // Fix 6: parts cost estimate added between image and buttons

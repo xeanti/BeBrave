@@ -26,6 +26,11 @@ function formatSlot(slot) {
   return `${displayHour}:${m} ${ampm}`;
 }
 
+// Normalize "08:00:00" (Postgres time) vs "08:00" (TIME_SLOTS) for comparison
+function normalizeTime(t) {
+  return t?.slice(0, 5);
+}
+
 export default function Booking() {
   const { user } = useAuth();
   const location = useLocation();
@@ -92,6 +97,16 @@ export default function Booking() {
   const downpayment = selectedService
     ? (((selectedService.base_price || 0) + (selectedService.labor_cost || 0) + effectiveCartTotal) * 0.15).toFixed(2)
     : null;
+
+  // Booked slots for the mechanic on the currently selected date
+  const bookedSlotsForDate = new Set(
+    mechanicBookings
+      .filter((b) => b.booking_date === form.booking_date)
+      .map((b) => normalizeTime(b.booking_time))
+  );
+
+  const hasScheduleData = Boolean(selectedMechanic && form.booking_date);
+  const allSlotsBooked = hasScheduleData && bookedSlotsForDate.size >= TIME_SLOTS.length;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -200,10 +215,11 @@ export default function Booking() {
               value={selectedMechanic}
               onChange={(e) => {
                 setSelectedMechanic(e.target.value);
+                setForm((f) => ({ ...f, booking_time: '' })); // reset time — availability changes per mechanic
                 if (e.target.value) fetchMechanicSchedule(e.target.value);
                 else setMechanicBookings([]);
               }}
-              className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white focus:outline-none focus:border-primary-500 mb-3"
+              className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white focus:outline-none focus:border-primary-500"
             >
               <option value="">Any available mechanic</option>
               {mechanics.map((m) => (
@@ -214,30 +230,10 @@ export default function Booking() {
               ))}
             </select>
 
-            {selectedMechanic && (
-              <div className="bg-dark-900 rounded-lg p-4">
-                <p className="text-sm font-medium text-gray-300 mb-2">📅 Upcoming Schedule</p>
-                {mechanicBookings.length === 0 ? (
-                  <p className="text-sm text-green-400">✅ Fully available — no upcoming bookings!</p>
-                ) : (
-                  <>
-                    <ul className="space-y-1.5 mb-3">
-                      {mechanicBookings.map((b, i) => (
-                        <li key={i} className="text-xs text-gray-400 flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />
-                          <span className="text-gray-300">{b.booking_date}</span>
-                          <span>at</span>
-                          <span className="text-gray-300">{formatSlot(b.booking_time)}</span>
-                          <span className="capitalize text-gray-500">({b.status})</span>
-                        </li>
-                      ))}
-                    </ul>
-                    <p className="text-xs text-yellow-400">
-                      ⚠ This mechanic has {mechanicBookings.length} upcoming booking{mechanicBookings.length > 1 ? 's' : ''}. Choose a different date/time to avoid conflicts.
-                    </p>
-                  </>
-                )}
-              </div>
+            {selectedMechanic && !form.booking_date && (
+              <p className="text-xs text-gray-500 mt-3">
+                📅 Pick a date below to see this mechanic's open time slots.
+              </p>
             )}
           </div>
 
@@ -246,21 +242,75 @@ export default function Booking() {
             <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-4">
               3. Select Date & Time
             </h2>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm text-gray-400 mb-1">Date</label>
-                <input
-                  type="date"
-                  name="booking_date"
-                  required
-                  value={form.booking_date}
-                  onChange={handleChange}
-                  min={new Date().toISOString().split('T')[0]}
-                  className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white focus:outline-none focus:border-primary-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-1">Time</label>
+
+            <div className="mb-4">
+              <label className="block text-sm text-gray-400 mb-1">Date</label>
+              <input
+                type="date"
+                name="booking_date"
+                required
+                value={form.booking_date}
+                onChange={(e) => {
+                  handleChange(e);
+                  setForm((f) => ({ ...f, booking_date: e.target.value, booking_time: '' }));
+                }}
+                min={new Date().toISOString().split('T')[0]}
+                className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white focus:outline-none focus:border-primary-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Time</label>
+
+              {hasScheduleData ? (
+                <>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    {TIME_SLOTS.map((slot) => {
+                      const isBooked = bookedSlotsForDate.has(slot);
+                      const isSelected = form.booking_time === slot;
+                      return (
+                        <button
+                          key={slot}
+                          type="button"
+                          disabled={isBooked}
+                          onClick={() => setForm((f) => ({ ...f, booking_time: slot }))}
+                          className={`text-xs px-2 py-2.5 rounded-lg font-medium border transition ${
+                            isBooked
+                              ? 'bg-red-500/10 border-red-500/20 text-red-400/60 cursor-not-allowed line-through'
+                              : isSelected
+                              ? 'bg-primary-600 border-primary-600 text-white'
+                              : 'bg-dark-900 border-gray-700 text-gray-300 hover:border-primary-500/50'
+                          }`}
+                        >
+                          {formatSlot(slot)}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Legend */}
+                  <div className="flex items-center gap-4 mt-3 text-xs text-gray-500">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-dark-900 border border-gray-700 inline-block" />
+                      Available
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-red-500/20 border border-red-500/30 inline-block" />
+                      Booked
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-primary-600 inline-block" />
+                      Selected
+                    </span>
+                  </div>
+
+                  {allSlotsBooked && (
+                    <p className="text-xs text-yellow-400 mt-2">
+                      ⚠ This mechanic is fully booked on this date. Try another date or mechanic.
+                    </p>
+                  )}
+                </>
+              ) : (
                 <select
                   name="booking_time"
                   required
@@ -275,8 +325,9 @@ export default function Booking() {
                     </option>
                   ))}
                 </select>
-                <p className="text-xs text-gray-500 mt-1">Shop hours: 8:00 AM – 5:00 PM</p>
-              </div>
+              )}
+
+              <p className="text-xs text-gray-500 mt-1">Shop hours: 8:00 AM – 5:00 PM</p>
             </div>
           </div>
 

@@ -14,6 +14,7 @@ export default function Shop() {
   const [category, setCategory] = useState('all');
   const [selectedModel, setSelectedModel] = useState('all');
   const [cartMessage, setCartMessage] = useState('');
+  const [quantities, setQuantities] = useState({}); // partId -> selected qty before adding
 
   useEffect(() => {
     fetchParts();
@@ -38,9 +39,20 @@ export default function Shop() {
     if (data) setModels(data);
   }
 
+  function getQty(partId) {
+    return quantities[partId] || 1;
+  }
+
+  function setQty(partId, qty, max) {
+    const clamped = Math.min(Math.max(1, qty), max || 99);
+    setQuantities((prev) => ({ ...prev, [partId]: clamped }));
+  }
+
   function handleAddToCart(part) {
-    addToCart(part);
-    setCartMessage(`${part.name} added to cart!`);
+    const qty = getQty(part.id);
+    addToCart(part, qty);
+    setCartMessage(`${qty} × ${part.name} added to cart!`);
+    setQuantities((prev) => ({ ...prev, [part.id]: 1 })); // reset stepper after adding
     setTimeout(() => setCartMessage(''), 2000);
   }
 
@@ -148,6 +160,7 @@ export default function Shop() {
             {filteredParts.map((part) => {
               const inCart = cartItemIds.includes(part.id);
               const isLowStock = part.stock_quantity <= part.reorder_threshold;
+              const qty = getQty(part.id);
 
               return (
                 <div key={part.id}
@@ -196,19 +209,47 @@ export default function Shop() {
                       )}
                     </div>
 
-                    <div className="flex items-center justify-between mt-3">
-                      <p className="text-lg font-bold text-accent-400">₱{part.price}</p>
-                      <button
-                        onClick={() => handleAddToCart(part)}
-                        className={`text-sm px-3 py-1.5 rounded-lg font-medium transition ${
-                          inCart
-                            ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                            : 'bg-primary-600 hover:bg-primary-700 text-white'
-                        }`}
-                      >
-                        {inCart ? '✓ In Cart' : '+ Add to Cart'}
-                      </button>
+                    <p className="text-lg font-bold text-accent-400 mb-3">₱{part.price}</p>
+
+                    {/* Quantity stepper */}
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2 bg-dark-900 rounded-lg px-2 py-1">
+                        <button
+                          type="button"
+                          onClick={() => setQty(part.id, qty - 1, part.stock_quantity)}
+                          className="w-6 h-6 rounded-md flex items-center justify-center text-sm font-bold text-gray-300 hover:bg-dark-800 transition"
+                        >
+                          −
+                        </button>
+                        <input
+                          type="number"
+                          min={1}
+                          max={part.stock_quantity}
+                          value={qty}
+                          onChange={(e) => setQty(part.id, parseInt(e.target.value) || 1, part.stock_quantity)}
+                          className="w-10 bg-transparent text-center text-sm font-medium focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setQty(part.id, qty + 1, part.stock_quantity)}
+                          className="w-6 h-6 rounded-md flex items-center justify-center text-sm font-bold text-gray-300 hover:bg-dark-800 transition"
+                        >
+                          +
+                        </button>
+                      </div>
+                      <span className="text-xs text-gray-500">{part.stock_quantity} in stock</span>
                     </div>
+
+                    <button
+                      onClick={() => handleAddToCart(part)}
+                      className={`text-sm px-3 py-2 rounded-lg font-medium transition w-full ${
+                        inCart
+                          ? 'bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30'
+                          : 'bg-primary-600 hover:bg-primary-700 text-white'
+                      }`}
+                    >
+                      {inCart ? `✓ In Cart — Add ${qty} More` : `+ Add ${qty} to Cart`}
+                    </button>
                   </div>
                 </div>
               );
