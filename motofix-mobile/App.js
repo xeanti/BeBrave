@@ -3,12 +3,15 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ThemeProvider, useTheme } from './lib/ThemeContext';
+
+// Screen Imports
 import HomeScreen from './screens/HomeScreen';
 import BookingsScreen from './screens/BookingsScreen';
 import ChatScreen from './screens/ChatScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
+import BookingScreen from './screens/BookingScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -24,7 +27,7 @@ function MainTabs() {
       headerTintColor: theme.text,
     }}>
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Bookings" component={BookingsScreen} />
+      <Tab.Screen name="Appointments" component={BookingsScreen} />
       <Tab.Screen name="Chat" component={ChatScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
@@ -39,6 +42,16 @@ function RootNav() {
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="Register" component={RegisterScreen} />
         <Stack.Screen name="Main" component={MainTabs} />
+        <Stack.Screen 
+          name="Booking" 
+          component={BookingScreen} 
+          options={{ 
+            headerShown: true, 
+            title: 'Book a Service', 
+            headerStyle: { backgroundColor: theme.bg2 }, 
+            headerTintColor: theme.text 
+          }} 
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );
