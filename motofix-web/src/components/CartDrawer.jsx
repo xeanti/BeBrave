@@ -219,5 +219,3 @@ export default function CartDrawer() {
     </>
   );
 }
-
-s
