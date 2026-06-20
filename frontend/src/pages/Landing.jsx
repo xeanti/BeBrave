@@ -1,8 +1,15 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { getDownPaymentPercent } from '../lib/settings';
 
 export default function Landing() {
   const { user } = useAuth();
+  const [downPaymentRate, setDownPaymentRate] = useState(0.15);
+
+  useEffect(() => {
+    getDownPaymentPercent().then(setDownPaymentRate);
+  }, []);
 
   return (
     <div className="bg-dark-900 text-white overflow-hidden">
@@ -106,7 +113,7 @@ export default function Landing() {
             </div>
 
             <div className="absolute bottom-0 left-0 bg-dark-800 border border-gray-800 rounded-xl px-4 py-3 shadow-xl -rotate-3">
-              <p className="text-2xl font-bold text-primary-500">15%</p>
+              <p className="text-2xl font-bold text-primary-500">{Math.round(downPaymentRate * 100)}%</p>
               <p className="text-xs text-gray-400">down payment only</p>
             </div>
           </div>
@@ -198,7 +205,7 @@ export default function Landing() {
             <div className="hidden md:block absolute top-7 left-[calc(16.6%+1.75rem)] right-[calc(16.6%+1.75rem)] h-px bg-gradient-to-r from-primary-500/40 via-gray-700 to-primary-500/40 -z-0" />
             <Step number="1" title="Pick a service" text="Choose a service, get an instant cost estimate, no surprises." />
             <Step number="2" title="Preview & book" text="Try the AI appearance preview, then lock in your date and mechanic." />
-            <Step number="3" title="Ride in, ride out" text="Pay 15% down, bring your bike, and we handle the rest." />
+            <Step number="3" title="Ride in, ride out" text={`Pay ${Math.round(downPaymentRate * 100)}% down, bring your bike, and we handle the rest.`} />
           </div>
         </div>
       </section>
@@ -241,7 +248,7 @@ function FeatureCard({ title, description, icon }) {
 
 function Step({ number, title, text }) {
   return (
-    <div className="relative bg-dark-900 md:bg-transparent rounded-xl p-2">
+    <div className="relative bg-dark-800 border border-gray-800 rounded-xl p-6">
       <div className="w-14 h-14 rounded-full bg-dark-800 border border-primary-500/30 text-primary-400 font-bold flex items-center justify-center mb-4 relative z-10">
         {number}
       </div>

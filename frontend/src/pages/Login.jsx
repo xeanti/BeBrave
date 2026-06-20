@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
-  const { signIn } = useAuth();
+  const { signIn, user } = useAuth();
   const navigate = useNavigate();
 
   const [email, setEmail] = useState('');
@@ -11,11 +11,14 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    if (user) navigate('/dashboard');
+  }, [user]);
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
     setLoading(true);
-
     try {
       await signIn({ email, password });
       navigate('/dashboard');
@@ -29,9 +32,7 @@ export default function Login() {
   return (
     <div className="min-h-[calc(100vh-72px)] flex items-center justify-center bg-dark-900 px-4">
       <div className="bg-dark-800 rounded-xl shadow-lg p-8 w-full max-w-md">
-        <h2 className="text-2xl font-bold text-white mb-6 text-center">
-          Welcome Back
-        </h2>
+        <h2 className="text-2xl font-bold text-white mb-6 text-center">Welcome Back</h2>
 
         {error && (
           <div className="bg-red-500/10 border border-red-500 text-red-400 text-sm rounded-md p-3 mb-4">
@@ -75,9 +76,7 @@ export default function Login() {
 
         <p className="text-gray-400 text-sm text-center mt-6">
           Don't have an account?{' '}
-          <Link to="/register" className="text-primary-500 hover:underline">
-            Sign up
-          </Link>
+          <Link to="/register" className="text-primary-500 hover:underline">Sign up</Link>
         </p>
       </div>
     </div>

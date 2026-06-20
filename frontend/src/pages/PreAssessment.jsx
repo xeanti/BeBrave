@@ -1,7 +1,19 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { getDownPaymentPercent } from '../lib/settings';
 import { supabase } from '../lib/supabaseClient';
+
+function StepHeader({ number, title }) {
+  return (
+    <div className="flex items-center gap-3 mb-4">
+      <div className="w-7 h-7 rounded-full bg-primary-600/15 border border-primary-500/30 flex items-center justify-center text-xs font-bold text-primary-400 flex-shrink-0">
+        {number}
+      </div>
+      <h2 className="text-sm font-semibold text-gray-200 tracking-wide">{title}</h2>
+    </div>
+  );
+}
 
 export default function PreAssessment() {
   const { user, profile } = useAuth();
@@ -19,10 +31,15 @@ export default function PreAssessment() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [downPaymentRate, setDownPaymentRate] = useState(0.15);
 
   useEffect(() => {
     fetchServices();
-    // Pre-fill motorcycle info from profile
+
+    getDownPaymentPercent()
+      .then(setDownPaymentRate)
+      .catch(() => setDownPaymentRate(0.15));
+
     if (profile) {
       setForm((f) => ({
         ...f,
@@ -45,21 +62,19 @@ export default function PreAssessment() {
     const updated = { ...form, [e.target.name]: e.target.value };
     setForm(updated);
 
-    // Auto-calculate estimate when service is selected
     if (e.target.name === 'service_id' && e.target.value) {
       const svc = services.find((s) => s.id === e.target.value);
       if (svc) {
         const laborCost = svc.labor_cost || 0;
         const baseCost = svc.base_price || 0;
         const total = baseCost + laborCost;
-        const downPayment = total * 0.15;
-        setEstimate({
-          service: svc,
-          laborCost,
-          baseCost,
-          total,
-          downPayment,
-        });
+        const downPayment = total * downPaymentRate;
+setEstimate({
+  service: svc,
+  laborCost,
+  baseCost,
+  total,
+});
       }
     } else if (e.target.name === 'service_id' && !e.target.value) {
       setEstimate(null);
@@ -90,7 +105,7 @@ export default function PreAssessment() {
           estimated_labor_cost: estimate.laborCost,
           estimated_parts_cost: 0,
           estimated_total: estimate.total,
-          down_payment_required: estimate.downPayment,
+down_payment_required: estimate.total * downPaymentRate,
           status: 'pending',
         });
 
@@ -106,36 +121,42 @@ export default function PreAssessment() {
   if (saved) {
     return (
       <div className="min-h-[calc(100vh-65px)] bg-dark-900 text-white flex items-center justify-center px-6">
-        <div className="bg-dark-800 rounded-xl p-8 max-w-md w-full text-center">
-          <div className="text-5xl mb-4">✅</div>
+        <div className="bg-dark-800 border border-gray-800 rounded-2xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="w-16 h-16 rounded-full bg-green-500/15 border border-green-500/30 flex items-center justify-center mx-auto mb-5">
+            <span className="text-3xl">✅</span>
+          </div>
           <h2 className="text-2xl font-bold mb-2">Assessment Submitted!</h2>
-          <p className="text-gray-400 mb-6">
+          <p className="text-gray-400 mb-6 text-sm leading-relaxed">
             Your pre-assessment has been submitted. You can now proceed to book
             your service using the estimated cost below.
           </p>
 
           {estimate && (
-            <div className="bg-dark-900 rounded-lg p-4 text-left mb-6 space-y-2 text-sm">
+            <div className="bg-dark-900 border border-gray-800 rounded-xl p-4 text-left mb-6 space-y-2 text-sm">
               <div className="flex justify-between text-gray-400">
                 <span>Service</span>
-                <span>{estimate.service.name}</span>
+                <span className="text-gray-300">{estimate.service.name}</span>
               </div>
               <div className="flex justify-between text-gray-400">
                 <span>Base Price</span>
-                <span>₱{estimate.baseCost.toFixed(2)}</span>
+                <span className="text-gray-300">₱{estimate.baseCost.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-gray-400">
                 <span>Labor Cost</span>
-                <span>₱{estimate.laborCost.toFixed(2)}</span>
+                <span className="text-gray-300">₱{estimate.laborCost.toFixed(2)}</span>
               </div>
-              <div className="border-t border-gray-700 pt-2 flex justify-between font-semibold text-white">
+              <div className="border-t border-gray-700 pt-2.5 flex justify-between font-semibold text-white">
                 <span>Estimated Total</span>
                 <span>₱{estimate.total.toFixed(2)}</span>
               </div>
-              <div className="flex justify-between text-accent-400 font-medium">
-                <span>Down Payment Required (15%)</span>
-                <span>₱{estimate.downPayment.toFixed(2)}</span>
-              </div>
+<div className="flex justify-between text-accent-400 font-medium">
+  <span>
+    Down Payment Required ({Math.round(downPaymentRate * 100)}%)
+  </span>
+  <span>
+    ₱{(estimate.total * downPaymentRate).toFixed(2)}
+  </span>
+</div>
             </div>
           )}
 
@@ -148,7 +169,7 @@ export default function PreAssessment() {
                   down_payment: estimate?.downPayment,
                 }
               })}
-              className="flex-1 bg-primary-600 hover:bg-primary-700 py-2.5 rounded-lg font-semibold transition text-sm"
+              className="flex-1 bg-primary-600 hover:bg-primary-700 py-2.5 rounded-lg font-semibold transition text-sm shadow-lg shadow-primary-600/10"
             >
               Proceed to Booking →
             </button>
@@ -164,7 +185,7 @@ export default function PreAssessment() {
                   service_id: '',
                 });
               }}
-              className="flex-1 border border-gray-700 hover:border-gray-500 py-2.5 rounded-lg text-sm transition"
+              className="flex-1 border border-gray-700 hover:border-gray-500 py-2.5 rounded-lg text-sm transition text-gray-300"
             >
               New Assessment
             </button>
@@ -185,79 +206,74 @@ export default function PreAssessment() {
         </div>
 
         {error && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg p-4 mb-6">
-            {error}
+          <div className="flex items-start gap-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg p-4 mb-6">
+            <span className="flex-shrink-0">⚠</span>
+            <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-5">
+        <form onSubmit={handleSubmit} className="space-y-4">
 
           {/* Motorcycle Info */}
-          <div className="bg-dark-800 rounded-xl p-5">
-            <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-4">
-              1. Motorcycle Details
-            </h2>
+          <div className="bg-dark-800 border border-gray-800 rounded-xl p-5 transition-colors hover:border-gray-700">
+            <StepHeader number={1} title="Motorcycle Details" />
             <div className="grid grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Make</label>
+                <label className="block text-sm text-gray-400 mb-1.5">Make</label>
                 <input
                   name="motorcycle_make"
                   value={form.motorcycle_make}
                   onChange={handleChange}
                   placeholder="e.g. Yamaha"
-                  className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500"
+                  className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 transition placeholder:text-gray-600"
                 />
               </div>
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Model</label>
+                <label className="block text-sm text-gray-400 mb-1.5">Model</label>
                 <input
                   name="motorcycle_model"
                   value={form.motorcycle_model}
                   onChange={handleChange}
                   placeholder="e.g. Aerox 155"
-                  className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500"
+                  className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 transition placeholder:text-gray-600"
                 />
               </div>
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Year</label>
+                <label className="block text-sm text-gray-400 mb-1.5">Year</label>
                 <input
                   name="motorcycle_year"
                   type="number"
                   value={form.motorcycle_year}
                   onChange={handleChange}
                   placeholder="e.g. 2023"
-                  className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500"
+                  className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 transition placeholder:text-gray-600"
                 />
               </div>
             </div>
           </div>
 
           {/* Issue Description */}
-          <div className="bg-dark-800 rounded-xl p-5">
-            <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-4">
-              2. Describe the Issue
-            </h2>
+          <div className="bg-dark-800 border border-gray-800 rounded-xl p-5 transition-colors hover:border-gray-700">
+            <StepHeader number={2} title="Describe the Issue" />
             <textarea
               name="issue_description"
               value={form.issue_description}
               onChange={handleChange}
               rows={4}
               placeholder="Describe what's wrong with your motorcycle or what service you need... (e.g. Strange noise when braking, oil leaking from engine, needs full tune-up)"
-              className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 resize-none"
+              className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 transition resize-none placeholder:text-gray-600"
             />
           </div>
 
           {/* Service Selection */}
-          <div className="bg-dark-800 rounded-xl p-5">
-            <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-4">
-              3. Select Service Type
-            </h2>
+          <div className="bg-dark-800 border border-gray-800 rounded-xl p-5 transition-colors hover:border-gray-700">
+            <StepHeader number={3} title="Select Service Type" />
             <select
               name="service_id"
               value={form.service_id}
               onChange={handleChange}
               required
-              className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500"
+              className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 transition"
             >
               <option value="">Choose a service...</option>
               {services.map((s) => (
@@ -270,10 +286,11 @@ export default function PreAssessment() {
 
           {/* Live Estimate */}
           {estimate && (
-            <div className="bg-dark-800 rounded-xl p-5 border border-primary-500/20">
-              <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-4">
-                💡 Cost Estimate
-              </h2>
+            <div className="bg-dark-800 rounded-xl p-5 border border-primary-500/25 ring-1 ring-primary-500/10">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-base">💡</span>
+                <h2 className="text-sm font-semibold text-gray-200 tracking-wide">Cost Estimate</h2>
+              </div>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between text-gray-400">
                   <span>Service</span>
@@ -281,27 +298,31 @@ export default function PreAssessment() {
                 </div>
                 <div className="flex justify-between text-gray-400">
                   <span>Base Price</span>
-                  <span>₱{estimate.baseCost.toFixed(2)}</span>
+                  <span className="text-gray-300">₱{estimate.baseCost.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
                   <span>Estimated Labor Cost</span>
-                  <span>₱{estimate.laborCost.toFixed(2)}</span>
+                  <span className="text-gray-300">₱{estimate.laborCost.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
                   <span>Estimated Duration</span>
-                  <span>{estimate.service.estimated_duration_minutes} minutes</span>
+                  <span className="text-gray-300">{estimate.service.estimated_duration_minutes} minutes</span>
                 </div>
                 <div className="border-t border-gray-700 pt-3 mt-1 flex justify-between font-bold text-white text-base">
                   <span>Estimated Total</span>
                   <span>₱{estimate.total.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-accent-400 font-medium">
-                  <span>Required Down Payment (15%)</span>
-                  <span>₱{estimate.downPayment.toFixed(2)}</span>
-                </div>
+<div className="flex justify-between text-accent-400 font-semibold">
+  <span>
+    Required Down Payment ({Math.round(downPaymentRate * 100)}%)
+  </span>
+  <span>
+    ₱{(estimate.total * downPaymentRate).toFixed(2)}
+  </span>
+</div>
               </div>
 
-              <p className="text-xs text-gray-500 mt-4">
+              <p className="text-xs text-gray-500 mt-4 leading-relaxed">
                 * This is a preliminary estimate only. Final cost may vary depending on
                 actual parts used and mechanic assessment during the service.
               </p>
@@ -311,9 +332,16 @@ export default function PreAssessment() {
           <button
             type="submit"
             disabled={saving || !form.service_id}
-            className="w-full bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition"
+            className="w-full bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3.5 rounded-lg transition-all shadow-lg shadow-primary-600/10 hover:shadow-primary-600/20"
           >
-            {saving ? 'Saving...' : 'Submit Pre-Assessment'}
+            {saving ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Saving...
+              </span>
+            ) : (
+              'Submit Pre-Assessment'
+            )}
           </button>
         </form>
       </div>

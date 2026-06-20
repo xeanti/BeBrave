@@ -131,18 +131,29 @@ export default function AdminMechanics() {
                   <div key={m.id} className="bg-dark-900 rounded-lg overflow-hidden">
                     <div className="flex items-center justify-between p-4 flex-wrap gap-3">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-sm font-bold">
-                          {(m.first_name?.[0] || '') + (m.last_name?.[0] || '')}
-                        </div>
+                        {m.mechanic_photo_url ? (
+                          <img 
+                            src={m.mechanic_photo_url} 
+                            alt={`${m.first_name} ${m.last_name}`}
+                            className="w-10 h-10 rounded-full object-cover border border-primary-500/30" 
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-sm font-bold">
+                            {(m.first_name?.[0] || '') + (m.last_name?.[0] || '')}
+                          </div>
+                        )}
                         <div>
                           <p className="font-medium text-sm">{m.first_name} {m.last_name}</p>
-                          <p className="text-xs text-gray-400">{m.email}</p>
+                          {m.specialization && (
+                            <p className="text-xs text-primary-400 mt-0.5">{m.specialization}</p>
+                          )}
+                          <p className="text-xs text-gray-400 mt-0.5">{m.email}</p>
                           <div className="flex gap-3 mt-1">
                             <span className="text-xs text-gray-500">Total: {total}</span>
                             <span className="text-xs text-blue-400">Active: {active}</span>
                             <span className="text-xs text-green-400">Done: {completed}</span>
                             {m.rating_avg > 0 && (
-                              <span className="text-xs text-yellow-400">★ {m.rating_avg} ({m.rating_count})</span>
+                              <span className="text-xs text-yellow-400">★ {m.rating_avg.toFixed(1)} ({m.rating_count})</span>
                             )}
                           </div>
                         </div>

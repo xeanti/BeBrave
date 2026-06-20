@@ -34,6 +34,8 @@ import AdminOrders from './pages/admin/AdminOrders';
 import AdminReports from './pages/admin/AdminReports';
 import AdminAssessments from './pages/admin/AdminAssessments';
 import AdminStaff from './pages/admin/AdminStaff';
+import AdminSettings from './pages/admin/AdminSettings';
+
 
 import StaffDashboard from './pages/staff/StaffDashboard';
 
@@ -199,6 +201,12 @@ export default function App() {
             />
 
             {/* Admin */}
+            <Route path="/admin/settings" element={
+  <ProtectedRoute allowedRoles={['admin']}>
+    <AdminSettings />
+  </ProtectedRoute>
+} />
+
             <Route
               path="/admin"
               element={

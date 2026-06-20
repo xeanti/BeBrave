@@ -3,7 +3,6 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import { Link } from 'react-router-dom';
 
-
 export default function MechanicDashboard() {
   const { user, profile } = useAuth();
   const [bookings, setBookings] = useState([]);
@@ -45,19 +44,51 @@ export default function MechanicDashboard() {
   return (
     <div className="min-h-[calc(100vh-65px)] bg-dark-900 text-white px-6 py-10">
       <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold mb-1">Mechanic Dashboard</h1>
-        <p className="text-gray-400 mb-2">
-          Welcome, {profile?.first_name} {profile?.last_name}
-        </p>
-        <div className="flex items-center gap-2 mb-8">
-          <span className="text-yellow-400">★</span>
-          <span className="font-medium">{profile?.rating_avg || '—'}</span>
-<span className="text-sm text-gray-500">({profile?.rating_count || 0} ratings)</span>
-          <Link to="/mechanic-ratings" className="text-xs text-primary-400 hover:underline">
-            View all reviews →
-          </Link>
-        </div>
+        
+        {/* Welcome Header Section */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 pb-6 border-b border-gray-800">
+          <div className="flex items-center gap-4">
+            {profile?.mechanic_photo_url ? (
+              <img 
+                src={profile.mechanic_photo_url} 
+                alt="Profile"    
+                className="w-16 h-16 rounded-full object-cover border-2 border-primary-500/30 shadow-md" 
+              />
+            ) : (
+              <div className="w-16 h-16 rounded-full bg-primary-600 flex items-center justify-center text-2xl font-bold shadow-md">
+                {(profile?.first_name?.[0] || '') + (profile?.last_name?.[0] || '')}
+              </div>
+            )}
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight">Mechanic Dashboard</h1>
+              <p className="text-gray-400 mt-0.5">
+                Welcome, {profile?.first_name} {profile?.last_name}
+              </p>
+              {profile?.specialization && (
+                <p className="text-sm text-primary-400 mt-1 flex items-center gap-1.5">
+                  <span>🔧</span> {profile.specialization}
+                </p>
+              )}
+            </div>
+          </div>
 
+          <div className="flex flex-col md:items-end justify-center gap-1.5 bg-dark-800/40 p-4 rounded-xl border border-gray-800/60 min-w-[200px]">
+            <div className="flex items-center gap-1.5">
+              <span className="text-yellow-400 text-lg">★</span>
+              <span className="font-semibold text-lg">{profile?.rating_avg ? profile.rating_avg.toFixed(1) : '—'}</span>
+              <span className="text-xs text-gray-500">({profile?.rating_count || 0} ratings)</span>
+            </div>
+            <div className="flex items-center gap-3 mt-1">
+              <Link to="/mechanic-ratings" className="text-xs text-primary-400 hover:underline">
+                View all reviews →
+              </Link>
+              <span className="text-gray-700 text-xs">|</span>
+              <Link to="/profile" className="text-xs text-primary-400 hover:underline">
+                Edit Profile →
+              </Link>
+            </div>
+          </div>
+        </div>
 
         {/* Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-8">

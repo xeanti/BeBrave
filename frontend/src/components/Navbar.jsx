@@ -201,6 +201,7 @@ export default function Navbar() {
     { to: '/admin/mechanics', label: 'Mechanics' },
     { to: '/admin/staff', label: 'Staff' },
     { to: '/admin/reports', label: 'Reports' },
+    { to: '/admin/settings', label: 'Settings' },
     { to: '/admin/chat', label: 'Chat' },
   ];
 

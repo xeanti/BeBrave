@@ -7,27 +7,22 @@ export default function CartDrawer() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   
-  // Create a reference to the drawer container
   const drawerRef = useRef(null);
 
   // Global listener to detect clicks completely outside of the drawer element
   useEffect(() => {
     function handleOutsideClick(event) {
-      // If the drawer is open and the clicked element is NOT inside the drawer...
       if (open && drawerRef.current && !drawerRef.current.contains(event.target)) {
-        // ...and it's not the cart toggle button itself (to avoid immediate reopening)
         if (!event.target.closest('.cart-toggle-btn')) {
           setOpen(false);
         }
       }
     }
 
-    // Attach listener when drawer opens
     if (open) {
       document.addEventListener('mousedown', handleOutsideClick);
     }
 
-    // Clean up listener when drawer closes or unmounts
     return () => {
       document.removeEventListener('mousedown', handleOutsideClick);
     };
@@ -35,78 +30,69 @@ export default function CartDrawer() {
 
   return (
     <>
-      {/* Cart button (Added custom class 'cart-toggle-btn' so outside-click script ignores it) */}
+      {/* Cart button */}
       <button
         onClick={() => setOpen(!open)}
-        className="cart-toggle-btn relative p-2 rounded-md text-gray-400 hover:text-white hover:bg-dark-800 transition flex-shrink-0"
+        className="cart-toggle-btn relative p-2.5 rounded-xl text-gray-400 hover:text-white hover:bg-dark-800 border border-transparent hover:border-dark-700 transition-all duration-200 flex-shrink-0"
       >
-        🛒
+        <span className="text-xl">🛒</span>
         {itemCount > 0 && (
-          <span className="absolute -top-1 -right-1 bg-primary-500 text-white text-xs w-4 h-4 rounded-full flex items-center justify-center font-bold leading-none">
+          <span className="absolute -top-1 -right-1 bg-pink-500 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-bold tracking-tight shadow-md animate-fade-in">
             {itemCount > 9 ? '9+' : itemCount}
           </span>
         )}
       </button>
 
-      {/* BACKDROP: Background darkening cover */}
+      {/* BACKDROP Overlay */}
       {open && (
         <div
-          className="fixed inset-0 z-[9998] bg-black/60 backdrop-blur-sm pointer-events-none"
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-[9998] bg-black/70 backdrop-blur-md transition-opacity duration-300 cursor-pointer"
         />
       )}
 
-      {/* Drawer — Added 'ref={drawerRef}' and bumped z-index extremely high */}
+      {/* Drawer */}
       <div
         ref={drawerRef}
-        className={`fixed top-0 right-0 h-screen max-h-screen z-[9999] flex flex-col shadow-2xl transition-transform duration-300 overflow-hidden ${
+        className={`fixed top-0 right-0 h-screen max-h-screen z-[9999] flex flex-col shadow-[rgba(0,0,0,0.8)_0px_0px_50px_0px] transition-transform duration-300 ease-out overflow-hidden bg-dark-900 border-l border-dark-800 text-white w-full max-w-[420px] ${
           open ? 'translate-x-0' : 'translate-x-full'
         }`}
-        style={{
-          width: 'min(400px, 100vw)',
-          backgroundColor: '#1a1a1a',
-        }}
       >
         {/* Header */}
-        <div
-          className="flex items-center justify-between px-5 py-4 flex-shrink-0"
-          style={{ borderBottom: '1px solid #2a2a2a' }}
-        >
-          <div className="flex items-center gap-2">
-            <span className="text-lg">🛒</span>
-            <h2 className="font-bold text-base" style={{ color: 'white' }}>
+        <div className="flex items-center justify-between px-6 py-5 flex-shrink-0 border-b border-dark-800 bg-dark-900/50 backdrop-blur-sm">
+          <div className="flex items-center gap-2.5">
+            <span className="text-xl">🛒</span>
+            <h2 className="font-bold text-lg tracking-tight text-white">
               Parts Cart
             </h2>
             {itemCount > 0 && (
-              <span
-                className="text-xs px-2 py-0.5 rounded-full font-medium"
-                style={{ backgroundColor: '#db2777', color: 'white' }}
-              >
+              <span className="text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-pink-500/10 text-pink-400 border border-pink-500/20">
                 {itemCount} {itemCount === 1 ? 'item' : 'items'}
               </span>
             )}
           </div>
           <button
             onClick={() => setOpen(false)}
-            className="w-8 h-8 rounded-full flex items-center justify-center transition hover:opacity-70"
-            style={{ backgroundColor: '#2a2a2a', color: '#9ca3af' }}
+            className="w-8 h-8 rounded-lg flex items-center justify-center transition-all bg-dark-800 text-gray-400 hover:text-white border border-transparent hover:border-dark-700 hover:bg-dark-700/50"
           >
             ✕
           </button>
         </div>
 
         {/* Items (Middle Scrollable Content) */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-3">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-4 scrollbar-thin scrollbar-thumb-dark-700">
           {cart.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center py-16">
-              <div className="text-5xl mb-4">🛒</div>
-              <p className="font-medium mb-1" style={{ color: 'white' }}>Your cart is empty</p>
-              <p className="text-sm mb-5" style={{ color: '#9ca3af' }}>
-                Browse our shop and add parts to get started.
+              <div className="w-20 h-20 rounded-full bg-dark-800 flex items-center justify-center text-4xl mb-4 border border-dark-700/50">
+                🛒
+              </div>
+              <p className="font-semibold text-lg mb-1 text-white">Your cart is empty</p>
+              <p className="text-sm mb-6 text-gray-400 max-w-[240px] mx-auto">
+                Browse our shop and add premium parts to get started.
               </p>
               <button
                 onClick={() => { setOpen(false); navigate('/shop'); }}
-                className="px-5 py-2 rounded-lg text-sm font-medium transition"
-                style={{ backgroundColor: '#db2777', color: 'white' }}
+                className="px-6 py-2.5 rounded-xl text-sm font-semibold transition-all bg-pink-600 text-white hover:bg-pink-500 active:scale-95 shadow-lg shadow-pink-600/20"
               >
                 Browse Shop
               </button>
@@ -115,136 +101,114 @@ export default function CartDrawer() {
             cart.map((item) => (
               <div
                 key={item.id}
-                className="flex items-start gap-3 rounded-xl p-3"
-                style={{ backgroundColor: '#0f0f0f' }}
+                className="flex items-start gap-4 rounded-xl p-3.5 bg-dark-950/40 border border-dark-800/80 hover:border-dark-700 transition-all duration-200 group"
               >
-                {/* Image */}
-                <div className="flex-shrink-0">
+                {/* Image Wrap */}
+                <div className="flex-shrink-0 relative overflow-hidden rounded-lg bg-dark-800 border border-dark-700/60 p-0.5">
                   {item.image_url ? (
                     <img
                       src={item.image_url}
                       alt={item.name}
-                      className="rounded-lg object-cover"
-                      style={{ width: 52, height: 52 }}
+                      className="object-cover w-[56px] h-[56px] rounded-md group-hover:scale-105 transition-transform duration-200"
                     />
                   ) : (
-                    <div
-                      className="rounded-lg flex items-center justify-center text-xl"
-                      style={{ width: 52, height: 52, backgroundColor: '#2a2a2a' }}
-                    >
+                    <div className="rounded-md flex items-center justify-center text-2xl w-[56px] h-[56px] bg-dark-800 text-gray-500">
                       ⚙️
                     </div>
                   )}
                 </div>
 
-                {/* Info */}
+                {/* Info block */}
                 <div className="flex-1 min-w-0">
-                  <p
-                    className="text-sm font-semibold truncate"
-                    style={{ color: 'white' }}
-                  >
-                    {item.name}
-                  </p>
-                  <p className="text-xs mt-0.5 capitalize" style={{ color: '#9ca3af' }}>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-semibold truncate text-white group-hover:text-pink-400 transition-colors duration-200">
+                      {item.name}
+                    </p>
+                    <p className="text-sm font-bold text-white flex-shrink-0">
+                      ₱{(parseFloat(item.price) * item.quantity).toFixed(2)}
+                    </p>
+                  </div>
+                  <p className="text-[11px] font-medium tracking-wide mt-0.5 uppercase text-gray-500">
                     {item.category || 'Part'}
                   </p>
-                  <p className="text-xs mt-0.5" style={{ color: '#eab308' }}>
-                    ₱{parseFloat(item.price).toFixed(2)} each
+                  <p className="text-xs mt-1 text-yellow-500 font-medium">
+                    ₱{parseFloat(item.price).toFixed(2)} <span className="text-gray-500 text-[10px]">each</span>
                   </p>
 
-                  {/* Qty + remove */}
-                  <div className="flex items-center gap-2 mt-2">
-                    <button
-                      onClick={() => updateQuantity(item.id, item.quantity - 1)}
-                      className="w-7 h-7 rounded-md flex items-center justify-center text-sm font-bold transition hover:opacity-80"
-                      style={{ backgroundColor: '#2a2a2a', color: 'white' }}
-                    >
-                      −
-                    </button>
-                    <span
-                      className="text-sm font-semibold w-6 text-center"
-                      style={{ color: 'white' }}
-                    >
-                      {item.quantity}
-                    </span>
-                    <button
-                      onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                      className="w-7 h-7 rounded-md flex items-center justify-center text-sm font-bold transition hover:opacity-80"
-                      style={{ backgroundColor: '#db2777', color: 'white' }}
-                    >
-                      +
-                    </button>
+                  {/* Quantity adjustments + remove links */}
+                  <div className="flex items-center justify-between gap-2 mt-3.5 pt-2 border-t border-dark-800/40">
+                    <div className="flex items-center gap-1 bg-dark-900 rounded-lg p-0.5 border border-dark-800">
+                      <button
+                        onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                        className="w-6 h-6 rounded-md flex items-center justify-center text-sm font-bold transition hover:bg-dark-800 text-gray-400 hover:text-white"
+                      >
+                        −
+                      </button>
+                      <span className="text-xs font-bold w-7 text-center text-white">
+                        {item.quantity}
+                      </span>
+                      <button
+                        onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                        className="w-6 h-6 rounded-md flex items-center justify-center text-sm font-bold transition hover:bg-dark-800 text-gray-400 hover:text-white"
+                      >
+                        +
+                      </button>
+                    </div>
+                    
                     <button
                       onClick={() => removeFromCart(item.id)}
-                      className="ml-auto text-xs transition hover:opacity-80"
-                      style={{ color: '#f87171' }}
+                      className="text-xs font-medium text-gray-500 hover:text-red-400 transition-colors duration-150"
                     >
                       Remove
                     </button>
                   </div>
-                </div>
-
-                {/* Subtotal */}
-                <div className="flex-shrink-0 text-right">
-                  <p className="text-sm font-bold" style={{ color: 'white' }}>
-                    ₱{(parseFloat(item.price) * item.quantity).toFixed(2)}
-                  </p>
                 </div>
               </div>
             ))
           )}
         </div>
 
-        {/* Footer (Always Locked to Bottom View) */}
+        {/* Footer */}
         {cart.length > 0 && (
-          <div
-            className="flex-shrink-0 px-4 py-4 space-y-3 bg-[#1a1a1a]"
-            style={{ borderTop: '1px solid #2a2a2a' }}
-          >
-            {/* Totals */}
-            <div
-              className="rounded-xl p-3 space-y-2"
-              style={{ backgroundColor: '#0f0f0f' }}
-            >
-              <div className="flex justify-between text-sm">
-                <span style={{ color: '#9ca3af' }}>
+          <div className="flex-shrink-0 px-6 py-5 space-y-4 bg-dark-900 border-t border-dark-800 shadow-[0_-10px_30px_rgba(0,0,0,0.3)]">
+            {/* Totals Box */}
+            <div className="rounded-xl p-4 space-y-2.5 bg-dark-950/80 border border-dark-800/60">
+              <div className="flex justify-between text-xs font-medium">
+                <span className="text-gray-400">
                   Subtotal ({itemCount} {itemCount === 1 ? 'item' : 'items'})
                 </span>
-                <span className="font-semibold" style={{ color: 'white' }}>
+                <span className="text-white">
                   ₱{total.toFixed(2)}
                 </span>
               </div>
-              <div className="flex justify-between text-sm">
-                <span style={{ color: '#9ca3af' }}>Down Payment (15%)</span>
-                <span className="font-bold" style={{ color: '#eab308' }}>
+              <div className="flex justify-between text-xs font-medium pt-2 border-t border-dark-800/40">
+                <span className="text-gray-400">Down Payment (15%)</span>
+                <span className="font-bold text-yellow-500">
                   ₱{(total * 0.15).toFixed(2)}
                 </span>
               </div>
             </div>
 
-            {/* Checkout button */}
+            {/* Main Action Call */}
             <button
               onClick={() => { setOpen(false); navigate('/checkout'); }}
-              className="w-full py-3 rounded-xl text-sm font-bold transition hover:opacity-90 flex items-center justify-center gap-2"
-              style={{ backgroundColor: '#db2777', color: 'white' }}
+              className="w-full py-3.5 rounded-xl text-sm font-bold transition-all bg-pink-600 hover:bg-pink-500 active:scale-[0.99] text-white flex items-center justify-center gap-2 shadow-lg shadow-pink-600/10 hover:shadow-pink-600/20"
             >
               Proceed to Checkout
-              <span>→</span>
+              <span className="text-base">→</span>
             </button>
 
-            {/* Secondary actions */}
-            <div className="flex gap-2">
+            {/* Auxiliary actions */}
+            <div className="flex gap-2.5">
               <button
                 onClick={() => { setOpen(false); navigate('/shop'); }}
-                className="flex-1 py-2 rounded-xl text-xs font-medium transition hover:opacity-80"
-                style={{ backgroundColor: '#2a2a2a', color: '#9ca3af' }}
+                className="flex-1 py-2.5 rounded-xl text-xs font-semibold transition-all bg-dark-800 text-gray-300 hover:text-white border border-dark-700/50 hover:bg-dark-700"
               >
                 Continue Shopping
               </button>
               <button
                 onClick={clearCart}
-                className="flex-1 py-2 rounded-xl text-xs font-medium transition hover:opacity-80"
-                style={{ backgroundColor: '#2a2a2a', color: '#f87171' }}
+                className="flex-1 py-2.5 rounded-xl text-xs font-semibold transition-all bg-dark-800 text-gray-400 hover:text-red-400 border border-dark-700/50 hover:bg-dark-700"
               >
                 Clear Cart
               </button>

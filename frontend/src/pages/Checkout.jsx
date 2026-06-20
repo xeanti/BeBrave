@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { getDownPaymentPercent } from '../lib/settings';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../lib/supabaseClient';
@@ -12,8 +13,12 @@ export default function Checkout() {
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [downPaymentRate, setDownPaymentRate] = useState(0.15);
+  useEffect(() => {
+  getDownPaymentPercent().then(setDownPaymentRate);
+}, []);
 
-  const downPayment = total * 0.15;
+const downPayment = total * downPaymentRate;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -196,9 +201,9 @@ export default function Checkout() {
                   <p className="text-lg font-bold mt-1" style={{color:'#eab308'}}>
                     ₱{downPayment.toFixed(2)}
                   </p>
-                  <p className="text-xs mt-0.5" style={{color:'#9ca3af'}}>
-                    15% of total — pay upon pickup
-                  </p>
+<p className="text-xs mt-0.5" style={{color:'#9ca3af'}}>
+  {Math.round(downPaymentRate * 100)}% of total — pay upon pickup
+</p>
                 </div>
               </div>
 
