@@ -4,6 +4,9 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ThemeProvider, useTheme } from './lib/ThemeContext';
 
+// Expo Vector Icons Package
+import { Ionicons } from '@expo/vector-icons';
+
 // Screen Imports
 import HomeScreen from './screens/HomeScreen';
 import BookingsScreen from './screens/BookingsScreen';
@@ -12,23 +15,46 @@ import ProfileScreen from './screens/ProfileScreen';
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
 import BookingScreen from './screens/BookingScreen';
+import CustomizeScreen from './screens/CustomizeScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
 function MainTabs() {
   const { theme } = useTheme();
+  
   return (
-    <Tab.Navigator screenOptions={{
-      tabBarActiveTintColor: theme.primaryLight,
-      tabBarInactiveTintColor: theme.textMuted,
-      tabBarStyle: { backgroundColor: theme.bg2, borderTopColor: theme.border },
-      headerStyle: { backgroundColor: theme.bg2 },
-      headerTintColor: theme.text,
-    }}>
+    <Tab.Navigator 
+      screenOptions={({ route }) => ({
+        tabBarActiveTintColor: theme.primaryLight,
+        tabBarInactiveTintColor: theme.textMuted,
+        tabBarStyle: { backgroundColor: theme.bg2, borderTopColor: theme.border },
+        headerStyle: { backgroundColor: theme.bg2 },
+        headerTintColor: theme.text,
+        // This function dynamically injects the proper icon based on screen name
+        tabBarIcon: ({ focused, color, size }) => {
+          let iconName;
+
+          if (route.name === 'Home') {
+            iconName = focused ? 'home' : 'home-outline';
+          } else if (route.name === 'Appointments') {
+            iconName = focused ? 'calendar' : 'calendar-outline';
+          } else if (route.name === 'Chat') {
+            iconName = focused ? 'chatbubbles' : 'chatbubbles-outline';
+          } else if (route.name === 'AI Preview') {
+            iconName = focused ? 'sparkles' : 'sparkles-outline';
+          } else if (route.name === 'Profile') {
+            iconName = focused ? 'person' : 'person-outline';
+          }
+
+          return <Ionicons name={iconName} size={size} color={color} />;
+        },
+      })}
+    >
       <Tab.Screen name="Home" component={HomeScreen} />
       <Tab.Screen name="Appointments" component={BookingsScreen} />
       <Tab.Screen name="Chat" component={ChatScreen} />
+      <Tab.Screen name="AI Preview" component={CustomizeScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   );
