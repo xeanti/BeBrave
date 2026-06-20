@@ -22,7 +22,7 @@ import Shop from './pages/Shop';
 import Checkout from './pages/Checkout';
 import OrderConfirmation from './pages/OrderConfirmation';
 import BookingConfirmation from './pages/BookingConfirmation';
-import AdminReports from './pages/admin/AdminReports';
+import MechanicRatings from './pages/MechanicRatings';
 
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminBookings from './pages/admin/AdminBookings';
@@ -31,8 +31,11 @@ import AdminServices from './pages/admin/AdminServices';
 import AdminMechanics from './pages/admin/AdminMechanics';
 import AdminChat from './pages/admin/AdminChat';
 import AdminOrders from './pages/admin/AdminOrders';
-import MechanicRatings from './pages/MechanicRatings';
+import AdminReports from './pages/admin/AdminReports';
 import AdminAssessments from './pages/admin/AdminAssessments';
+import AdminStaff from './pages/admin/AdminStaff';
+
+import StaffDashboard from './pages/staff/StaffDashboard';
 
 export default function App() {
   return (
@@ -57,6 +60,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/booking"
               element={
@@ -65,6 +69,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/customize"
               element={
@@ -73,6 +78,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/profile"
               element={
@@ -81,6 +87,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/appointments"
               element={
@@ -89,6 +96,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/chat"
               element={
@@ -97,6 +105,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/pre-assessment"
               element={
@@ -105,6 +114,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/my-assessments"
               element={
@@ -113,6 +123,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/my-orders"
               element={
@@ -121,6 +132,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/shop"
               element={
@@ -129,6 +141,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/checkout"
               element={
@@ -137,6 +150,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/order-confirmation"
               element={
@@ -145,6 +159,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/booking-confirmation"
               element={
@@ -154,11 +169,12 @@ export default function App() {
               }
             />
 
+            {/* Staff */}
             <Route
-              path="/admin/reports"
+              path="/staff"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
-                  <AdminReports />
+                <ProtectedRoute allowedRoles={['staff', 'admin']}>
+                  <StaffDashboard />
                 </ProtectedRoute>
               }
             />
@@ -172,6 +188,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/mechanic-ratings"
               element={
@@ -190,6 +207,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/admin/bookings"
               element={
@@ -198,6 +216,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/admin/parts"
               element={
@@ -206,6 +225,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/admin/services"
               element={
@@ -214,6 +234,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/admin/mechanics"
               element={
@@ -222,6 +243,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/admin/chat"
               element={
@@ -230,6 +252,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/admin/orders"
               element={
@@ -238,11 +261,30 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
+            <Route
+              path="/admin/reports"
+              element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <AdminReports />
+                </ProtectedRoute>
+              }
+            />
+
             <Route
               path="/admin/assessments"
               element={
                 <ProtectedRoute allowedRoles={['admin']}>
                   <AdminAssessments />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/admin/staff"
+              element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <AdminStaff />
                 </ProtectedRoute>
               }
             />

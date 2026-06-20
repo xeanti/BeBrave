@@ -186,6 +186,11 @@ export default function Navbar() {
     { to: '/mechanic-ratings', label: 'My Ratings' },
   ];
 
+  const staffLinks = [
+    { to: '/staff', label: 'POS / Booking' },
+    { to: '/admin/chat', label: '💬 Chat' },
+  ];
+
   const adminLinks = [
     { to: '/admin', label: 'Dashboard' },
     { to: '/admin/bookings', label: 'Bookings' },
@@ -194,6 +199,7 @@ export default function Navbar() {
     { to: '/admin/parts', label: 'Parts' },
     { to: '/admin/services', label: 'Services' },
     { to: '/admin/mechanics', label: 'Mechanics' },
+    { to: '/admin/staff', label: 'Staff' },
     { to: '/admin/reports', label: 'Reports' },
     { to: '/admin/chat', label: 'Chat' },
   ];
@@ -203,6 +209,8 @@ export default function Navbar() {
       ? adminLinks
       : profile?.role === 'mechanic'
       ? mechanicLinks
+      : profile?.role === 'staff'
+      ? staffLinks
       : customerLinks;
 
   const initials = profile
