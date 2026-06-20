@@ -214,4 +214,4 @@ const styles = (theme) => StyleSheet.create({
   sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.primary, justifyContent: 'center', alignItems: 'center' },
   sendBtnDisabled: { backgroundColor: theme.bg3 },
   sendBtnText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
-});
+});a
