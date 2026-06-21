@@ -7,6 +7,7 @@ export default function AdminOrders() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
+  const [search, setSearch] = useState(''); // 1. Added search state
 
   useEffect(() => { fetchOrders(); }, []);
 
@@ -31,7 +32,13 @@ export default function AdminOrders() {
     fetchOrders();
   }
 
-  const filtered = orders.filter(o => filter === 'all' || o.status === filter);
+  // 2. Updated filtering logic to match both status pill and search input
+  const filtered = orders.filter(o => {
+    const matchesStatus = filter === 'all' || o.status === filter;
+    const fullName = `${o.profiles?.first_name || ''} ${o.profiles?.last_name || ''}`.toLowerCase();
+    const matchesSearch = search.trim() === '' || fullName.includes(search.trim().toLowerCase());
+    return matchesStatus && matchesSearch;
+  });
 
   const counts = {
     all: orders.length,
@@ -65,6 +72,17 @@ export default function AdminOrders() {
           ))}
         </div>
 
+        {/* 3. Search input added right below the filter pills */}
+        <div className="mb-6">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by customer name..."
+            className="w-full md:w-80 px-4 py-2 rounded-lg bg-dark-800 border border-gray-700 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-primary-600"
+          />
+        </div>
+
         {loading ? (
           <p className="text-gray-400">Loading...</p>
         ) : filtered.length === 0 ? (
@@ -77,9 +95,9 @@ export default function AdminOrders() {
             {filtered.map((order) => (
               <div key={order.id} className="bg-dark-800 rounded-xl p-5">
 
-                {/* Top row */}
-                <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
-                  <div>
+                {/* 4. Top row split wrapper with min-w-0 / flex-1 to neutralize block scattering */}
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div className="min-w-0 flex-1">
                     <p className="font-semibold text-lg">
                       {order.profiles?.first_name} {order.profiles?.last_name}
                     </p>
@@ -91,9 +109,11 @@ export default function AdminOrders() {
                       Order #{order.id.slice(0, 8).toUpperCase()} · {new Date(order.created_at).toLocaleString()}
                     </p>
                   </div>
-                  <span className={`text-xs px-3 py-1 rounded-full capitalize font-medium ${STATUS_COLORS[order.status] || STATUS_COLORS.pending}`}>
-                    {order.status}
-                  </span>
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    <span className={`text-xs px-3 py-1 rounded-full capitalize font-medium whitespace-nowrap ${STATUS_COLORS[order.status] || STATUS_COLORS.pending}`}>
+                      {order.status}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Notes */}
@@ -114,9 +134,9 @@ export default function AdminOrders() {
                       ) : (
                         <div className="w-8 h-8 rounded-lg bg-dark-800 flex items-center justify-center text-xs flex-shrink-0">⚙️</div>
                       )}
-                      <div className="flex-1 flex justify-between items-center">
-                        <p className="text-sm text-gray-300">{item.parts?.name}</p>
-                        <p className="text-sm text-gray-400">
+                      <div className="flex-1 flex justify-between items-center min-w-0">
+                        <p className="text-sm text-gray-300 truncate mr-2">{item.parts?.name}</p>
+                        <p className="text-sm text-gray-400 whitespace-nowrap">
                           ₱{item.unit_price} × {item.quantity} = <span className="text-white font-medium">₱{item.subtotal}</span>
                         </p>
                       </div>
@@ -136,7 +156,7 @@ export default function AdminOrders() {
                   </div>
                   <div>
                     <p className="text-xs text-gray-500 mb-0.5">Down Payment (15%)</p>
-                    <p className="font-medium text-accent-400">₱{(order.total_amount * 0.15).toFixed(2)}</p>
+                    <p className="font-medium text-yellow-400">₱{(order.total_amount * 0.15).toFixed(2)}</p>
                   </div>
                 </div>
 
@@ -149,9 +169,9 @@ export default function AdminOrders() {
                       <button
                         key={s}
                         onClick={() => updateStatus(order.id, s)}
-                        className={`text-xs px-3 py-1.5 rounded-md transition capitalize ${ACTION_STYLES[s]}`}
+                        className={`text-xs px-3 py-1.5 rounded-md transition capitalize font-medium ${ACTION_STYLES[s]}`}
                       >
-                        {s === 'ready' ? 'Ready for Pickup' : s.charAt(0).toUpperCase() + s.slice(1)}
+                        {s === 'ready' ? 'Ready for Pickup' : s.replace('_', ' ')}
                       </button>
                     ))}
                 </div>

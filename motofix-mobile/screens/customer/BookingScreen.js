@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, ActivityIndicator, StatusBar, Alert, Platform
+  TextInput, ActivityIndicator, StatusBar, Alert, Platform, Image
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { supabase } from '../lib/supabase';
-import { useTheme } from '../lib/ThemeContext';
+import { supabase } from '../../lib/supabase';
+import { useTheme } from '../../lib/ThemeContext';
+
+const TOTAL_STEPS = 5;
 
 export default function BookingScreen({ navigation }) {
   const { theme, isDark } = useTheme();
@@ -16,6 +18,7 @@ export default function BookingScreen({ navigation }) {
   // Data
   const [services, setServices] = useState([]);
   const [motorcycleModels, setMotorcycleModels] = useState([]);
+  const [mechanics, setMechanics] = useState([]);
 
   // Form state
   const [selectedService, setSelectedService] = useState(null);
@@ -23,10 +26,11 @@ export default function BookingScreen({ navigation }) {
   const [motorcycleModel, setMotorcycleModel] = useState('');
   const [motorcycleYear, setMotorcycleYear] = useState('');
   const [issueDescription, setIssueDescription] = useState('');
-  const [bookingDate, setBookingDate] = useState(null); // Date object
+  const [bookingDate, setBookingDate] = useState(null);
   const [bookingTime, setBookingTime] = useState('');
   const [notes, setNotes] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [selectedMechanic, setSelectedMechanic] = useState(null); // null = no preference
 
   const timeSlots = [
     '08:00 AM', '09:00 AM', '10:00 AM', '11:00 AM',
@@ -37,14 +41,43 @@ export default function BookingScreen({ navigation }) {
 
   async function fetchData() {
     setLoading(true);
-    const { data: s } = await supabase.from('services').select('*').eq('is_active', true);
-    const { data: m } = await supabase.from('motorcycle_models').select('*').order('make');
-    setServices(s || []);
-    setMotorcycleModels(m || []);
-    setLoading(false);
+
+    try {
+      const { data: s, error: serviceError } = await supabase
+        .from('services')
+        .select('*')
+        .eq('is_active', true);
+
+      console.log("SERVICES:", s);
+      console.log("SERVICE ERROR:", serviceError);
+
+      const { data: m, error: modelError } = await supabase
+        .from('motorcycle_models')
+        .select('*')
+        .order('make');
+
+      console.log("MODELS:", m);
+      console.log("MODEL ERROR:", modelError);
+
+      // Streamlined selection pulling all columns for mechanics
+      const { data: mech, error: mechError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('role', 'mechanic');
+
+      console.log("MECHANICS:", mech);
+      console.log("MECHANIC ERROR:", mechError);
+
+      setServices(s || []);
+      setMotorcycleModels(m || []);
+      setMechanics(mech || []);
+    } catch (err) {
+      console.log("FETCH ERROR:", err);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  // Format a Date as YYYY-MM-DD for Supabase (avoids UTC off-by-one issues)
   function toISODateString(date) {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -52,7 +85,6 @@ export default function BookingScreen({ navigation }) {
     return `${y}-${m}-${d}`;
   }
 
-  // Friendly display, e.g. "Mon, Jul 15, 2026"
   function formatDisplayDate(date) {
     return date.toLocaleDateString('en-US', {
       weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
@@ -60,12 +92,9 @@ export default function BookingScreen({ navigation }) {
   }
 
   function onChangeDate(event, selectedDate) {
-    // On Android, the picker is a dialog that closes itself; on iOS it's inline/spinner
     if (Platform.OS === 'android') {
       setShowDatePicker(false);
-      if (event.type === 'set' && selectedDate) {
-        setBookingDate(selectedDate);
-      }
+      if (event.type === 'set' && selectedDate) setBookingDate(selectedDate);
     } else {
       if (selectedDate) setBookingDate(selectedDate);
     }
@@ -77,10 +106,8 @@ export default function BookingScreen({ navigation }) {
 
     setSubmitting(true);
     const { data: { user } } = await supabase.auth.getUser();
-
     const bookingDateStr = toISODateString(bookingDate);
 
-    // Create pre-assessment
     const { data: assessment, error: assessmentError } = await supabase
       .from('pre_assessments')
       .insert({
@@ -104,12 +131,12 @@ export default function BookingScreen({ navigation }) {
       return;
     }
 
-    // Create booking
     const { error: bookingError } = await supabase
       .from('bookings')
       .insert({
         customer_id: user.id,
         service_id: selectedService.id,
+        mechanic_id: selectedMechanic?.id || null, // null = no preference / auto-assign
         booking_date: bookingDateStr,
         booking_time: bookingTime,
         status: 'pending',
@@ -128,6 +155,26 @@ export default function BookingScreen({ navigation }) {
     }
   }
 
+  function handleNext() {
+    if (step === 1 && !selectedService) {
+      Alert.alert('Error', 'Please select a service.');
+      return;
+    }
+    if (step === 2 && (!motorcycleMake || !motorcycleModel)) {
+      Alert.alert('Error', 'Please enter your motorcycle make and model.');
+      return;
+    }
+    if (step === 3 && !bookingDate) {
+      Alert.alert('Error', 'Please select a booking date.');
+      return;
+    }
+    if (step === 3 && !bookingTime) {
+      Alert.alert('Error', 'Please select a time slot.');
+      return;
+    }
+    setStep(step + 1);
+  }
+
   const s = styles(theme);
 
   if (loading) return (
@@ -142,17 +189,21 @@ export default function BookingScreen({ navigation }) {
 
       {/* Progress Bar */}
       <View style={s.progressBar}>
-        {[1, 2, 3, 4].map((i) => (
+        {[1, 2, 3, 4, 5].map((i) => (
           <View key={i} style={s.progressStep}>
             <View style={[s.progressDot, step >= i && s.progressDotActive]}>
               <Text style={[s.progressNum, step >= i && s.progressNumActive]}>{i}</Text>
             </View>
-            {i < 4 && <View style={[s.progressLine, step > i && s.progressLineActive]} />}
+            {i < TOTAL_STEPS && <View style={[s.progressLine, step > i && s.progressLineActive]} />}
           </View>
         ))}
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        style={s.scrollContainer}
+        contentContainerStyle={s.content}
+      >
 
         {/* STEP 1 - Select Service */}
         {step === 1 && (
@@ -172,9 +223,7 @@ export default function BookingScreen({ navigation }) {
                 </View>
                 <View style={s.serviceCardRight}>
                   <Text style={s.serviceCardPrice}>₱{sv.base_price}</Text>
-                  {selectedService?.id === sv.id && (
-                    <Text style={s.checkmark}>✓</Text>
-                  )}
+                  {selectedService?.id === sv.id && <Text style={s.checkmark}>✓</Text>}
                 </View>
               </TouchableOpacity>
             ))}
@@ -204,13 +253,12 @@ export default function BookingScreen({ navigation }) {
 
             <Text style={s.label}>Issue Description</Text>
             <TextInput style={[s.input, s.textArea]}
-              placeholder="Describe what's wrong with your motorcycle..."
+              placeholder="Describe what is wrong with your motorcycle..."
               placeholderTextColor={theme.textMuted} value={issueDescription}
               onChangeText={setIssueDescription} multiline numberOfLines={4} />
 
-            {/* Quick picks from DB */}
             {motorcycleModels.length > 0 && (
-              <>
+              <View style={{ marginTop: 8 }}>
                 <Text style={s.label}>Quick Pick (from our database)</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.quickPicks}>
                   {motorcycleModels.map((m) => (
@@ -220,7 +268,7 @@ export default function BookingScreen({ navigation }) {
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
-              </>
+              </View>
             )}
           </View>
         )}
@@ -232,11 +280,7 @@ export default function BookingScreen({ navigation }) {
             <Text style={s.stepSub}>Pick your preferred date and time</Text>
 
             <Text style={s.label}>Booking Date</Text>
-            <TouchableOpacity
-              style={s.dateCard}
-              onPress={() => setShowDatePicker(true)}
-              activeOpacity={0.7}
-            >
+            <TouchableOpacity style={s.dateCard} onPress={() => setShowDatePicker(true)} activeOpacity={0.7}>
               <Text style={s.dateCardIcon}>📅</Text>
               <Text style={bookingDate ? s.dateCardText : s.dateCardPlaceholder}>
                 {bookingDate ? formatDisplayDate(bookingDate) : 'Tap to choose a date'}
@@ -257,7 +301,6 @@ export default function BookingScreen({ navigation }) {
               />
             )}
 
-            {/* iOS inline picker stays open until dismissed manually */}
             {Platform.OS === 'ios' && showDatePicker && (
               <TouchableOpacity style={s.dateDoneBtn} onPress={() => setShowDatePicker(false)}>
                 <Text style={s.dateDoneBtnText}>Done</Text>
@@ -284,8 +327,70 @@ export default function BookingScreen({ navigation }) {
           </View>
         )}
 
-        {/* STEP 4 - Confirm */}
+        {/* STEP 4 - Choose Mechanic (Optional) */}
         {step === 4 && (
+          <View>
+            <Text style={s.stepTitle}>Choose a Mechanic</Text>
+            <Text style={s.stepSub}>Optional — or let us assign one for you</Text>
+
+            <TouchableOpacity
+              style={[s.mechanicCard, selectedMechanic === null && s.mechanicCardActive]}
+              onPress={() => setSelectedMechanic(null)}
+            >
+              <View style={s.mechanicAvatarPlaceholder}>
+                <Text style={s.mechanicAvatarEmoji}>🔧</Text>
+              </View>
+              <View style={s.mechanicInfo}>
+                <Text style={s.mechanicName}>No Preference</Text>
+                <Text style={s.mechanicSpec}>We'll assign the best available mechanic</Text>
+              </View>
+              {selectedMechanic === null && <Text style={s.checkmark}>✓</Text>}
+            </TouchableOpacity>
+
+            {mechanics.length === 0 ? (
+              <View style={s.emptyMechanics}>
+                <Text style={s.emptyMechanicsText}>No mechanics listed yet.</Text>
+              </View>
+            ) : (
+              mechanics.map((mech) => (
+                <TouchableOpacity
+                  key={mech.id}
+                  style={[s.mechanicCard, selectedMechanic?.id === mech.id && s.mechanicCardActive]}
+                  onPress={() => setSelectedMechanic(mech)}
+                >
+                  {mech.mechanic_photo_url ? (
+                    <Image source={{ uri: mech.mechanic_photo_url }} style={s.mechanicAvatar} />
+                  ) : (
+                    <View style={s.mechanicAvatarPlaceholder}>
+                      <Text style={s.mechanicAvatarInitials}>
+                        {mech.first_name?.[0]}{mech.last_name?.[0]}
+                      </Text>
+                    </View>
+                  )}
+                  <View style={s.mechanicInfo}>
+                    <Text style={s.mechanicName}>{mech.first_name} {mech.last_name}</Text>
+                    {mech.specialization ? (
+                      <Text style={s.mechanicSpec}>{mech.specialization}</Text>
+                    ) : null}
+                    {mech.rating_avg != null ? (
+                      <Text style={s.mechanicRating}>⭐ {Number(mech.rating_avg).toFixed(1)}</Text>
+                    ) : null}
+                  </View>
+                  {selectedMechanic?.id === mech.id && <Text style={s.checkmark}>✓</Text>}
+                </TouchableOpacity>
+              ))
+            )}
+
+            <View style={s.optionalNote}>
+              <Text style={s.optionalNoteText}>
+                💡 Selecting a mechanic is optional. Availability is subject to scheduling.
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* STEP 5 - Confirm */}
+        {step === 5 && (
           <View>
             <Text style={s.stepTitle}>Confirm Booking</Text>
             <Text style={s.stepSub}>Review your booking details</Text>
@@ -300,12 +405,20 @@ export default function BookingScreen({ navigation }) {
               <View style={s.divider} />
 
               <Text style={s.summaryTitle}>📝 Issue</Text>
-              <Text style={s.summaryValue}>{issueDescription || '—'}</Text>
+              <Text style={s.summaryValue}>{issueDescription || 'None Specified'}</Text>
               <View style={s.divider} />
 
               <Text style={s.summaryTitle}>📅 Date & Time</Text>
               <Text style={s.summaryValue}>
-                {bookingDate ? formatDisplayDate(bookingDate) : '—'} at {bookingTime}
+                {bookingDate ? formatDisplayDate(bookingDate) : 'None Specified'} at {bookingTime}
+              </Text>
+              <View style={s.divider} />
+
+              <Text style={s.summaryTitle}>👨‍🔧 Mechanic</Text>
+              <Text style={s.summaryValue}>
+                {selectedMechanic
+                  ? `${selectedMechanic.first_name} ${selectedMechanic.last_name}`
+                  : 'No Preference (Auto-assigned)'}
               </Text>
               <View style={s.divider} />
 
@@ -326,37 +439,21 @@ export default function BookingScreen({ navigation }) {
 
       </ScrollView>
 
-      {/* Navigation Buttons */}
+      {/* Footer */}
       <View style={s.footer}>
         {step > 1 && (
           <TouchableOpacity style={s.backBtn} onPress={() => setStep(step - 1)}>
             <Text style={s.backBtnText}>← Back</Text>
           </TouchableOpacity>
         )}
-        {step < 4 ? (
+        {step < TOTAL_STEPS ? (
           <TouchableOpacity
             style={[s.nextBtn, step === 1 && !selectedService && s.nextBtnDisabled]}
-            onPress={() => {
-              if (step === 1 && !selectedService) {
-                Alert.alert('Error', 'Please select a service.');
-                return;
-              }
-              if (step === 2 && (!motorcycleMake || !motorcycleModel)) {
-                Alert.alert('Error', 'Please enter your motorcycle make and model.');
-                return;
-              }
-              if (step === 3 && !bookingDate) {
-                Alert.alert('Error', 'Please select a booking date.');
-                return;
-              }
-              if (step === 3 && !bookingTime) {
-                Alert.alert('Error', 'Please select a time slot.');
-                return;
-              }
-              setStep(step + 1);
-            }}
+            onPress={handleNext}
           >
-            <Text style={s.nextBtnText}>Next →</Text>
+            <Text style={s.nextBtnText}>
+              {step === 4 ? (selectedMechanic ? 'Next →' : 'Skip →') : 'Next →'}
+            </Text>
           </TouchableOpacity>
         ) : (
           <TouchableOpacity style={s.nextBtn} onPress={handleSubmit} disabled={submitting}>
@@ -376,13 +473,14 @@ const styles = (theme) => StyleSheet.create({
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.bg },
   progressBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 20, backgroundColor: theme.bg2, borderBottomWidth: 1, borderBottomColor: theme.border },
   progressStep: { flexDirection: 'row', alignItems: 'center' },
-  progressDot: { width: 32, height: 32, borderRadius: 16, backgroundColor: theme.bg3, borderWidth: 2, borderColor: theme.border, justifyContent: 'center', alignItems: 'center' },
+  progressDot: { width: 28, height: 28, borderRadius: 14, backgroundColor: theme.bg3, borderWidth: 2, borderColor: theme.border, justifyContent: 'center', alignItems: 'center' },
   progressDotActive: { backgroundColor: theme.primary, borderColor: theme.primary },
-  progressNum: { color: theme.textMuted, fontWeight: 'bold', fontSize: 13 },
+  progressNum: { color: theme.textMuted, fontWeight: 'bold', fontSize: 12 },
   progressNumActive: { color: '#fff' },
-  progressLine: { width: 40, height: 2, backgroundColor: theme.border },
+  progressLine: { width: 28, height: 2, backgroundColor: theme.border },
   progressLineActive: { backgroundColor: theme.primary },
-  content: { padding: 20 },
+  scrollContainer: { flex: 1 },
+  content: { padding: 20, paddingBottom: 40 },
   stepTitle: { fontSize: 22, fontWeight: 'bold', color: theme.text, marginBottom: 6 },
   stepSub: { fontSize: 14, color: theme.textSub, marginBottom: 24 },
   serviceCard: { backgroundColor: theme.card, borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 2, borderColor: theme.border, flexDirection: 'row', justifyContent: 'space-between' },
@@ -397,7 +495,7 @@ const styles = (theme) => StyleSheet.create({
   label: { fontSize: 13, fontWeight: '600', color: theme.textSub, marginBottom: 8, marginTop: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
   input: { backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, borderRadius: 12, padding: 14, fontSize: 15, color: theme.text, marginBottom: 16 },
   textArea: { height: 100, textAlignVertical: 'top' },
-  quickPicks: { marginBottom: 16 },
+  quickPicks: { marginBottom: 16, paddingVertical: 4 },
   quickPickChip: { backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, marginRight: 8 },
   quickPickText: { color: theme.text, fontSize: 13 },
   dateCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, borderRadius: 12, padding: 14, marginBottom: 16 },
@@ -413,15 +511,29 @@ const styles = (theme) => StyleSheet.create({
   timeChipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
   timeChipText: { color: theme.textSub, fontSize: 14 },
   timeChipTextActive: { color: '#fff', fontWeight: 'bold' },
+  mechanicCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.card, borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 2, borderColor: theme.border },
+  mechanicCardActive: { borderColor: theme.primary, backgroundColor: theme.primary + '11' },
+  mechanicAvatar: { width: 52, height: 52, borderRadius: 26, marginRight: 14 },
+  mechanicAvatarPlaceholder: { width: 52, height: 52, borderRadius: 26, backgroundColor: theme.bg3, justifyContent: 'center', alignItems: 'center', marginRight: 14 },
+  mechanicAvatarEmoji: { fontSize: 22 },
+  mechanicAvatarInitials: { fontSize: 18, fontWeight: 'bold', color: theme.primaryLight },
+  mechanicInfo: { flex: 1 },
+  mechanicName: { fontSize: 15, fontWeight: 'bold', color: theme.text, marginBottom: 2 },
+  mechanicSpec: { fontSize: 12, color: theme.textSub, marginBottom: 2 },
+  mechanicRating: { fontSize: 12, color: theme.textMuted },
+  emptyMechanics: { padding: 20, alignItems: 'center' },
+  emptyMechanicsText: { color: theme.textMuted, fontSize: 14 },
+  optionalNote: { marginTop: 16, backgroundColor: theme.bg2, borderRadius: 10, padding: 14, borderWidth: 1, borderColor: theme.border },
+  optionalNoteText: { fontSize: 13, color: theme.textSub, lineHeight: 20 },
   summaryCard: { backgroundColor: theme.card, borderRadius: 12, padding: 20, borderWidth: 1, borderColor: theme.border, marginBottom: 12 },
   summaryTitle: { fontSize: 12, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 },
   summaryValue: { fontSize: 15, color: theme.text, marginBottom: 12 },
   divider: { height: 1, backgroundColor: theme.border, marginBottom: 12 },
-  notesCard: { backgroundColor: theme.card, borderRadius: 12, padding: 20, borderWidth: 1, borderColor: theme.border },
-  footer: { flexDirection: 'row', padding: 16, gap: 12, backgroundColor: theme.bg2, borderTopWidth: 1, borderTopColor: theme.border },
-  backBtn: { flex: 1, borderWidth: 1, borderColor: theme.border, borderRadius: 12, padding: 16, alignItems: 'center' },
+  notesCard: { backgroundColor: theme.card, borderRadius: 12, padding: 20, borderWidth: 1, borderColor: theme.border, marginBottom: 16 },
+  footer: { flexDirection: 'row', padding: 16, gap: 12, backgroundColor: theme.bg2, borderTopWidth: 1, borderTopColor: theme.border, alignItems: 'center' },
+  backBtn: { flex: 1, borderWidth: 1, borderColor: theme.border, borderRadius: 12, padding: 16, alignItems: 'center', justifyContent: 'center' },
   backBtnText: { color: theme.text, fontWeight: '600', fontSize: 15 },
-  nextBtn: { flex: 2, backgroundColor: theme.primary, borderRadius: 12, padding: 16, alignItems: 'center' },
+  nextBtn: { flex: 2, backgroundColor: theme.primary, borderRadius: 12, padding: 16, alignItems: 'center', justifyContent: 'center' },
   nextBtnDisabled: { backgroundColor: theme.bg3 },
   nextBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
 });

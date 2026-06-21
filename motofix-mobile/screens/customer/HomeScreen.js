@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, StatusBar } from 'react-native';
-import { supabase } from '../lib/supabase';
-import { useTheme } from '../lib/ThemeContext';
+import { supabase } from '../../lib/supabase';
+import { useTheme } from '../../lib/ThemeContext';
 
 export default function HomeScreen({ navigation }) {
   const { theme, isDark } = useTheme();

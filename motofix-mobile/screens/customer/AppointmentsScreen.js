@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, StatusBar, RefreshControl } from 'react-native';
-import { supabase } from '../lib/supabase';
-import { useTheme } from '../lib/ThemeContext';
+import { supabase } from '../../lib/supabase';
+import { useTheme } from '../../lib/ThemeContext';
 
 export default function BookingsScreen() {
   const { theme, isDark } = useTheme();

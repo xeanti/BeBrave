@@ -8,11 +8,14 @@ export default function AdminBookings() {
   const [bookings, setBookings] = useState([]);
   const [mechanics, setMechanics] = useState([]);
   const [filter, setFilter] = useState('all');
+  const [search, setSearch] = useState(''); // 1. Added search state
   const [loading, setLoading] = useState(true);
   const [payments, setPayments] = useState({}); // bookingId -> [payments]
-  const [paymentForm, setPaymentForm] = useState({}); // bookingId -> { amount, payment_type }
+  const [paymentForm, setPaymentForm] = useState({}); // bookingId -> { amount, payment_type, method }
   const [savingPayment, setSavingPayment] = useState(null);
   const [paymentToast, setPaymentToast] = useState(null); // { bookingId, amount, balance, isFullyPaid }
+  const [expandedPayment, setExpandedPayment] = useState(null); // bookingId currently showing payment panel
+  const [expandedHistory, setExpandedHistory] = useState(null); // bookingId currently showing history
 
   useEffect(() => {
     fetchBookings();
@@ -76,51 +79,58 @@ export default function AdminBookings() {
     fetchBookings();
   }
 
-async function submitPayment(bookingId) {
-  const form = paymentForm[bookingId];
-  if (!form?.amount || parseFloat(form.amount) <= 0) return;
-  setSavingPayment(bookingId);
-  try {
-    await recordPayment({
-      bookingId,
-      amount: form.amount,
-      paymentType: form.payment_type || 'balance',
-      method: form.method || 'cash',
-      processedBy: user.id,
-    });
-    await supabase.from('audit_logs').insert({
-      action: 'RECORD_PAYMENT',
-      entity: 'bookings',
-      entity_id: bookingId,
-      performed_by: user.id,
-      details: { amount: parseFloat(form.amount), payment_type: form.payment_type || 'balance' },
-    });
+  async function submitPayment(bookingId) {
+    const form = paymentForm[bookingId];
+    if (!form?.amount || parseFloat(form.amount) <= 0) return;
+    setSavingPayment(bookingId);
+    try {
+      await recordPayment({
+        bookingId,
+        amount: form.amount,
+        paymentType: form.payment_type || 'balance',
+        method: form.method || 'cash',
+        processedBy: user.id,
+      });
+      await supabase.from('audit_logs').insert({
+        action: 'RECORD_PAYMENT',
+        entity: 'bookings',
+        entity_id: bookingId,
+        performed_by: user.id,
+        details: { amount: parseFloat(form.amount), payment_type: form.payment_type || 'balance' },
+      });
 
-    // Recompute balance right away for the toast
-    const booking = bookings.find((b) => b.id === bookingId);
-    const total = (booking?.services?.base_price || 0) + (booking?.services?.labor_cost || 0);
-    const existingPaid = (payments[bookingId] || []).reduce(
-      (s, p) => (p.payment_type === 'refund' ? s - p.amount : s + p.amount), 0
-    );
-    const newTotalPaid = existingPaid + parseFloat(form.amount);
-    const newBalance = Math.max(total - newTotalPaid, 0);
+      // Recompute balance right away for the toast
+      const booking = bookings.find((b) => b.id === bookingId);
+      const total = (booking?.services?.base_price || 0) + (booking?.services?.labor_cost || 0);
+      const existingPaid = (payments[bookingId] || []).reduce(
+        (s, p) => (p.payment_type === 'refund' ? s - p.amount : s + p.amount), 0
+      );
+      const newTotalPaid = existingPaid + parseFloat(form.amount);
+      const newBalance = Math.max(total - newTotalPaid, 0);
 
-    setPaymentToast({
-      bookingId,
-      amount: parseFloat(form.amount),
-      balance: newBalance,
-      isFullyPaid: newBalance <= 0,
-    });
-    setTimeout(() => setPaymentToast(null), 4000);
+      setPaymentToast({
+        bookingId,
+        amount: parseFloat(form.amount),
+        balance: newBalance,
+        isFullyPaid: newBalance <= 0,
+      });
+      setTimeout(() => setPaymentToast(null), 4000);
 
-    setPaymentForm((f) => ({ ...f, [bookingId]: { amount: '', payment_type: 'balance', method: 'cash' } }));
-    fetchBookings();
-  } finally {
-    setSavingPayment(null);
+      setPaymentForm((f) => ({ ...f, [bookingId]: { amount: '', payment_type: 'balance', method: 'cash' } }));
+      setExpandedPayment(null);
+      fetchBookings();
+    } finally {
+      setSavingPayment(null);
+    }
   }
-}
 
-  const filtered = bookings.filter(b => filter === 'all' || b.status === filter);
+  // 2. Updated filtering logic to match both filter pill and search input string
+  const filtered = bookings.filter(b => {
+    const matchesStatus = filter === 'all' || b.status === filter;
+    const fullName = `${b.profiles?.first_name || ''} ${b.profiles?.last_name || ''}`.toLowerCase();
+    const matchesSearch = search.trim() === '' || fullName.includes(search.trim().toLowerCase());
+    return matchesStatus && matchesSearch;
+  });
 
   const counts = {
     all: bookings.length,
@@ -133,13 +143,14 @@ async function submitPayment(bookingId) {
 
   return (
     <div className="min-h-[calc(100vh-65px)] bg-dark-900 text-white px-6 py-10">
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-5xl mx-auto">
 
         <div className="mb-8">
           <h1 className="text-3xl font-bold mb-1">Manage Bookings</h1>
           <p className="text-gray-400">View, assign mechanics, track payments, and update booking statuses.</p>
         </div>
 
+        {/* Filter pill row */}
         <div className="flex gap-2 mb-6 flex-wrap">
           {['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled'].map((f) => (
             <button
@@ -154,6 +165,17 @@ async function submitPayment(bookingId) {
           ))}
         </div>
 
+        {/* 3. Search input added right below the filter pills */}
+        <div className="mb-6">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by customer name..."
+            className="w-full md:w-80 px-4 py-2 rounded-lg bg-dark-800 border border-gray-700 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-primary-600"
+          />
+        </div>
+
         {loading ? (
           <p className="text-gray-400">Loading...</p>
         ) : filtered.length === 0 ? (
@@ -162,7 +184,7 @@ async function submitPayment(bookingId) {
             <p className="text-gray-400">No bookings found.</p>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {filtered.map((b) => {
               const total = (b.services?.base_price || 0) + (b.services?.labor_cost || 0);
               const bookingPayments = payments[b.id] || [];
@@ -170,15 +192,23 @@ async function submitPayment(bookingId) {
               const balance = Math.max(total - totalPaid, 0);
               const isFullyPaid = total > 0 && balance <= 0;
               const form = paymentForm[b.id] || { amount: '', payment_type: 'balance', method: 'cash' };
+              const isPaymentOpen = expandedPayment === b.id;
+              const isHistoryOpen = expandedHistory === b.id;
 
               return (
-                <div key={b.id} className="bg-dark-800 rounded-xl p-5">
+                <div key={b.id} className="bg-dark-800 rounded-xl overflow-hidden border border-dark-700">
 
-                  <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
-                    <div>
-                      <p className="font-semibold text-lg">
-                        {b.profiles?.first_name} {b.profiles?.last_name}
-                      </p>
+                  {/* 4. Swapped-in stable header wrapper to cure structural scattering layout flaws */}
+                  <div className="flex items-start justify-between gap-3 mb-4 p-5 pb-0">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold text-lg leading-tight">
+                          {b.profiles?.first_name} {b.profiles?.last_name}
+                        </p>
+                        <span className="text-[11px] text-gray-500 font-mono">
+                          #{b.id.slice(0, 8).toUpperCase()}
+                        </span>
+                      </div>
                       <p className="text-sm text-gray-400 mt-0.5">
                         👤 {b.profiles?.email}
                         {b.profiles?.phone ? ` · ${b.profiles.phone}` : ''}
@@ -190,11 +220,11 @@ async function submitPayment(bookingId) {
                         {b.booking_date} at {b.booking_time}
                       </p>
                     </div>
-                    <div className="flex flex-col items-end gap-1.5">
-                      <span className={`text-xs px-3 py-1 rounded-full capitalize font-medium ${STATUS_COLORS[b.status] || STATUS_COLORS.pending}`}>
+                    <div className="flex flex-col items-end gap-1.5 shrink-0">
+                      <span className={`text-xs px-3 py-1 rounded-full capitalize font-medium whitespace-nowrap ${STATUS_COLORS[b.status] || STATUS_COLORS.pending}`}>
                         {b.status?.replace('_', ' ')}
                       </span>
-                      <span className={`text-xs px-3 py-1 rounded-full font-medium ${
+                      <span className={`text-xs px-3 py-1 rounded-full font-medium whitespace-nowrap ${
                         isFullyPaid ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
                       }`}>
                         {isFullyPaid ? '✓ Fully Paid' : `₱${balance.toFixed(2)} balance due`}
@@ -203,35 +233,70 @@ async function submitPayment(bookingId) {
                   </div>
 
                   {b.notes && (
-                    <div className="bg-dark-900 rounded-lg px-4 py-3 mb-4 text-sm text-gray-300 italic">
+                    <div className="mx-5 mb-4 bg-dark-900 rounded-lg px-4 py-2.5 text-sm text-gray-300 italic">
                       "{b.notes}"
                     </div>
                   )}
 
-                  <div className="bg-dark-900 rounded-lg p-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-4">
+                  {/* ── Summary strip ──────────────────────────────────── */}
+                  <div className="mx-5 mb-4 bg-dark-900 rounded-lg px-4 py-3 flex flex-wrap gap-x-8 gap-y-2 text-sm">
                     <div>
-                      <p className="text-xs text-gray-500 mb-0.5">Service Total</p>
-                      <p className="font-medium">₱{total.toFixed(2)}</p>
+                      <span className="text-xs text-gray-500 mr-1.5">Total</span>
+                      <span className="font-medium">₱{total.toFixed(2)}</span>
                     </div>
                     <div>
-                      <p className="text-xs text-gray-500 mb-0.5">Total Paid</p>
-                      <p className="font-medium text-green-400">₱{totalPaid.toFixed(2)}</p>
+                      <span className="text-xs text-gray-500 mr-1.5">Paid</span>
+                      <span className="font-medium text-green-400">₱{totalPaid.toFixed(2)}</span>
                     </div>
-                    <div>
-                      <p className="text-xs text-gray-500 mb-0.5">Mechanic</p>
-                      <p className="font-medium">
-                        {b.mechanic ? `${b.mechanic.first_name} ${b.mechanic.last_name}` : '—'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 mb-0.5">Booking ID</p>
-                      <p className="font-medium text-gray-400">{b.id.slice(0, 8).toUpperCase()}</p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500">Mechanic</span>
+                      <select
+                        value={b.mechanic_id || ''}
+                        onChange={(e) => assignMechanic(b.id, e.target.value)}
+                        className="bg-dark-800 border border-gray-700 rounded-md px-2 py-1 text-sm text-white"
+                      >
+                        <option value="">Unassigned</option>
+                        {mechanics.map((m) => (
+                          <option key={m.id} value={m.id}>{m.first_name} {m.last_name}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
 
-                  {/* Payment history */}
-                  {bookingPayments.length > 0 && (
-                    <div className="bg-dark-900 rounded-lg p-3 mb-4">
+                  {/* ── Action bar ──────────────────────────────────────── */}
+                  <div className="mx-5 mb-5 flex flex-wrap items-center gap-2">
+                    <select
+                      value={b.status}
+                      onChange={(e) => updateStatus(b.id, e.target.value)}
+                      className="text-sm px-3 py-1.5 rounded-md bg-dark-900 border border-gray-700 capitalize"
+                    >
+                      {['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'].map((s) => (
+                        <option key={s} value={s}>{s.replace('_', ' ')}</option>
+                      ))}
+                    </select>
+
+                    <button
+                      onClick={() => setExpandedPayment(isPaymentOpen ? null : b.id)}
+                      className={`text-sm px-3 py-1.5 rounded-md font-medium transition ${
+                        isPaymentOpen ? 'bg-primary-600 text-white' : 'bg-dark-900 border border-gray-700 text-gray-300 hover:text-white'
+                      }`}
+                    >
+                      {isPaymentOpen ? 'Close' : '+ Record Payment'}
+                    </button>
+
+                    {bookingPayments.length > 0 && (
+                      <button
+                        onClick={() => setExpandedHistory(isHistoryOpen ? null : b.id)}
+                        className="text-sm px-3 py-1.5 rounded-md bg-dark-900 border border-gray-700 text-gray-300 hover:text-white transition"
+                      >
+                        {isHistoryOpen ? 'Hide' : 'View'} History ({bookingPayments.length})
+                      </button>
+                    )}
+                  </div>
+
+                  {/* ── Payment history (collapsible) ──────────────────── */}
+                  {isHistoryOpen && bookingPayments.length > 0 && (
+                    <div className="mx-5 mb-5 bg-dark-900 rounded-lg p-3 -mt-2">
                       <p className="text-xs font-semibold text-gray-400 mb-2">PAYMENT HISTORY</p>
                       <div className="space-y-1.5">
                         {bookingPayments.map((p) => (
@@ -251,82 +316,54 @@ async function submitPayment(bookingId) {
                     </div>
                   )}
 
-                  {/* Record payment form */}
-                  <div className="bg-dark-900 rounded-lg p-3 mb-4 flex flex-wrap items-end gap-2">
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Amount (₱)</label>
-                      <input
-                        type="number"
-                        value={form.amount}
-                        onChange={(e) => setPaymentForm((f) => ({ ...f, [b.id]: { ...form, amount: e.target.value } }))}
-                        className="w-28 px-2 py-1.5 rounded-md bg-dark-800 border border-gray-700 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Type</label>
-                      <select
-                        value={form.payment_type}
-                        onChange={(e) => setPaymentForm((f) => ({ ...f, [b.id]: { ...form, payment_type: e.target.value } }))}
-                        className="px-2 py-1.5 rounded-md bg-dark-800 border border-gray-700 text-sm"
-                      >
-                        <option value="down_payment">Down Payment</option>
-                        <option value="balance">Balance</option>
-                        <option value="full">Full Payment</option>
-                        <option value="refund">Refund</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Method</label>
-                      <select
-                        value={form.method}
-                        onChange={(e) => setPaymentForm((f) => ({ ...f, [b.id]: { ...form, method: e.target.value } }))}
-                        className="px-2 py-1.5 rounded-md bg-dark-800 border border-gray-700 text-sm"
-                      >
-                        <option value="cash">Cash</option>
-                        <option value="gcash">GCash</option>
-                        <option value="card">Card</option>
-                        <option value="bank_transfer">Bank Transfer</option>
-                      </select>
-                    </div>
-                    <button
-                      onClick={() => submitPayment(b.id)}
-                      disabled={savingPayment === b.id}
-                      className="bg-primary-600 hover:bg-primary-700 disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-medium transition"
-                    >
-                      {savingPayment === b.id ? 'Saving...' : '+ Record Payment'}
-                    </button>
-                  </div>
-
-                  <div className="mb-4">
-                    <p className="text-xs text-gray-500 mb-1.5">Assign Mechanic</p>
-                    <select
-                      value={b.mechanic_id || ''}
-                      onChange={(e) => assignMechanic(b.id, e.target.value)}
-                      className="bg-dark-900 border border-gray-700 rounded-md px-3 py-1.5 text-sm text-white w-full md:w-auto"
-                    >
-                      <option value="">Unassigned</option>
-                      {mechanics.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.first_name} {m.last_name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="flex gap-2 flex-wrap items-center">
-                    <p className="text-xs text-gray-500 mr-1">Update status:</p>
-                    {['pending', 'confirmed', 'in_progress', 'completed', 'cancelled']
-                      .filter(s => s !== b.status)
-                      .map(s => (
-                        <button
-                          key={s}
-                          onClick={() => updateStatus(b.id, s)}
-                          className={`text-xs px-3 py-1.5 rounded-md transition capitalize ${ACTION_STYLES[s]}`}
+                  {/* ── Record payment form (collapsible) ──────────────── */}
+                  {isPaymentOpen && (
+                    <div className="mx-5 mb-5 bg-dark-900 rounded-lg p-4 flex flex-wrap items-end gap-3">
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Amount (₱)</label>
+                        <input
+                          type="number"
+                          autoFocus
+                          value={form.amount}
+                          onChange={(e) => setPaymentForm((f) => ({ ...f, [b.id]: { ...form, amount: e.target.value } }))}
+                          className="w-28 px-2 py-1.5 rounded-md bg-dark-800 border border-gray-700 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Type</label>
+                        <select
+                          value={form.payment_type}
+                          onChange={(e) => setPaymentForm((f) => ({ ...f, [b.id]: { ...form, payment_type: e.target.value } }))}
+                          className="px-2 py-1.5 rounded-md bg-dark-800 border border-gray-700 text-sm"
                         >
-                          {s.replace('_', ' ')}
-                        </button>
-                      ))}
-                  </div>
+                          <option value="down_payment">Down Payment</option>
+                          <option value="balance">Balance</option>
+                          <option value="full">Full Payment</option>
+                          <option value="refund">Refund</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Method</label>
+                        <select
+                          value={form.method}
+                          onChange={(e) => setPaymentForm((f) => ({ ...f, [b.id]: { ...form, method: e.target.value } }))}
+                          className="px-2 py-1.5 rounded-md bg-dark-800 border border-gray-700 text-sm"
+                        >
+                          <option value="cash">Cash</option>
+                          <option value="gcash">GCash</option>
+                          <option value="card">Card</option>
+                          <option value="bank_transfer">Bank Transfer</option>
+                        </select>
+                      </div>
+                      <button
+                        onClick={() => submitPayment(b.id)}
+                        disabled={savingPayment === b.id}
+                        className="bg-primary-600 hover:bg-primary-700 disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-medium transition"
+                      >
+                        {savingPayment === b.id ? 'Saving...' : 'Save Payment'}
+                      </button>
+                    </div>
+                  )}
 
                 </div>
               );
@@ -334,6 +371,18 @@ async function submitPayment(bookingId) {
           </div>
         )}
       </div>
+
+      {/* ── Toast ─────────────────────────────────────────────────── */}
+      {paymentToast && (
+        <div className="fixed bottom-6 right-6 bg-dark-800 border border-primary-600 rounded-xl px-5 py-4 shadow-xl max-w-xs z-50">
+          <p className="text-sm font-semibold text-white mb-1">
+            ₱{paymentToast.amount.toFixed(2)} payment recorded
+          </p>
+          <p className="text-xs text-gray-400">
+            {paymentToast.isFullyPaid ? '✓ Booking is now fully paid' : `₱${paymentToast.balance.toFixed(2)} balance remaining`}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -344,12 +393,4 @@ const STATUS_COLORS = {
   in_progress: 'bg-blue-500/20 text-blue-400',
   completed: 'bg-gray-500/20 text-gray-400',
   cancelled: 'bg-red-500/20 text-red-400',
-};
-
-const ACTION_STYLES = {
-  pending: 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30',
-  confirmed: 'bg-green-500/20 text-green-400 hover:bg-green-500/30',
-  in_progress: 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30',
-  completed: 'bg-gray-500/20 text-gray-400 hover:bg-gray-500/30',
-  cancelled: 'bg-red-500/20 text-red-400 hover:bg-red-500/30',
 };

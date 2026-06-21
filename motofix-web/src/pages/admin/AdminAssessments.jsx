@@ -11,6 +11,7 @@ export default function AdminAssessments() {
   const [assessments, setAssessments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
+  const [search, setSearch] = useState(''); // 1. Added search state
   const [updating, setUpdating] = useState(null);
 
   useEffect(() => {
@@ -35,8 +36,13 @@ export default function AdminAssessments() {
     setUpdating(null);
   }
 
-  const filtered =
-    filter === 'all' ? assessments : assessments.filter((a) => a.status === filter);
+  // 2. Updated filtering logic to evaluate status tabs and search strings simultaneously
+  const filtered = assessments.filter((a) => {
+    const matchesStatus = filter === 'all' || a.status === filter;
+    const fullName = `${a.profiles?.first_name || ''} ${a.profiles?.last_name || ''}`.toLowerCase();
+    const matchesSearch = search.trim() === '' || fullName.includes(search.trim().toLowerCase());
+    return matchesStatus && matchesSearch;
+  });
 
   const counts = {
     all: assessments.length,
@@ -72,6 +78,17 @@ export default function AdminAssessments() {
           ))}
         </div>
 
+        {/* 3. Search input mounted after the wrapping filter row layout */}
+        <div className="mb-6">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by customer name..."
+            className="w-full md:w-80 px-4 py-2 rounded-lg bg-dark-800 border border-gray-700 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-primary-600"
+          />
+        </div>
+
         {loading ? (
           <p className="text-gray-400">Loading...</p>
         ) : filtered.length === 0 ? (
@@ -84,9 +101,9 @@ export default function AdminAssessments() {
             {filtered.map((a) => (
               <div key={a.id} className="bg-dark-800 rounded-xl p-5">
 
-                {/* Top row */}
-                <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
-                  <div>
+                {/* 4. Swapped flex parent styling layout to mitigate structural element scattering */}
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div className="min-w-0 flex-1">
                     <p className="font-semibold text-lg">
                       {a.motorcycle_make} {a.motorcycle_model}
                       {a.motorcycle_year ? ` (${a.motorcycle_year})` : ''}
@@ -102,9 +119,11 @@ export default function AdminAssessments() {
                       {new Date(a.created_at).toLocaleString()}
                     </p>
                   </div>
-                  <span className={`text-xs px-3 py-1 rounded-full capitalize font-medium ${STATUS_COLORS[a.status]}`}>
-                    {a.status}
-                  </span>
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    <span className={`text-xs px-3 py-1 rounded-full capitalize font-medium whitespace-nowrap ${STATUS_COLORS[a.status]}`}>
+                      {a.status}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Issue description */}
@@ -140,7 +159,7 @@ export default function AdminAssessments() {
                     <button
                       onClick={() => updateStatus(a.id, 'reviewed')}
                       disabled={updating === a.id}
-                      className="text-xs px-3 py-1.5 rounded-md bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition disabled:opacity-50"
+                      className="text-xs px-3 py-1.5 rounded-md bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition disabled:opacity-50 font-medium"
                     >
                       Mark as Reviewed
                     </button>
@@ -149,7 +168,7 @@ export default function AdminAssessments() {
                     <button
                       onClick={() => updateStatus(a.id, 'converted')}
                       disabled={updating === a.id}
-                      className="text-xs px-3 py-1.5 rounded-md bg-green-500/20 text-green-400 hover:bg-green-500/30 transition disabled:opacity-50"
+                      className="text-xs px-3 py-1.5 rounded-md bg-green-500/20 text-green-400 hover:bg-green-500/30 transition disabled:opacity-50 font-medium"
                     >
                       Mark as Converted
                     </button>
@@ -158,7 +177,7 @@ export default function AdminAssessments() {
                     <button
                       onClick={() => updateStatus(a.id, 'pending')}
                       disabled={updating === a.id}
-                      className="text-xs px-3 py-1.5 rounded-md bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 transition disabled:opacity-50"
+                      className="text-xs px-3 py-1.5 rounded-md bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 transition disabled:opacity-50 font-medium"
                     >
                       Reset to Pending
                     </button>

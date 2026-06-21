@@ -1,81 +1,114 @@
-import { useState } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+// App.js
+import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createStackNavigator } from '@react-navigation/stack';
+import { NavigationContainer } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons'; 
 import { ThemeProvider, useTheme } from './lib/ThemeContext';
 
-// Expo Vector Icons Package
-import { Ionicons } from '@expo/vector-icons';
-
-// Screen Imports
-import HomeScreen from './screens/HomeScreen';
-import BookingsScreen from './screens/BookingsScreen';
-import ChatScreen from './screens/ChatScreen';
-import ProfileScreen from './screens/ProfileScreen';
+// --- GLOBAL / AUTH MODULE SCREENS ---
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
-import BookingScreen from './screens/BookingScreen';
-import CustomizeScreen from './screens/CustomizeScreen';
+
+// --- CUSTOMER MODULE SCREENS ---
+import HomeScreen from './screens/customer/HomeScreen';
+import BookingScreen from './screens/customer/BookingScreen';
+import AppointmentsScreen from './screens/customer/AppointmentsScreen';
+import ChatScreen from './screens/customer/ChatScreen';
+import CustomizeScreen from './screens/customer/CustomizeScreen';
+import ProfileScreen from './screens/customer/ProfileScreen';
+
+// --- MECHANIC MODULE SCREENS ---
+import JobsScreen from './screens/mechanic/JobsScreen';
+import JobDetailScreen from './screens/mechanic/JobDetailScreen';
+
+// --- STAFF MODULE SCREENS ---
+import WalkInsScreen from './screens/staff/WalkInsScreen';
+import PaymentsScreen from './screens/staff/PaymentsScreen';
+import InventoryScreen from './screens/staff/InventoryScreen';
+
+// --- ADMIN MODULE SCREENS ---
+import AdminDashboardScreen from './screens/admin/DashboardScreen';
+import AdminBookingsScreen from './screens/admin/BookingsScreen';
+import ReportsScreen from './screens/admin/ReportsScreen';
 
 const Tab = createBottomTabNavigator();
-const Stack = createNativeStackNavigator();
+const Stack = createStackNavigator();
 
-function MainTabs() {
+// --- BOTTOM TAB NAVIGATORS ---
+
+export function CustomerTabs() {
   const { theme } = useTheme();
-  
   return (
-    <Tab.Navigator 
-      screenOptions={({ route }) => ({
-        tabBarActiveTintColor: theme.primaryLight,
-        tabBarInactiveTintColor: theme.textMuted,
-        tabBarStyle: { backgroundColor: theme.bg2, borderTopColor: theme.border },
-        headerStyle: { backgroundColor: theme.bg2 },
-        headerTintColor: theme.text,
-        // This function dynamically injects the proper icon based on screen name
-        tabBarIcon: ({ focused, color, size }) => {
-          let iconName;
-
-          if (route.name === 'Home') {
-            iconName = focused ? 'home' : 'home-outline';
-          } else if (route.name === 'Appointments') {
-            iconName = focused ? 'calendar' : 'calendar-outline';
-          } else if (route.name === 'Chat') {
-            iconName = focused ? 'chatbubbles' : 'chatbubbles-outline';
-          } else if (route.name === 'AI Preview') {
-            iconName = focused ? 'sparkles' : 'sparkles-outline';
-          } else if (route.name === 'Profile') {
-            iconName = focused ? 'person' : 'person-outline';
-          }
-
-          return <Ionicons name={iconName} size={size} color={color} />;
-        },
-      })}
-    >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Appointments" component={BookingsScreen} />
-      <Tab.Screen name="Chat" component={ChatScreen} />
-      <Tab.Screen name="AI Preview" component={CustomizeScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+    <Tab.Navigator screenOptions={getTabOptions(theme)}>
+      <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarIcon: makeIcon('home') }} />
+      <Tab.Screen name="Appointments" component={AppointmentsScreen} options={{ tabBarIcon: makeIcon('calendar') }} />
+      <Tab.Screen name="Chat" component={ChatScreen} options={{ tabBarIcon: makeIcon('chatbubbles') }} />
+      <Tab.Screen name="AI Preview" component={CustomizeScreen} options={{ tabBarIcon: makeIcon('color-palette') }} />
+      <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarIcon: makeIcon('person') }} />
     </Tab.Navigator>
   );
 }
 
-function RootNav() {
+export function MechanicTabs() {
   const { theme } = useTheme();
   return (
+    <Tab.Navigator screenOptions={getTabOptions(theme)}>
+      <Tab.Screen name="My Jobs" component={JobsScreen} options={{ tabBarIcon: makeIcon('build') }} />
+      <Tab.Screen name="Job Detail" component={JobDetailScreen} options={{ tabBarIcon: makeIcon('document-text') }} />
+      <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarIcon: makeIcon('person') }} />
+    </Tab.Navigator>
+  );
+}
+
+export function StaffTabs() {
+  const { theme } = useTheme();
+  return (
+    <Tab.Navigator screenOptions={getTabOptions(theme)}>
+      <Tab.Screen name="Walk-ins" component={WalkInsScreen} options={{ tabBarIcon: makeIcon('walk') }} />
+      <Tab.Screen name="Payments" component={PaymentsScreen} options={{ tabBarIcon: makeIcon('card') }} />
+      <Tab.Screen name="Inventory" component={InventoryScreen} options={{ tabBarIcon: makeIcon('cube') }} />
+      <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarIcon: makeIcon('person') }} />
+    </Tab.Navigator>
+  );
+}
+
+export function AdminTabs() {
+  const { theme } = useTheme();
+  return (
+    <Tab.Navigator screenOptions={getTabOptions(theme)}>
+      <Tab.Screen name="Dashboard" component={AdminDashboardScreen} options={{ tabBarIcon: makeIcon('pie-chart') }} />
+      <Tab.Screen name="Bookings" component={AdminBookingsScreen} options={{ tabBarIcon: makeIcon('list') }} />
+      <Tab.Screen name="Inventory" component={InventoryScreen} options={{ tabBarIcon: makeIcon('cube') }} />
+      <Tab.Screen name="Reports" component={ReportsScreen} options={{ tabBarIcon: makeIcon('analytics') }} />
+      <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarIcon: makeIcon('person') }} />
+    </Tab.Navigator>
+  );
+}
+
+// --- MAIN NAVIGATION ROOT ---
+export function RootNav() {
+  const { theme } = useTheme();
+
+  return (
     <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName="Login">
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="Register" component={RegisterScreen} />
-        <Stack.Screen name="Main" component={MainTabs} />
+        
+        <Stack.Screen name="Main" component={CustomerTabs} />
+        <Stack.Screen name="AdminMain" component={AdminTabs} />
+        <Stack.Screen name="MechanicMain" component={MechanicTabs} />
+        <Stack.Screen name="StaffMain" component={StaffTabs} />
+        
         <Stack.Screen 
           name="Booking" 
           component={BookingScreen} 
           options={{ 
-            headerShown: true, 
-            title: 'Book a Service', 
-            headerStyle: { backgroundColor: theme.bg2 }, 
-            headerTintColor: theme.text 
+            headerShown: true,
+            headerStyle: { backgroundColor: theme.bg, borderBottomWidth: 1, borderBottomColor: theme.border },
+            headerTitleStyle: { color: theme.text, fontWeight: 'bold' },
+            headerTintColor: theme.primaryLight
           }} 
         />
       </Stack.Navigator>
@@ -83,10 +116,27 @@ function RootNav() {
   );
 }
 
+// --- MAIN ENTRY POINT ---
 export default function App() {
   return (
     <ThemeProvider>
       <RootNav />
     </ThemeProvider>
   );
+}
+
+// --- OPTIONS & TAB ICON STYLES ---
+
+function getTabOptions(theme) {
+  return {
+    headerStyle: { backgroundColor: theme.bg, borderBottomWidth: 1, borderBottomColor: theme.border },
+    headerTitleStyle: { color: theme.text, fontWeight: 'bold' },
+    tabBarStyle: { backgroundColor: theme.bg, borderTopWidth: 1, borderTopColor: theme.border, height: 60, paddingBottom: 8 },
+    tabBarActiveTintColor: theme.primaryLight,
+    tabBarInactiveTintColor: theme.textMuted,
+  };
+}
+
+function makeIcon(iconName) {
+  return ({ color, size }) => <Ionicons name={iconName} size={size} color={color} />;
 }

@@ -10,12 +10,47 @@ export default function LoginScreen({ navigation }) {
   const [loading, setLoading] = useState(false);
 
   async function handleLogin() {
-    if (!email || !password) { Alert.alert('Error', 'Please enter your email and password.'); return; }
+    if (!email || !password) { 
+      Alert.alert('Error', 'Please enter your email and password.'); 
+      return; 
+    }
+    
     setLoading(true);
+    
+    // 1. Sign in the user with password
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
-    if (error) { Alert.alert('Login Failed', error.message); }
-    else { navigation.replace('Main'); }
+    
+    if (error) { 
+      setLoading(false);
+      Alert.alert('Login Failed', error.message); 
+      return;
+    }
+    
+    try {
+      // 2. Fetch the authenticated user's metadata to verify their system role
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      
+      if (userError || !user) {
+        throw new Error(userError?.message || 'Could not retrieve user data.');
+      }
+
+      const role = user?.user_metadata?.role || 'customer';
+
+      // 3. Route the user to their designated dashboard layout
+      if (role === 'admin') {
+        navigation.replace('AdminMain');
+      } else if (role === 'mechanic') {
+        navigation.replace('MechanicMain');
+      } else if (role === 'staff') {
+        navigation.replace('StaffMain');
+      } else {
+        navigation.replace('Main'); // Default route for customers
+      }
+    } catch (routeError) {
+      Alert.alert('Routing Error', routeError.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   const s = styles(theme);

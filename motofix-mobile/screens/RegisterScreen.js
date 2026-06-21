@@ -52,6 +52,7 @@ export default function RegisterScreen({ navigation }) {
           first_name: firstName,
           last_name: lastName,
           phone,
+          role: 'customer', // Default role assignment for public app registrations
         },
       },
     });
