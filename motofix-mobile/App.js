@@ -1,4 +1,3 @@
-// App.js
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -50,14 +49,54 @@ export function CustomerTabs() {
   );
 }
 
-export function MechanicTabs() {
+const MechanicStack = createStackNavigator();
+
+export function MechanicMain() {
   const { theme } = useTheme();
+
+  const headerStyle = {
+    headerStyle: {
+      backgroundColor: theme.bg,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    headerTitleStyle: {
+      color: theme.text,
+      fontWeight: 'bold',
+    },
+    headerTintColor: theme.primaryLight,
+  };
+
   return (
-    <Tab.Navigator screenOptions={getTabOptions(theme)}>
-      <Tab.Screen name="My Jobs" component={JobsScreen} options={{ tabBarIcon: makeIcon('build') }} />
-      <Tab.Screen name="Job Detail" component={JobDetailScreen} options={{ tabBarIcon: makeIcon('document-text') }} />
-      <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarIcon: makeIcon('person') }} />
-    </Tab.Navigator>
+    <MechanicStack.Navigator screenOptions={{ headerShown: false }}>
+      <MechanicStack.Screen
+        name="JobsList"
+        component={JobsScreen}
+        options={{
+          ...headerStyle,
+          headerShown: true,
+          title: 'My Jobs',
+        }}
+      />
+      <MechanicStack.Screen
+        name="Job Detail"
+        component={JobDetailScreen}
+        options={{
+          ...headerStyle,
+          headerShown: true,
+          title: 'Job Detail',
+        }}
+      />
+      <MechanicStack.Screen
+        name="Profile"
+        component={ProfileScreen}
+        options={{
+          ...headerStyle,
+          headerShown: true,
+          title: 'Profile',
+        }}
+      />
+    </MechanicStack.Navigator>
   );
 }
 
@@ -98,7 +137,7 @@ export function RootNav() {
         
         <Stack.Screen name="Main" component={CustomerTabs} />
         <Stack.Screen name="AdminMain" component={AdminTabs} />
-        <Stack.Screen name="MechanicMain" component={MechanicTabs} />
+        <Stack.Screen name="MechanicMain" component={MechanicMain} />
         <Stack.Screen name="StaffMain" component={StaffTabs} />
         
         <Stack.Screen 

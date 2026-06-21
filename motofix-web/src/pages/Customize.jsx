@@ -359,7 +359,7 @@ export default function Customize() {
 
                     <div className="flex gap-2 flex-wrap mb-3">
                       {categories.map((cat) => (
-                        <button key={cat} type="button" onClick={() => setPartCategory(cat)}
+<button key={cat} type="button" onClick={() => setPartCategory(partCategory === cat ? 'all' : cat)}
                           className={`px-3 py-1 rounded-full text-xs font-medium capitalize transition ${
                             partCategory === cat
                               ? 'bg-primary-600 text-white'

@@ -28,14 +28,19 @@ export default function LoginScreen({ navigation }) {
     
     try {
       // 2. Fetch the authenticated user's metadata to verify their system role
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
+const { data: { user }, error: userError } = await supabase.auth.getUser();
       
       if (userError || !user) {
         throw new Error(userError?.message || 'Could not retrieve user data.');
       }
 
-      const role = user?.user_metadata?.role || 'customer';
+const { data: profile } = await supabase
+  .from('profiles')
+  .select('role')
+  .eq('id', user.id)
+  .single();
 
+const role = profile?.role || 'customer';
       // 3. Route the user to their designated dashboard layout
       if (role === 'admin') {
         navigation.replace('AdminMain');
