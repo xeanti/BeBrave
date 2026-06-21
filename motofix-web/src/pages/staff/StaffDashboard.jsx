@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabaseClient';
 import CustomerPicker from '../../components/CustomerPicker';
 import ReceiptModal from '../../components/ReceiptModal';
 import { fetchPaymentsFor, summarizePayments } from '../../lib/payments';
+import { getDownPaymentPercent } from '../../lib/settings';
 
 const TIME_SLOTS = (() => {
   const slots = [];
@@ -16,7 +17,7 @@ const TIME_SLOTS = (() => {
 
 export default function StaffDashboard() {
   const { user } = useAuth();
-  const [tab, setTab] = useState('booking'); // 'booking' | 'pos' | 'pending'
+  const [tab, setTab] = useState('booking');
   const [receipt, setReceipt] = useState(null);
 
   return (
@@ -60,15 +61,17 @@ function WalkInBooking({ staffId, onReceipt }) {
   const [form, setForm] = useState({ service_id: '', mechanic_id: '', booking_date: '', booking_time: '', notes: '' });
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState('');
+  const [downPaymentRate, setDownPaymentRate] = useState(0.15);
 
   useEffect(() => {
     supabase.from('services').select('*').eq('is_active', true).then(({ data }) => data && setServices(data));
     supabase.from('profiles').select('id, first_name, last_name').eq('role', 'mechanic').then(({ data }) => data && setMechanics(data));
+    getDownPaymentPercent().then(setDownPaymentRate);
   }, []);
 
   const selectedService = services.find((s) => s.id === form.service_id);
   const downpayment = selectedService
-    ? (((selectedService.base_price || 0) + (selectedService.labor_cost || 0)) * 0.15).toFixed(2)
+    ? (((selectedService.base_price || 0) + (selectedService.labor_cost || 0)) * downPaymentRate).toFixed(2)
     : null;
 
   async function handleSubmit(e) {
@@ -160,7 +163,9 @@ function WalkInBooking({ staffId, onReceipt }) {
 
         {selectedService && (
           <div className="bg-gray-50 dark:bg-dark-900 rounded-lg p-4 text-sm flex justify-between border border-gray-200 dark:border-transparent">
-            <span className="text-gray-600 dark:text-gray-400">Down Payment Due (15%)</span>
+            <span className="text-gray-600 dark:text-gray-400">
+              Down Payment Due ({Math.round(downPaymentRate * 100)}%)
+            </span>
             <span className="text-accent-500 dark:text-accent-400 font-semibold">₱{downpayment}</span>
           </div>
         )}
@@ -186,9 +191,9 @@ function WalkInPOS({ staffId, onReceipt }) {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    if (!search.trim()) { 
-      setParts([]); 
-      return; 
+    if (!search.trim()) {
+      setParts([]);
+      return;
     }
     const t = setTimeout(() => {
       supabase.from('parts')
@@ -235,10 +240,10 @@ function WalkInPOS({ staffId, onReceipt }) {
       if (orderError) throw orderError;
 
       const items = cart.map((p) => ({
-        order_id: order.id, 
-        part_id: p.id, 
-        quantity: p.quantity, 
-        unit_price: parseFloat(p.price || 0), 
+        order_id: order.id,
+        part_id: p.id,
+        quantity: p.quantity,
+        unit_price: parseFloat(p.price || 0),
         subtotal: parseFloat(p.price || 0) * p.quantity,
       }));
       const { error: itemsError } = await supabase.from('order_items').insert(items);
@@ -273,7 +278,7 @@ function WalkInPOS({ staffId, onReceipt }) {
       <div className="mb-5"><CustomerPicker selected={customer} onSelect={setCustomer} /></div>
 
       <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-300 uppercase tracking-wide mb-3">2. Add Parts</h2>
-      
+
       <div className="relative mb-5">
         <input
           value={search}
@@ -281,7 +286,7 @@ function WalkInPOS({ staffId, onReceipt }) {
           placeholder="Search parts by name..."
           className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-dark-900 border border-gray-300 dark:border-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:border-primary-500 placeholder-gray-400 dark:placeholder-gray-500"
         />
-        
+
         {parts.length > 0 && (
           <div className="absolute left-0 right-0 mt-1 z-10 max-h-60 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-dark-900 shadow-xl divide-y divide-gray-100 dark:divide-gray-800">
             {parts.map((p) => (
@@ -330,14 +335,14 @@ function WalkInPOS({ staffId, onReceipt }) {
 }
 
 // ───────────────────────────────────────────
-// TAB 3: Pending Payments 
+// TAB 3: Pending Payments
 // ───────────────────────────────────────────
 function PendingPayments({ staffId, onReceipt }) {
   const [bookings, setBookings] = useState([]);
   const [orders, setOrders] = useState([]);
   const [paymentsByBooking, setPaymentsByBooking] = useState({});
   const [loading, setLoading] = useState(true);
-  const [confirming, setConfirming] = useState(null); 
+  const [confirming, setConfirming] = useState(null);
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState('cash');
 
@@ -346,11 +351,18 @@ function PendingPayments({ staffId, onReceipt }) {
   async function fetchPending() {
     setLoading(true);
     const [b, o] = await Promise.all([
-      supabase.from('bookings').select('*, services(name, base_price, labor_cost), profiles!customer_id(first_name, last_name)')
-        .neq('status', 'completed').neq('status', 'cancelled').order('created_at', { ascending: false }),
-      supabase.from('orders').select('*, profiles!customer_id(first_name, last_name)')
-        .eq('payment_received', false).order('created_at', { ascending: false }),
+      supabase.from('bookings')
+        .select('*, services(name, base_price, labor_cost), profiles!bookings_customer_id_fkey(first_name, last_name)')
+        .neq('status', 'completed')
+        .neq('status', 'cancelled')
+        .order('created_at', { ascending: false }),
+      supabase.from('orders')
+        .select('*, profiles!orders_customer_id_fkey(first_name, last_name)')
+        .neq('status', 'completed')
+        .neq('status', 'cancelled')
+        .order('created_at', { ascending: false }),
     ]);
+
     const bookingsData = b.data || [];
 
     let grouped = {};
@@ -386,6 +398,12 @@ function PendingPayments({ staffId, onReceipt }) {
     const paidAmount = parseFloat(amount);
     if (!paidAmount || paidAmount <= 0) return;
 
+    // Prevent overpayment
+    if (paidAmount > due) {
+      alert(`Amount cannot exceed the due amount of ₱${due.toFixed(2)}.`);
+      return;
+    }
+
     if (type === 'booking') {
       await supabase.from('payments').insert({
         booking_id: record.id,
@@ -394,22 +412,32 @@ function PendingPayments({ staffId, onReceipt }) {
         method,
         processed_by: staffId,
       });
+
+      // Only mark completed if fully paid
+      if (paidAmount >= due) {
+        await supabase.from('bookings')
+          .update({ status: 'completed' })
+          .eq('id', record.id);
+      }
     } else {
       await supabase.from('payments').insert({
         order_id: record.id,
         amount: paidAmount,
-        payment_type: 'full', 
+        payment_type: paidAmount >= due ? 'full' : 'balance',
         method,
         processed_by: staffId,
       });
 
-      await supabase.from('orders').update({
-        payment_received: true,
-        payment_method: method,
-        payment_received_at: new Date().toISOString(),
-        payment_received_by: staffId,
-        status: 'completed',
-      }).eq('id', record.id);
+      // Only mark completed if fully paid
+      if (paidAmount >= due) {
+        await supabase.from('orders').update({
+          payment_received: true,
+          payment_method: method,
+          payment_received_at: new Date().toISOString(),
+          payment_received_by: staffId,
+          status: 'completed',
+        }).eq('id', record.id);
+      }
     }
 
     await supabase.from('audit_logs').insert({
@@ -487,14 +515,14 @@ function PendingPayments({ staffId, onReceipt }) {
         )}
       </div>
 
-      {/* Modal View Confirmation overlay */}
+      {/* Confirmation Modal */}
       {confirming && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
           style={{ backdropFilter: 'blur(8px)', backgroundColor: 'rgba(0,0,0,0.5)' }}
           onClick={() => setConfirming(null)}>
           <div className="bg-white dark:bg-dark-800 rounded-xl p-6 max-w-sm w-full border border-gray-200 dark:border-gray-700 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="font-semibold mb-1 text-gray-900 dark:text-white text-lg">Confirm Payment</h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">₱{confirming.due.toFixed(2)} is currently due.</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">₱{Number(confirming.due).toFixed(2)} is currently due.</p>
 
             <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Amount Received (₱)</label>
             <input

@@ -455,7 +455,7 @@ export default function Customize() {
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
                   </svg>
                   <p className="text-gray-400 text-sm">Generating your preview...</p>
-                  <p className="text-gray-600 text-xs mt-1">This may take 10–30 seconds</p>
+                  <p className="text-gray-600 text-xs mt-1">This may take 1 - 3 minutes</p>
                 </div>
               ) : resultImage ? (
                 <div className="w-full">
