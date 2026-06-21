@@ -8,7 +8,7 @@ export default function AdminBookings() {
   const [bookings, setBookings] = useState([]);
   const [mechanics, setMechanics] = useState([]);
   const [filter, setFilter] = useState('all');
-  const [search, setSearch] = useState(''); // 1. Added search state
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [payments, setPayments] = useState({}); // bookingId -> [payments]
   const [paymentForm, setPaymentForm] = useState({}); // bookingId -> { amount, payment_type, method }
@@ -99,7 +99,6 @@ export default function AdminBookings() {
         details: { amount: parseFloat(form.amount), payment_type: form.payment_type || 'balance' },
       });
 
-      // Recompute balance right away for the toast
       const booking = bookings.find((b) => b.id === bookingId);
       const total = (booking?.services?.base_price || 0) + (booking?.services?.labor_cost || 0);
       const existingPaid = (payments[bookingId] || []).reduce(
@@ -124,7 +123,6 @@ export default function AdminBookings() {
     }
   }
 
-  // 2. Updated filtering logic to match both filter pill and search input string
   const filtered = bookings.filter(b => {
     const matchesStatus = filter === 'all' || b.status === filter;
     const fullName = `${b.profiles?.first_name || ''} ${b.profiles?.last_name || ''}`.toLowerCase();
@@ -150,7 +148,7 @@ export default function AdminBookings() {
           <p className="text-gray-400">View, assign mechanics, track payments, and update booking statuses.</p>
         </div>
 
-        {/* Filter pill row */}
+        {/* Filter pills */}
         <div className="flex gap-2 mb-6 flex-wrap">
           {['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled'].map((f) => (
             <button
@@ -165,7 +163,7 @@ export default function AdminBookings() {
           ))}
         </div>
 
-        {/* 3. Search input added right below the filter pills */}
+        {/* Search Input */}
         <div className="mb-6">
           <input
             type="text"
@@ -184,7 +182,7 @@ export default function AdminBookings() {
             <p className="text-gray-400">No bookings found.</p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {filtered.map((b) => {
               const total = (b.services?.base_price || 0) + (b.services?.labor_cost || 0);
               const bookingPayments = payments[b.id] || [];
@@ -196,10 +194,10 @@ export default function AdminBookings() {
               const isHistoryOpen = expandedHistory === b.id;
 
               return (
-                <div key={b.id} className="bg-dark-800 rounded-xl overflow-hidden border border-dark-700">
+                <div key={b.id} className="bg-dark-800 rounded-xl p-5 border border-dark-700">
 
-                  {/* 4. Swapped-in stable header wrapper to cure structural scattering layout flaws */}
-                  <div className="flex items-start justify-between gap-3 mb-4 p-5 pb-0">
+                  {/* Header Row */}
+                  <div className="flex items-start justify-between gap-3 mb-4">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-semibold text-lg leading-tight">
@@ -233,13 +231,13 @@ export default function AdminBookings() {
                   </div>
 
                   {b.notes && (
-                    <div className="mx-5 mb-4 bg-dark-900 rounded-lg px-4 py-2.5 text-sm text-gray-300 italic">
+                    <div className="mb-4 bg-dark-900 rounded-lg px-4 py-2.5 text-sm text-gray-300 italic">
                       "{b.notes}"
                     </div>
                   )}
 
-                  {/* ── Summary strip ──────────────────────────────────── */}
-                  <div className="mx-5 mb-4 bg-dark-900 rounded-lg px-4 py-3 flex flex-wrap gap-x-8 gap-y-2 text-sm">
+                  {/* Summary Strip */}
+                  <div className="mb-4 bg-dark-900 rounded-lg px-4 py-3 flex flex-wrap gap-x-8 gap-y-2 text-sm">
                     <div>
                       <span className="text-xs text-gray-500 mr-1.5">Total</span>
                       <span className="font-medium">₱{total.toFixed(2)}</span>
@@ -263,25 +261,31 @@ export default function AdminBookings() {
                     </div>
                   </div>
 
-                  {/* ── Action bar ──────────────────────────────────────── */}
-                  <div className="mx-5 mb-5 flex flex-wrap items-center gap-2">
-                    <select
-                      value={b.status}
-                      onChange={(e) => updateStatus(b.id, e.target.value)}
-                      className="text-sm px-3 py-1.5 rounded-md bg-dark-900 border border-gray-700 capitalize"
-                    >
-                      {['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'].map((s) => (
-                        <option key={s} value={s}>{s.replace('_', ' ')}</option>
+                  {/* Status Actions Row (Mirrors Orders Page UI) */}
+                  <div className="mb-4 flex gap-2 flex-wrap items-center bg-dark-900/50 p-3 rounded-lg border border-dark-700">
+                    <p className="text-xs text-gray-500 mr-1">Update status:</p>
+                    {['pending', 'confirmed', 'in_progress', 'completed', 'cancelled']
+                      .filter(s => s !== b.status)
+                      .map(s => (
+                        <button
+                          key={s}
+                          onClick={() => updateStatus(b.id, s)}
+                          className={`text-xs px-3 py-1.5 rounded-md transition capitalize font-medium ${ACTION_STYLES[s]}`}
+                        >
+                          {s.replace('_', ' ')}
+                        </button>
                       ))}
-                    </select>
+                  </div>
 
+                  {/* Utility Action Buttons */}
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       onClick={() => setExpandedPayment(isPaymentOpen ? null : b.id)}
                       className={`text-sm px-3 py-1.5 rounded-md font-medium transition ${
                         isPaymentOpen ? 'bg-primary-600 text-white' : 'bg-dark-900 border border-gray-700 text-gray-300 hover:text-white'
                       }`}
                     >
-                      {isPaymentOpen ? 'Close' : '+ Record Payment'}
+                      {isPaymentOpen ? 'Close Form' : '+ Record Payment'}
                     </button>
 
                     {bookingPayments.length > 0 && (
@@ -289,14 +293,14 @@ export default function AdminBookings() {
                         onClick={() => setExpandedHistory(isHistoryOpen ? null : b.id)}
                         className="text-sm px-3 py-1.5 rounded-md bg-dark-900 border border-gray-700 text-gray-300 hover:text-white transition"
                       >
-                        {isHistoryOpen ? 'Hide' : 'View'} History ({bookingPayments.length})
+                        {isHistoryOpen ? 'Hide Payment History' : 'View Payment History'} ({bookingPayments.length})
                       </button>
                     )}
                   </div>
 
-                  {/* ── Payment history (collapsible) ──────────────────── */}
+                  {/* Payment history (collapsible) */}
                   {isHistoryOpen && bookingPayments.length > 0 && (
-                    <div className="mx-5 mb-5 bg-dark-900 rounded-lg p-3 -mt-2">
+                    <div className="mt-4 bg-dark-900 rounded-lg p-3">
                       <p className="text-xs font-semibold text-gray-400 mb-2">PAYMENT HISTORY</p>
                       <div className="space-y-1.5">
                         {bookingPayments.map((p) => (
@@ -316,9 +320,9 @@ export default function AdminBookings() {
                     </div>
                   )}
 
-                  {/* ── Record payment form (collapsible) ──────────────── */}
+                  {/* Record payment form (collapsible) */}
                   {isPaymentOpen && (
-                    <div className="mx-5 mb-5 bg-dark-900 rounded-lg p-4 flex flex-wrap items-end gap-3">
+                    <div className="mt-4 bg-dark-900 rounded-lg p-4 flex flex-wrap items-end gap-3">
                       <div>
                         <label className="block text-xs text-gray-500 mb-1">Amount (₱)</label>
                         <input
@@ -372,7 +376,7 @@ export default function AdminBookings() {
         )}
       </div>
 
-      {/* ── Toast ─────────────────────────────────────────────────── */}
+      {/* Toast Alert */}
       {paymentToast && (
         <div className="fixed bottom-6 right-6 bg-dark-800 border border-primary-600 rounded-xl px-5 py-4 shadow-xl max-w-xs z-50">
           <p className="text-sm font-semibold text-white mb-1">
@@ -393,4 +397,12 @@ const STATUS_COLORS = {
   in_progress: 'bg-blue-500/20 text-blue-400',
   completed: 'bg-gray-500/20 text-gray-400',
   cancelled: 'bg-red-500/20 text-red-400',
+};
+
+const ACTION_STYLES = {
+  pending: 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30',
+  confirmed: 'bg-green-500/20 text-green-400 hover:bg-green-500/30',
+  in_progress: 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30',
+  completed: 'bg-gray-500/20 text-gray-400 hover:bg-gray-500/30',
+  cancelled: 'bg-red-500/20 text-red-400 hover:bg-red-500/30',
 };

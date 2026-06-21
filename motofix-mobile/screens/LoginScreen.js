@@ -27,21 +27,31 @@ export default function LoginScreen({ navigation }) {
     }
     
     try {
-      // 2. Fetch the authenticated user's metadata to verify their system role
-const { data: { user }, error: userError } = await supabase.auth.getUser();
+      // 2. Fetch the authenticated user
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
       
       if (userError || !user) {
         throw new Error(userError?.message || 'Could not retrieve user data.');
       }
 
-const { data: profile } = await supabase
-  .from('profiles')
-  .select('role')
-  .eq('id', user.id)
-  .single();
+      // 3. Role lives in the `profiles` table, NOT in auth user_metadata.
+      // Accounts created via the create-mechanic / create-account edge
+      // functions never write a `role` into user_metadata — only into
+      // profiles. Reading from user_metadata here was why mechanics/staff
+      // got dropped into the customer tabs.
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single();
 
-const role = profile?.role || 'customer';
-      // 3. Route the user to their designated dashboard layout
+      if (profileError) {
+        throw new Error(profileError.message);
+      }
+
+      const role = profile?.role || 'customer';
+
+      // 4. Route the user to their designated dashboard layout
       if (role === 'admin') {
         navigation.replace('AdminMain');
       } else if (role === 'mechanic') {

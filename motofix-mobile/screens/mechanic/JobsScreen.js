@@ -1,99 +1,137 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, StatusBar, RefreshControl, TextInput } from 'react-native';
+import { useEffect, useState, useCallback } from 'react';
+import {
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  TextInput, ActivityIndicator, StatusBar, RefreshControl,
+} from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
 
-const STATUS_COLORS = {
-  pending: '#eab308',
-  confirmed: '#22c55e',
-  in_progress: '#3b82f6',
-  completed: '#9ca3af',
-  cancelled: '#ef4444',
-};
+const STATUS_FLOW = ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'];
 
 export default function JobsScreen({ navigation }) {
   const { theme, isDark } = useTheme();
+  const [user, setUser] = useState(null);
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [updatingId, setUpdatingId] = useState(null);
 
-  useEffect(() => { fetchBookings(); }, []);
+  useEffect(() => { init(); }, []);
 
-  async function fetchBookings() {
+  async function init() {
     const { data: { user } } = await supabase.auth.getUser();
-    const { data } = await supabase
+    setUser(user);
+    await fetchBookings(user?.id);
+  }
+
+  async function fetchBookings(userId) {
+    const id = userId || user?.id;
+    if (!id) return;
+
+    const { data, error } = await supabase
       .from('bookings')
-      .select('*, services(name, base_price), profiles!bookings_customer_id_fkey(first_name, last_name, phone)')
-      .eq('mechanic_id', user.id)
+      .select('*, services(name, base_price, labor_cost), profiles!bookings_customer_id_fkey(first_name, last_name, phone)')
+      .eq('mechanic_id', id)
       .order('booking_date', { ascending: true });
-    setBookings(data || []);
+
+    if (!error) setBookings(data || []);
     setLoading(false);
     setRefreshing(false);
   }
 
-  async function updateStatus(id, status) {
-    const { data: { user } } = await supabase.auth.getUser();
-    await supabase
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchBookings();
+  }, [user]);
+
+  async function updateStatus(bookingId, status) {
+    setUpdatingId(bookingId);
+    const { error } = await supabase
       .from('bookings')
       .update({ status })
-      .eq('id', id)
+      .eq('id', bookingId)
       .eq('mechanic_id', user.id);
-    fetchBookings();
+
+    if (!error) {
+      setBookings((prev) => prev.map((b) => (b.id === bookingId ? { ...b, status } : b)));
+    }
+    setUpdatingId(null);
   }
 
+  // FIXED: Cancelled metric now computed properly inside component render
   const counts = {
     all: bookings.length,
-    pending: bookings.filter(b => b.status === 'pending').length,
-    confirmed: bookings.filter(b => b.status === 'confirmed').length,
-    in_progress: bookings.filter(b => b.status === 'in_progress').length,
-    completed: bookings.filter(b => b.status === 'completed').length,
-    cancelled: bookings.filter(b => b.status === 'cancelled').length,
+    pending: bookings.filter((b) => b.status === 'pending').length,
+    confirmed: bookings.filter((b) => b.status === 'confirmed').length,
+    in_progress: bookings.filter((b) => b.status === 'in_progress').length,
+    completed: bookings.filter((b) => b.status === 'completed').length,
+    cancelled: bookings.filter((b) => b.status === 'cancelled').length,
   };
 
-  const filtered = bookings.filter(b => {
-    const matchStatus = statusFilter === 'all' || b.status === statusFilter;
+  const filtered = bookings.filter((b) => {
+    const matchesStatus = statusFilter === 'all' || b.status === statusFilter;
     const customerName = `${b.profiles?.first_name || ''} ${b.profiles?.last_name || ''}`.toLowerCase();
     const serviceName = (b.services?.name || '').toLowerCase();
-    const q = search.trim().toLowerCase();
-    const matchSearch = q === '' || customerName.includes(q) || serviceName.includes(q);
-    return matchStatus && matchSearch;
+    const query = search.trim().toLowerCase();
+    const matchesSearch = query === '' || customerName.includes(query) || serviceName.includes(query);
+    return matchesStatus && matchesSearch;
   });
+
+  function statusColor(status) {
+    switch (status) {
+      case 'confirmed': return theme.success;
+      case 'pending': return theme.warning;
+      case 'in_progress': return '#3b82f6';
+      case 'completed': return theme.textMuted;
+      case 'cancelled': return theme.danger;
+      default: return theme.textMuted;
+    }
+  }
 
   const s = styles(theme);
 
-  if (loading) return (
-    <View style={s.centered}>
-      <ActivityIndicator size="large" color={theme.primaryLight} />
-    </View>
-  );
+  if (loading) {
+    return (
+      <View style={s.centered}>
+        <ActivityIndicator size="large" color={theme.primaryLight} />
+      </View>
+    );
+  }
 
   return (
     <View style={s.container}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={theme.bg} />
 
-      {/* Stats row */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.statsRow} contentContainerStyle={s.statsContent}>
-        {[
-          { key: 'all', label: 'All', count: counts.all, color: theme.text },
-          { key: 'pending', label: 'Pending', count: counts.pending, color: STATUS_COLORS.pending },
-          { key: 'confirmed', label: 'Confirmed', count: counts.confirmed, color: STATUS_COLORS.confirmed },
-          { key: 'in_progress', label: 'In Progress', count: counts.in_progress, color: STATUS_COLORS.in_progress },
-          { key: 'completed', label: 'Done', count: counts.completed, color: STATUS_COLORS.completed },
-        ].map(item => (
-          <TouchableOpacity
-            key={item.key}
-            style={[s.statChip, statusFilter === item.key && s.statChipActive]}
-            onPress={() => setStatusFilter(item.key)}
-          >
-            <Text style={[s.statCount, { color: item.color }]}>{item.count}</Text>
-            <Text style={s.statLabel}>{item.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      {/* Top Filter Chips */}
+      <View style={s.statBarOuter}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.statBarContent}>
+          {[
+            { key: 'all', label: 'All' },
+            { key: 'pending', label: 'Pending' },
+            { key: 'confirmed', label: 'Confirmed' },
+            { key: 'in_progress', label: 'In Progress' },
+            { key: 'completed', label: 'Completed' },
+            { key: 'cancelled', label: 'Cancelled' }, // FIXED: Integrated Cancelled button node mapping
+          ].map((f) => (
+            <TouchableOpacity
+              key={f.key}
+              style={[s.statChip, statusFilter === f.key && s.statChipActive]}
+              onPress={() => setStatusFilter(f.key)}
+            >
+              <Text style={[s.statChipNum, statusFilter === f.key && s.statChipNumActive]}>
+                {counts[f.key] ?? 0}
+              </Text>
+              <Text style={[s.statChipLabel, statusFilter === f.key && s.statChipLabelActive]}>
+                {f.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
 
-      {/* Search */}
+      {/* Search Input Wrapper */}
       <View style={s.searchWrap}>
         <TextInput
           style={s.searchInput}
@@ -102,90 +140,70 @@ export default function JobsScreen({ navigation }) {
           value={search}
           onChangeText={setSearch}
         />
-        {search.length > 0 && (
-          <TouchableOpacity onPress={() => setSearch('')} style={s.searchClear}>
-            <Text style={{ color: theme.textMuted, fontSize: 14 }}>✕</Text>
-          </TouchableOpacity>
-        )}
       </View>
 
-      {/* List */}
+      {/* Job Cards List */}
       <ScrollView
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchBookings(); }} tintColor={theme.primaryLight} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primaryLight} />}
       >
-        {filtered.length === 0 ? (
+        {bookings.length === 0 ? (
+          <View style={s.emptyCard}>
+            <Text style={s.emptyIcon}>🔧</Text>
+            <Text style={s.emptyTitle}>No bookings assigned</Text>
+            <Text style={s.emptyText}>Bookings assigned to you will show up here.</Text>
+          </View>
+        ) : filtered.length === 0 ? (
           <View style={s.emptyCard}>
             <Text style={s.emptyIcon}>🔍</Text>
-            <Text style={s.emptyTitle}>No jobs found</Text>
-            <Text style={s.emptyText}>
-              {bookings.length === 0 ? 'No bookings assigned to you yet.' : 'Try adjusting your filters.'}
-            </Text>
+            <Text style={s.emptyTitle}>No matches</Text>
+            <TouchableOpacity onPress={() => { setSearch(''); setStatusFilter('all'); }}>
+              <Text style={s.clearLink}>Clear filters</Text>
+            </TouchableOpacity>
           </View>
         ) : (
-          filtered.map(b => (
-            <TouchableOpacity
-              key={b.id}
-              style={s.card}
-              onPress={() => navigation.navigate('Job Detail', { booking: b, onUpdate: fetchBookings })}
-              activeOpacity={0.8}
-            >
-              {/* Header */}
-              <View style={s.cardHeader}>
-                <Text style={s.serviceName} numberOfLines={1}>{b.services?.name || 'Service'}</Text>
-                <View style={[s.badge, { backgroundColor: STATUS_COLORS[b.status] + '22' }]}>
-                  <Text style={[s.badgeText, { color: STATUS_COLORS[b.status] }]}>
-                    {b.status?.replace('_', ' ')}
-                  </Text>
+          filtered.map((b) => (
+            <View key={b.id} style={s.card}>
+              <TouchableOpacity onPress={() => navigation.navigate('JobDetail', { booking: b })} activeOpacity={0.7}>
+                <View style={s.cardHeader}>
+                  <Text style={s.serviceName}>{b.services?.name || 'Service'}</Text>
+                  <View style={[s.badge, { backgroundColor: statusColor(b.status) + '22' }]}>
+                    <Text style={[s.badgeText, { color: statusColor(b.status) }]}>
+                      {b.status?.replace('_', ' ')}
+                    </Text>
+                  </View>
                 </View>
-              </View>
+
+                <Text style={s.dateText}>📅 {b.booking_date} at {b.booking_time}</Text>
+
+                {b.profiles && (
+                  <Text style={s.customerText}>
+                    👤 {b.profiles.first_name} {b.profiles.last_name}
+                    {b.profiles.phone ? ` · ${b.profiles.phone}` : ''}
+                  </Text>
+                )}
+
+                {b.notes ? <Text style={s.notesText}>"{b.notes}"</Text> : null}
+              </TouchableOpacity>
 
               <View style={s.divider} />
 
-              {/* Details */}
-              <View style={s.detailRow}>
-                <Text style={s.detailLabel}>📅 Date</Text>
-                <Text style={s.detailValue}>{b.booking_date}</Text>
-              </View>
-              <View style={s.detailRow}>
-                <Text style={s.detailLabel}>🕐 Time</Text>
-                <Text style={s.detailValue}>{b.booking_time?.slice(0, 5) || '—'}</Text>
-              </View>
-              <View style={s.detailRow}>
-                <Text style={s.detailLabel}>👤 Customer</Text>
-                <Text style={s.detailValue}>{b.profiles?.first_name} {b.profiles?.last_name}</Text>
-              </View>
-              {b.profiles?.phone && (
-                <View style={s.detailRow}>
-                  <Text style={s.detailLabel}>📞 Phone</Text>
-                  <Text style={s.detailValue}>{b.profiles.phone}</Text>
-                </View>
-              )}
-              {b.notes && (
-                <View style={[s.detailRow, { alignItems: 'flex-start' }]}>
-                  <Text style={s.detailLabel}>📝 Notes</Text>
-                  <Text style={[s.detailValue, { flex: 1, textAlign: 'right' }]}>{b.notes}</Text>
-                </View>
-              )}
-
-              {/* Quick status update */}
-              <View style={s.actionRow}>
-                {['confirmed', 'in_progress', 'completed'].filter(s => s !== b.status).map(st => (
+              <Text style={s.updateLabel}>Update status</Text>
+              <View style={s.statusRow}>
+                {STATUS_FLOW.filter((st) => st !== b.status).map((st) => (
                   <TouchableOpacity
                     key={st}
-                    style={[s.actionBtn, { backgroundColor: STATUS_COLORS[st] + '22', borderColor: STATUS_COLORS[st] + '55' }]}
-                    onPress={(e) => { e.stopPropagation?.(); updateStatus(b.id, st); }}
+                    disabled={updatingId === b.id}
+                    onPress={() => updateStatus(b.id, st)}
+                    style={[s.statusBtn, { borderColor: statusColor(st) + '55' }]}
                   >
-                    <Text style={[s.actionBtnText, { color: STATUS_COLORS[st] }]}>
-                      {st === 'in_progress' ? 'Start' : st === 'completed' ? 'Complete' : 'Confirm'}
+                    <Text style={[s.statusBtnText, { color: statusColor(st) }]}>
+                      {st.replace('_', ' ')}
                     </Text>
                   </TouchableOpacity>
                 ))}
-                <TouchableOpacity style={s.detailBtn} onPress={() => navigation.navigate('Job Detail', { booking: b, onUpdate: fetchBookings })}>
-                  <Text style={s.detailBtnText}>Details →</Text>
-                </TouchableOpacity>
               </View>
-            </TouchableOpacity>
+            </View>
           ))
         )}
         <View style={{ height: 32 }} />
@@ -197,31 +215,51 @@ export default function JobsScreen({ navigation }) {
 const styles = (theme) => StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.bg },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.bg },
-  statsRow: { maxHeight: 80, borderBottomWidth: 1, borderBottomColor: theme.border },
-  statsContent: { paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
-  statChip: { alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, minWidth: 70 },
-  statChipActive: { borderColor: theme.primary, backgroundColor: theme.primary + '15' },
-  statCount: { fontSize: 18, fontWeight: 'bold' },
-  statLabel: { fontSize: 11, color: theme.textMuted, marginTop: 2 },
-  searchWrap: { flexDirection: 'row', alignItems: 'center', margin: 12, backgroundColor: theme.bg2, borderRadius: 10, borderWidth: 1, borderColor: theme.border, paddingHorizontal: 12 },
-  searchInput: { flex: 1, paddingVertical: 10, fontSize: 14, color: theme.text },
-  searchClear: { padding: 4 },
-  card: { backgroundColor: theme.card, marginHorizontal: 12, marginTop: 10, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: theme.border },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  serviceName: { fontSize: 16, fontWeight: 'bold', color: theme.text, flex: 1, marginRight: 8 },
+  statBarOuter: {
+    backgroundColor: theme.bg,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
+  },
+  statBarContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  statChip: {
+    minWidth: 80,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: theme.bg2,
+    borderWidth: 1,
+    borderColor: theme.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statChipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
+  statChipNum: { fontSize: 15, fontWeight: 'bold', color: theme.text, lineHeight: 18 },
+  statChipNumActive: { color: '#fff' },
+  statChipLabel: { fontSize: 11, color: theme.textSub, marginTop: 2, lineHeight: 14 },
+  statChipLabelActive: { color: 'rgba(255,255,255,0.9)' },
+  searchWrap: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 },
+  searchInput: { backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, borderRadius: 10, padding: 12, fontSize: 14, color: theme.text },
+  card: { backgroundColor: theme.card, marginHorizontal: 16, marginTop: 12, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: theme.border },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, gap: 8 },
+  serviceName: { fontSize: 16, fontWeight: 'bold', color: theme.text, flex: 1 },
   badge: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
   badgeText: { fontSize: 11, fontWeight: 'bold', textTransform: 'capitalize' },
-  divider: { height: 1, backgroundColor: theme.border, marginBottom: 10 },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  detailLabel: { fontSize: 13, color: theme.textMuted },
-  detailValue: { fontSize: 13, color: theme.text, fontWeight: '500' },
-  actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.border },
-  actionBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
-  actionBtnText: { fontSize: 12, fontWeight: 'bold', textTransform: 'capitalize' },
-  detailBtn: { marginLeft: 'auto', paddingHorizontal: 12, paddingVertical: 6 },
-  detailBtnText: { fontSize: 12, color: theme.primaryLight, fontWeight: '600' },
+  dateText: { fontSize: 13, color: theme.textSub, marginBottom: 4 },
+  customerText: { fontSize: 13, color: theme.textSub, marginBottom: 4 },
+  notesText: { fontSize: 13, color: theme.textMuted, fontStyle: 'italic', marginTop: 4 },
+  divider: { height: 1, backgroundColor: theme.border, marginVertical: 12 },
+  updateLabel: { fontSize: 11, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
+  statusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  statusBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, borderWidth: 1 },
+  statusBtnText: { fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
   emptyCard: { alignItems: 'center', padding: 48 },
-  emptyIcon: { fontSize: 40, marginBottom: 12 },
-  emptyTitle: { fontSize: 16, fontWeight: 'bold', color: theme.text, marginBottom: 6 },
-  emptyText: { fontSize: 13, color: theme.textSub, textAlign: 'center' },
+  emptyIcon: { fontSize: 48, marginBottom: 16 },
+  emptyTitle: { fontSize: 18, fontWeight: 'bold', color: theme.text, marginBottom: 8 },
+  emptyText: { fontSize: 14, color: theme.textSub, textAlign: 'center' },
+  clearLink: { fontSize: 14, color: theme.primaryLight, fontWeight: '600' },
 });

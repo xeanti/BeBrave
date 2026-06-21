@@ -20,11 +20,9 @@ export default function StaffDashboard() {
   const [receipt, setReceipt] = useState(null);
 
   return (
-    // Changed: Adaptive background and core text colors
     <div className="min-h-[calc(100vh-65px)] bg-gray-50 dark:bg-dark-900 text-gray-900 dark:text-white px-6 py-10">
       <div className="max-w-4xl mx-auto">
         <h1 className="text-3xl font-bold mb-1">Staff Dashboard</h1>
-        {/* Changed: Adaptive descriptive subtext */}
         <p className="text-gray-600 dark:text-gray-400 mb-8">Walk-in bookings, parts checkout, and payment confirmation.</p>
 
         <div className="flex gap-2 mb-6">
@@ -35,7 +33,6 @@ export default function StaffDashboard() {
           ].map((t) => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-                // Changed: Adaptive non-active tab styles
                 tab === t.id ? 'bg-primary-600 text-white' : 'bg-gray-200 dark:bg-dark-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
               }`}>
               {t.label}
@@ -43,9 +40,9 @@ export default function StaffDashboard() {
           ))}
         </div>
 
-        {tab === 'booking' && <WalkInBooking staffId={user.id} onReceipt={setReceipt} />}
-        {tab === 'pos' && <WalkInPOS staffId={user.id} onReceipt={setReceipt} />}
-        {tab === 'pending' && <PendingPayments staffId={user.id} onReceipt={setReceipt} />}
+        {tab === 'booking' && <WalkInBooking staffId={user?.id} onReceipt={setReceipt} />}
+        {tab === 'pos' && <WalkInPOS staffId={user?.id} onReceipt={setReceipt} />}
+        {tab === 'pending' && <PendingPayments staffId={user?.id} onReceipt={setReceipt} />}
       </div>
 
       <ReceiptModal receipt={receipt} onClose={() => setReceipt(null)} />
@@ -122,20 +119,17 @@ function WalkInBooking({ staffId, onReceipt }) {
   }
 
   return (
-    // Changed: Adaptive block wrapper colors
     <div className="bg-white dark:bg-dark-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-transparent">
       {message && (
         <div className={`text-sm rounded-lg p-3 mb-4 ${message.startsWith('Error') ? 'bg-red-500/10 text-red-600 dark:text-red-400' : 'bg-green-500/10 text-green-600 dark:text-green-400'}`}>
           {message}
         </div>
       )}
-      {/* Changed: Adaptive section labeling texts */}
       <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-300 uppercase tracking-wide mb-3">1. Customer</h2>
       <div className="mb-5"><CustomerPicker selected={customer} onSelect={setCustomer} /></div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-300 uppercase tracking-wide">2. Service Details</h2>
-        {/* Changed: Form controls inputs adapt to brightness themes */}
         <select value={form.service_id} onChange={(e) => setForm({ ...form, service_id: e.target.value })} required
           className="w-full px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-dark-900 border border-gray-300 dark:border-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:border-primary-500">
           <option value="">Choose a service...</option>
@@ -192,9 +186,16 @@ function WalkInPOS({ staffId, onReceipt }) {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    if (!search.trim()) { setParts([]); return; }
+    if (!search.trim()) { 
+      setParts([]); 
+      return; 
+    }
     const t = setTimeout(() => {
-      supabase.from('parts').select('*').ilike('name', `%${search}%`).gt('stock_quantity', 0).limit(8)
+      supabase.from('parts')
+        .select('*')
+        .ilike('name', `%${search}%`)
+        .gt('stock_quantity', 0)
+        .limit(8)
         .then(({ data }) => setParts(data || []));
     }, 250);
     return () => clearTimeout(t);
@@ -215,7 +216,7 @@ function WalkInPOS({ staffId, onReceipt }) {
     setCart((prev) => prev.map((p) => p.id === id ? { ...p, quantity: qty } : p));
   }
 
-  const total = cart.reduce((sum, p) => sum + parseFloat(p.price) * p.quantity, 0);
+  const total = cart.reduce((sum, p) => sum + parseFloat(p.price || 0) * p.quantity, 0);
 
   async function handleCheckout() {
     if (!customer) { setMessage('Error: Select or create a customer first.'); return; }
@@ -234,7 +235,11 @@ function WalkInPOS({ staffId, onReceipt }) {
       if (orderError) throw orderError;
 
       const items = cart.map((p) => ({
-        order_id: order.id, part_id: p.id, quantity: p.quantity, unit_price: p.price, subtotal: p.price * p.quantity,
+        order_id: order.id, 
+        part_id: p.id, 
+        quantity: p.quantity, 
+        unit_price: parseFloat(p.price || 0), 
+        subtotal: parseFloat(p.price || 0) * p.quantity,
       }));
       const { error: itemsError } = await supabase.from('order_items').insert(items);
       if (itemsError) throw itemsError;
@@ -269,7 +274,6 @@ function WalkInPOS({ staffId, onReceipt }) {
 
       <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-300 uppercase tracking-wide mb-3">2. Add Parts</h2>
       
-      {/* Container holding the absolute wrapper overlay stack */}
       <div className="relative mb-5">
         <input
           value={search}
@@ -278,11 +282,10 @@ function WalkInPOS({ staffId, onReceipt }) {
           className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-dark-900 border border-gray-300 dark:border-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:border-primary-500 placeholder-gray-400 dark:placeholder-gray-500"
         />
         
-        {/* Changed: Transformed results into an absolute floating popup panel */}
         {parts.length > 0 && (
           <div className="absolute left-0 right-0 mt-1 z-10 max-h-60 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-dark-900 shadow-xl divide-y divide-gray-100 dark:divide-gray-800">
             {parts.map((p) => (
-              <button key={p.id} onClick={() => addToCart(p)}
+              <button key={p.id} type="button" onClick={() => addToCart(p)}
                 className="w-full flex items-center justify-between hover:bg-gray-50 dark:hover:bg-dark-800/70 p-3 transition text-left">
                 <span className="text-sm font-medium text-gray-900 dark:text-white">{p.name}</span>
                 <span className="text-xs text-accent-600 dark:text-accent-400 font-medium">₱{p.price} · {p.stock_quantity} available</span>
@@ -308,7 +311,7 @@ function WalkInPOS({ staffId, onReceipt }) {
                 <input type="number" min="1" value={item.quantity}
                   onChange={(e) => updateQty(item.id, parseInt(e.target.value) || 1)}
                   className="w-14 px-2 py-1 rounded bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 text-gray-900 dark:text-white text-center text-xs focus:outline-none focus:border-primary-500" />
-                <span className="text-accent-600 dark:text-accent-400 w-16 text-right font-medium">₱{(item.price * item.quantity).toFixed(2)}</span>
+                <span className="text-accent-600 dark:text-accent-400 w-16 text-right font-medium">₱{(parseFloat(item.price || 0) * item.quantity).toFixed(2)}</span>
               </div>
             </div>
           ))}
@@ -327,7 +330,7 @@ function WalkInPOS({ staffId, onReceipt }) {
 }
 
 // ───────────────────────────────────────────
-// TAB 3: Pending Payments (bookings + orders)
+// TAB 3: Pending Payments 
 // ───────────────────────────────────────────
 function PendingPayments({ staffId, onReceipt }) {
   const [bookings, setBookings] = useState([]);
@@ -343,9 +346,9 @@ function PendingPayments({ staffId, onReceipt }) {
   async function fetchPending() {
     setLoading(true);
     const [b, o] = await Promise.all([
-      supabase.from('bookings').select('*, services(name, base_price, labor_cost), profiles!bookings_customer_id_fkey(first_name, last_name)')
+      supabase.from('bookings').select('*, services(name, base_price, labor_cost), profiles!customer_id(first_name, last_name)')
         .neq('status', 'completed').neq('status', 'cancelled').order('created_at', { ascending: false }),
-      supabase.from('orders').select('*, profiles!orders_customer_id_fkey(first_name, last_name)')
+      supabase.from('orders').select('*, profiles!customer_id(first_name, last_name)')
         .eq('payment_received', false).order('created_at', { ascending: false }),
     ]);
     const bookingsData = b.data || [];
@@ -379,7 +382,7 @@ function PendingPayments({ staffId, onReceipt }) {
 
   async function confirmPayment() {
     if (!confirming) return;
-    const { type, record } = confirming;
+    const { type, record, due } = confirming;
     const paidAmount = parseFloat(amount);
     if (!paidAmount || paidAmount <= 0) return;
 
@@ -387,11 +390,19 @@ function PendingPayments({ staffId, onReceipt }) {
       await supabase.from('payments').insert({
         booking_id: record.id,
         amount: paidAmount,
-        payment_type: paidAmount >= confirming.due ? 'full' : 'balance',
+        payment_type: paidAmount >= due ? 'full' : 'balance',
         method,
         processed_by: staffId,
       });
     } else {
+      await supabase.from('payments').insert({
+        order_id: record.id,
+        amount: paidAmount,
+        payment_type: 'full', 
+        method,
+        processed_by: staffId,
+      });
+
       await supabase.from('orders').update({
         payment_received: true,
         payment_method: method,
@@ -410,7 +421,7 @@ function PendingPayments({ staffId, onReceipt }) {
     });
 
     onReceipt({
-      customerName: `${record.profiles?.first_name} ${record.profiles?.last_name}`,
+      customerName: record.profiles ? `${record.profiles.first_name} ${record.profiles.last_name}` : 'Walk-in Customer',
       type,
       items: type === 'booking'
         ? [{ label: record.services?.name || 'Service', amount: (record.services?.base_price || 0) + (record.services?.labor_cost || 0) }]

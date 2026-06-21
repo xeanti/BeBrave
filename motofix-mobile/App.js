@@ -4,6 +4,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { NavigationContainer } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons'; 
 import { ThemeProvider, useTheme } from './lib/ThemeContext';
+import RoleGuard from './lib/RoleGuard';
 
 // --- GLOBAL / AUTH MODULE SCREENS ---
 import LoginScreen from './screens/LoginScreen';
@@ -49,54 +50,13 @@ export function CustomerTabs() {
   );
 }
 
-const MechanicStack = createStackNavigator();
-
-export function MechanicMain() {
+export function MechanicTabs() {
   const { theme } = useTheme();
-
-  const headerStyle = {
-    headerStyle: {
-      backgroundColor: theme.bg,
-      borderBottomWidth: 1,
-      borderBottomColor: theme.border,
-    },
-    headerTitleStyle: {
-      color: theme.text,
-      fontWeight: 'bold',
-    },
-    headerTintColor: theme.primaryLight,
-  };
-
   return (
-    <MechanicStack.Navigator screenOptions={{ headerShown: false }}>
-      <MechanicStack.Screen
-        name="JobsList"
-        component={JobsScreen}
-        options={{
-          ...headerStyle,
-          headerShown: true,
-          title: 'My Jobs',
-        }}
-      />
-      <MechanicStack.Screen
-        name="Job Detail"
-        component={JobDetailScreen}
-        options={{
-          ...headerStyle,
-          headerShown: true,
-          title: 'Job Detail',
-        }}
-      />
-      <MechanicStack.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={{
-          ...headerStyle,
-          headerShown: true,
-          title: 'Profile',
-        }}
-      />
-    </MechanicStack.Navigator>
+    <Tab.Navigator screenOptions={getTabOptions(theme)}>
+      <Tab.Screen name="My Jobs" component={JobsScreen} options={{ tabBarIcon: makeIcon('build') }} />
+      <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarIcon: makeIcon('person') }} />
+    </Tab.Navigator>
   );
 }
 
@@ -125,6 +85,40 @@ export function AdminTabs() {
   );
 }
 
+// --- ROLE-GUARDED WRAPPERS ---
+
+function MechanicMainGuarded({ navigation }) {
+  return (
+    <RoleGuard allowedRoles={['mechanic']} navigation={navigation}>
+      <MechanicTabs />
+    </RoleGuard>
+  );
+}
+
+function AdminMainGuarded({ navigation }) {
+  return (
+    <RoleGuard allowedRoles={['admin']} navigation={navigation}>
+      <AdminTabs />
+    </RoleGuard>
+  );
+}
+
+function StaffMainGuarded({ navigation }) {
+  return (
+    <RoleGuard allowedRoles={['staff', 'admin']} navigation={navigation}>
+      <StaffTabs />
+    </RoleGuard>
+  );
+}
+
+function CustomerMainGuarded({ navigation }) {
+  return (
+    <RoleGuard allowedRoles={['customer']} navigation={navigation}>
+      <CustomerTabs />
+    </RoleGuard>
+  );
+}
+
 // --- MAIN NAVIGATION ROOT ---
 export function RootNav() {
   const { theme } = useTheme();
@@ -134,17 +128,29 @@ export function RootNav() {
       <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName="Login">
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="Register" component={RegisterScreen} />
-        
-        <Stack.Screen name="Main" component={CustomerTabs} />
-        <Stack.Screen name="AdminMain" component={AdminTabs} />
-        <Stack.Screen name="MechanicMain" component={MechanicMain} />
-        <Stack.Screen name="StaffMain" component={StaffTabs} />
-        
+
+        <Stack.Screen name="Main" component={CustomerMainGuarded} />
+        <Stack.Screen name="AdminMain" component={AdminMainGuarded} />
+        <Stack.Screen name="MechanicMain" component={MechanicMainGuarded} />
+        <Stack.Screen name="StaffMain" component={StaffMainGuarded} />
+
         <Stack.Screen 
           name="Booking" 
           component={BookingScreen} 
           options={{ 
             headerShown: true,
+            headerStyle: { backgroundColor: theme.bg, borderBottomWidth: 1, borderBottomColor: theme.border },
+            headerTitleStyle: { color: theme.text, fontWeight: 'bold' },
+            headerTintColor: theme.primaryLight
+          }} 
+        />
+
+        <Stack.Screen 
+          name="JobDetail" 
+          component={JobDetailScreen} 
+          options={{ 
+            headerShown: true,
+            title: 'Job Details',
             headerStyle: { backgroundColor: theme.bg, borderBottomWidth: 1, borderBottomColor: theme.border },
             headerTitleStyle: { color: theme.text, fontWeight: 'bold' },
             headerTintColor: theme.primaryLight
