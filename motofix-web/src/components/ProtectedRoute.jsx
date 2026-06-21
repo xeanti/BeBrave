@@ -2,6 +2,19 @@ import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
+function getHomeForRole(role) {
+  switch (role) {
+    case 'admin':
+      return '/admin';
+    case 'mechanic':
+      return '/mechanic-dashboard';
+    case 'staff':
+      return '/staff';
+    default:
+      return '/dashboard'; // customer
+  }
+}
+
 export default function ProtectedRoute({ children, allowedRoles }) {
   const { user, profile, loading } = useAuth();
   const [showLoader, setShowLoader] = useState(true);
@@ -9,7 +22,7 @@ export default function ProtectedRoute({ children, allowedRoles }) {
   useEffect(() => {
     const timer = setTimeout(() => {
       setShowLoader(false);
-    }, 800); // 2 seconds
+    }, 800);
 
     return () => clearTimeout(timer);
   }, []);
@@ -38,7 +51,7 @@ export default function ProtectedRoute({ children, allowedRoles }) {
             <path
               className="opacity-90"
               fill="currentColor"
-              d="M4 12a8 8 0 018-8v8z"
+              d="M4 12a8 8v8z"
             />
           </svg>
 
@@ -50,10 +63,12 @@ export default function ProtectedRoute({ children, allowedRoles }) {
     );
   }
 
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
 
   if (allowedRoles && profile && !allowedRoles.includes(profile.role)) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={getHomeForRole(profile.role)} replace />;
   }
 
   return children;

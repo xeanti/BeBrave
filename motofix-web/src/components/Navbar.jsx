@@ -106,17 +106,17 @@ export default function Navbar() {
   }, [user, profile]);
 
   async function fetchAdminNotifs() {
-    const [bookings, orders] = await Promise.all([
-      supabase
-        .from('bookings')
-        .select('id', { count: 'exact' })
-        .eq('status', 'pending'),
+const [bookings, orders] = await Promise.all([
+  supabase
+    .from('bookings')
+    .select('*', { count: 'exact', head: true })
+    .eq('status', 'pending'),
 
-      supabase
-        .from('orders')
-        .select('id', { count: 'exact' })
-        .eq('status', 'pending'),
-    ]);
+  supabase
+    .from('orders')
+    .select('*', { count: 'exact', head: true })
+    .eq('status', 'pending'),
+]);
 
     setPendingBookings(bookings.count || 0);
     setPendingOrders(orders.count || 0);

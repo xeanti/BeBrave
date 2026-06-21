@@ -54,123 +54,122 @@ export default function App() {
             <Route path="/mechanics" element={<Mechanics />} />
 
             {/* Customer */}
-            <Route
-              path="/dashboard"
-              element={
-                <ProtectedRoute>
-                  <Dashboard />
-                </ProtectedRoute>
-              }
-            />
+<Route
+  path="/dashboard"
+  element={
+    <ProtectedRoute allowedRoles={['customer']}>
+      <Dashboard />
+    </ProtectedRoute>
+  }
+/>
 
-            <Route
-              path="/booking"
-              element={
-                <ProtectedRoute>
-                  <Booking />
-                </ProtectedRoute>
-              }
-            />
+<Route
+  path="/booking"
+  element={
+    <ProtectedRoute allowedRoles={['customer']}>
+      <Booking />
+    </ProtectedRoute>
+  }
+/>
 
-            <Route
-              path="/customize"
-              element={
-                <ProtectedRoute>
-                  <Customize />
-                </ProtectedRoute>
-              }
-            />
+<Route
+  path="/customize"
+  element={
+    <ProtectedRoute allowedRoles={['customer']}>
+      <Customize />
+    </ProtectedRoute>
+  }
+/>
 
-            <Route
-              path="/profile"
-              element={
-                <ProtectedRoute>
-                  <Profile />
-                </ProtectedRoute>
-              }
-            />
+<Route
+  path="/profile"
+  element={
+    <ProtectedRoute>
+      <Profile />
+    </ProtectedRoute>
+  }
+/>
 
-            <Route
-              path="/appointments"
-              element={
-                <ProtectedRoute>
-                  <Appointments />
-                </ProtectedRoute>
-              }
-            />
+<Route
+  path="/appointments"
+  element={
+    <ProtectedRoute allowedRoles={['customer']}>
+      <Appointments />
+    </ProtectedRoute>
+  }
+/>
 
-            <Route
-              path="/chat"
-              element={
-                <ProtectedRoute>
-                  <Chat />
-                </ProtectedRoute>
-              }
-            />
+<Route
+  path="/chat"
+  element={
+    <ProtectedRoute allowedRoles={['customer']}>
+      <Chat />
+    </ProtectedRoute>
+  }
+/>
 
-            <Route
-              path="/pre-assessment"
-              element={
-                <ProtectedRoute>
-                  <PreAssessment />
-                </ProtectedRoute>
-              }
-            />
+<Route
+  path="/pre-assessment"
+  element={
+    <ProtectedRoute allowedRoles={['customer']}>
+      <PreAssessment />
+    </ProtectedRoute>
+  }
+/>
 
-            <Route
-              path="/my-assessments"
-              element={
-                <ProtectedRoute>
-                  <MyAssessments />
-                </ProtectedRoute>
-              }
-            />
+<Route
+  path="/my-assessments"
+  element={
+    <ProtectedRoute allowedRoles={['customer']}>
+      <MyAssessments />
+    </ProtectedRoute>
+  }
+/>
 
-            <Route
-              path="/my-orders"
-              element={
-                <ProtectedRoute>
-                  <MyOrders />
-                </ProtectedRoute>
-              }
-            />
+<Route
+  path="/my-orders"
+  element={
+    <ProtectedRoute allowedRoles={['customer']}>
+      <MyOrders />
+    </ProtectedRoute>
+  }
+/>
 
-            <Route
-              path="/shop"
-              element={
-                <ProtectedRoute>
-                  <Shop />
-                </ProtectedRoute>
-              }
-            />
+<Route
+  path="/shop"
+  element={
+    <ProtectedRoute allowedRoles={['customer']}>
+      <Shop />
+    </ProtectedRoute>
+  }
+/>
 
-            <Route
-              path="/checkout"
-              element={
-                <ProtectedRoute>
-                  <Checkout />
-                </ProtectedRoute>
-              }
-            />
+<Route
+  path="/checkout"
+  element={
+    <ProtectedRoute allowedRoles={['customer']}>
+      <Checkout />
+    </ProtectedRoute>
+  }
+/>
 
-            <Route
-              path="/order-confirmation"
-              element={
-                <ProtectedRoute>
-                  <OrderConfirmation />
-                </ProtectedRoute>
-              }
-            />
+<Route
+  path="/order-confirmation"
+  element={
+    <ProtectedRoute allowedRoles={['customer']}>
+      <OrderConfirmation />
+    </ProtectedRoute>
+  }
+/>
 
-            <Route
-              path="/booking-confirmation"
-              element={
-                <ProtectedRoute>
-                  <BookingConfirmation />
-                </ProtectedRoute>
-              }
-            />
-
+<Route
+  path="/booking-confirmation"
+  element={
+    <ProtectedRoute allowedRoles={['customer']}>
+      <BookingConfirmation />
+    </ProtectedRoute>
+  }
+/>
             {/* Staff */}
             <Route
               path="/staff"
@@ -252,14 +251,14 @@ export default function App() {
               }
             />
 
-            <Route
-              path="/admin/chat"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'mechanic']}>
-                  <AdminChat />
-                </ProtectedRoute>
-              }
-            />
+<Route
+  path="/admin/chat"
+  element={
+    <ProtectedRoute allowedRoles={['admin', 'mechanic', 'staff']}>
+      <AdminChat />
+    </ProtectedRoute>
+  }
+/>
 
             <Route
               path="/admin/orders"
