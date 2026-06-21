@@ -14,7 +14,50 @@ export default function AdminReports() {
   const [loading, setLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [sortField, setSortField] = useState(null);
+  const [sortDirection, setSortDirection] = useState('asc'); // 'asc' | 'desc'
   const printRef = useRef();
+
+  function handleSort(field) {
+    if (sortField === field) {
+      setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  }
+
+  function sortRows(rows, accessors) {
+    if (!sortField || !accessors[sortField]) return rows;
+    const getValue = accessors[sortField];
+    const sorted = [...rows].sort((a, b) => {
+      const va = getValue(a);
+      const vb = getValue(b);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      if (typeof va === 'number' && typeof vb === 'number') return va - vb;
+      return String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' });
+    });
+    return sortDirection === 'asc' ? sorted : sorted.reverse();
+  }
+
+  function SortHeader({ field, label, className = '' }) {
+    const isActive = sortField === field;
+    return (
+      <th
+        onClick={() => handleSort(field)}
+        className={`text-left px-4 py-3 text-xs text-gray-500 dark:text-gray-400 font-medium whitespace-nowrap cursor-pointer select-none hover:text-gray-900 dark:hover:text-white transition ${className}`}
+      >
+        <span className="inline-flex items-center gap-1">
+          {label}
+          <span className={`text-[10px] ${isActive ? 'text-primary-500 dark:text-primary-400' : 'text-gray-300 dark:text-gray-600'}`}>
+            {isActive ? (sortDirection === 'asc' ? '▲' : '▼') : '↕'}
+          </span>
+        </span>
+      </th>
+    );
+  }
 
   useEffect(() => {
     fetchAll();
@@ -127,9 +170,42 @@ export default function AdminReports() {
     });
   }
 
-  const filteredBookings = filterByDate(bookings, 'booking_date');
-  const filteredOrders = filterByDate(orders);
-  const filteredAuditLogs = filterByDate(auditLogs);
+  const bookingAccessors = {
+    id: (b) => b.id,
+    customer: (b) => `${b.profiles?.first_name || ''} ${b.profiles?.last_name || ''}`.trim(),
+    service: (b) => b.services?.name || '',
+    date: (b) => b.booking_date || '',
+    time: (b) => b.booking_time || '',
+    mechanic: (b) => b.mechanic ? `${b.mechanic.first_name} ${b.mechanic.last_name}` : 'Unassigned',
+    status: (b) => b.status || '',
+    total: (b) => (b.services?.base_price || 0) + (b.services?.labor_cost || 0),
+    paid: (b) => getPaymentInfo(bookingPayments, b.id, (b.services?.base_price || 0) + (b.services?.labor_cost || 0)).totalPaid,
+    balance: (b) => getPaymentInfo(bookingPayments, b.id, (b.services?.base_price || 0) + (b.services?.labor_cost || 0)).balance,
+    processed_by: (b) => getPaymentInfo(bookingPayments, b.id, (b.services?.base_price || 0) + (b.services?.labor_cost || 0)).lastProcessedBy,
+  };
+
+  const orderAccessors = {
+    id: (o) => o.id,
+    customer: (o) => `${o.profiles?.first_name || ''} ${o.profiles?.last_name || ''}`.trim(),
+    total: (o) => o.total_amount || 0,
+    paid: (o) => getPaymentInfo(orderPayments, o.id, o.total_amount || 0).totalPaid,
+    balance: (o) => getPaymentInfo(orderPayments, o.id, o.total_amount || 0).balance,
+    status: (o) => o.status || '',
+    processed_by: (o) => getPaymentInfo(orderPayments, o.id, o.total_amount || 0).lastProcessedBy,
+    date: (o) => o.created_at || '',
+  };
+
+  const auditAccessors = {
+    time: (l) => l.created_at || '',
+    action: (l) => l.action || '',
+    entity: (l) => l.entity || '',
+    performed_by: (l) => l.profiles ? `${l.profiles.first_name} ${l.profiles.last_name}` : 'System',
+    role: (l) => l.profiles?.role || '',
+  };
+
+  const filteredBookings = sortRows(filterByDate(bookings, 'booking_date'), bookingAccessors);
+  const filteredOrders = sortRows(filterByDate(orders), orderAccessors);
+  const filteredAuditLogs = sortRows(filterByDate(auditLogs), auditAccessors);
 
   const bookingRevenue = filteredBookings
     .filter(b => b.status === 'completed')
@@ -246,7 +322,7 @@ export default function AdminReports() {
         {/* Tabs */}
         <div className="flex gap-2 mb-6">
           {['bookings', 'orders', 'audit'].map((tab) => (
-            <button key={tab} onClick={() => setActiveTab(tab)}
+            <button key={tab} onClick={() => { setActiveTab(tab); setSortField(null); setSortDirection('asc'); }}
               className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition ${
                 activeTab === tab ? 'bg-primary-600 text-white' : 'bg-dark-800 text-gray-400 hover:text-white'
               }`}>
@@ -258,7 +334,6 @@ export default function AdminReports() {
         {loading ? (
           <p className="text-gray-400">Loading...</p>
         ) : (
-
           <>
             {/* Bookings report */}
             {activeTab === 'bookings' && (
@@ -269,10 +344,18 @@ export default function AdminReports() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-gray-700">
-                        {['ID', 'Customer', 'Service', 'Date', 'Time', 'Mechanic', 'Status', 'Total', 'Paid', 'Balance', 'Processed By'].map(h => (
-                          <th key={h} className="text-left px-4 py-3 text-xs text-gray-400 font-medium whitespace-nowrap">{h}</th>
-                        ))}
+                      <tr className="border-b border-gray-200 dark:border-gray-700">
+                        <th className="text-left px-4 py-3 text-xs text-gray-500 dark:text-gray-400 font-medium whitespace-nowrap">ID</th>
+                        <SortHeader field="customer" label="Customer" />
+                        <SortHeader field="service" label="Service" />
+                        <SortHeader field="date" label="Date" />
+                        <SortHeader field="time" label="Time" />
+                        <SortHeader field="mechanic" label="Mechanic" />
+                        <SortHeader field="status" label="Status" />
+                        <SortHeader field="total" label="Total" />
+                        <SortHeader field="paid" label="Paid" />
+                        <SortHeader field="balance" label="Balance" />
+                        <SortHeader field="processed_by" label="Processed By" />
                       </tr>
                     </thead>
                     <tbody>
@@ -280,8 +363,7 @@ export default function AdminReports() {
                         const total = (b.services?.base_price || 0) + (b.services?.labor_cost || 0);
                         const info = getPaymentInfo(bookingPayments, b.id, total);
                         return (
-                          <tr key={b.id} className="border-b border-gray-800 hover:bg-dark-900/50">
-                            <td className="px-4 py-3 text-xs text-gray-500">{b.id.slice(0,8)}</td>
+<tr key={b.id} className="border-b border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-dark-900/50 transition-colors">                            <td className="px-4 py-3 text-xs text-gray-500">{b.id.slice(0,8)}</td>
                             <td className="px-4 py-3">
                               <p className="font-medium">{b.profiles?.first_name} {b.profiles?.last_name}</p>
                               <p className="text-xs text-gray-500">{b.profiles?.email}</p>
@@ -326,18 +408,23 @@ export default function AdminReports() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-gray-700">
-                        {['ID', 'Customer', 'Items', 'Total', 'Paid', 'Balance', 'Status', 'Processed By', 'Date'].map(h => (
-                          <th key={h} className="text-left px-4 py-3 text-xs text-gray-400 font-medium whitespace-nowrap">{h}</th>
-                        ))}
+                      <tr className="border-b border-gray-200 dark:border-gray-700">
+                        <th className="text-left px-4 py-3 text-xs text-gray-500 dark:text-gray-400 font-medium whitespace-nowrap">ID</th>
+                        <SortHeader field="customer" label="Customer" />
+                        <th className="text-left px-4 py-3 text-xs text-gray-500 dark:text-gray-400 font-medium whitespace-nowrap">Items</th>
+                        <SortHeader field="total" label="Total" />
+                        <SortHeader field="paid" label="Paid" />
+                        <SortHeader field="balance" label="Balance" />
+                        <SortHeader field="status" label="Status" />
+                        <SortHeader field="processed_by" label="Processed By" />
+                        <SortHeader field="date" label="Date" />
                       </tr>
                     </thead>
                     <tbody>
                       {filteredOrders.map((o) => {
                         const info = getPaymentInfo(orderPayments, o.id, o.total_amount || 0);
                         return (
-                          <tr key={o.id} className="border-b border-gray-800 hover:bg-dark-900/50">
-                            <td className="px-4 py-3 text-xs text-gray-500">{o.id.slice(0,8)}</td>
+<tr key={o.id} className="border-b border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-dark-900/50 transition-colors">                            <td className="px-4 py-3 text-xs text-gray-500">{o.id.slice(0,8)}</td>
                             <td className="px-4 py-3">
                               <p className="font-medium">{o.profiles?.first_name} {o.profiles?.last_name}</p>
                               <p className="text-xs text-gray-500">{o.profiles?.email}</p>
@@ -386,16 +473,18 @@ export default function AdminReports() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-gray-700">
-                        {['Time', 'Action', 'Entity', 'Processed By', 'Role', 'Details'].map(h => (
-                          <th key={h} className="text-left px-4 py-3 text-xs text-gray-400 font-medium">{h}</th>
-                        ))}
+                      <tr className="border-b border-gray-200 dark:border-gray-700">
+                        <SortHeader field="time" label="Time" />
+                        <SortHeader field="action" label="Action" />
+                        <SortHeader field="entity" label="Entity" />
+                        <SortHeader field="performed_by" label="Processed By" />
+                        <SortHeader field="role" label="Role" />
+                        <th className="text-left px-4 py-3 text-xs text-gray-500 dark:text-gray-400 font-medium">Details</th>
                       </tr>
                     </thead>
                     <tbody>
                       {filteredAuditLogs.map((log) => (
-                        <tr key={log.id} className="border-b border-gray-800 hover:bg-dark-900/50">
-                          <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
+<tr key={log.id} className="border-b border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-dark-900/50 transition-colors">                          <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
                             {new Date(log.created_at).toLocaleString()}
                           </td>
                           <td className="px-4 py-3">

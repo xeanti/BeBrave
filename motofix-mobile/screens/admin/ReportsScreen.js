@@ -49,6 +49,32 @@ export default function ReportsScreen() {
   const [dateTo, setDateTo] = useState(null);
   const [showFromPicker, setShowFromPicker] = useState(false);
   const [showToPicker, setShowToPicker] = useState(false);
+  const [sortField, setSortField] = useState(null);
+  const [sortDirection, setSortDirection] = useState('asc'); // 'asc' | 'desc'
+
+  function handleSort(field) {
+    if (sortField === field) {
+      setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  }
+
+  function sortRows(rows, accessors) {
+    if (!sortField || !accessors[sortField]) return rows;
+    const getValue = accessors[sortField];
+    const sorted = [...rows].sort((a, b) => {
+      const va = getValue(a);
+      const vb = getValue(b);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      if (typeof va === 'number' && typeof vb === 'number') return va - vb;
+      return String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' });
+    });
+    return sortDirection === 'asc' ? sorted : sorted.reverse();
+  }
 
   useEffect(() => {
     fetchAll();
@@ -148,8 +174,28 @@ export default function ReportsScreen() {
     });
   }
 
-  const filteredBookings = filterBySearch(filterByDate(bookings, 'booking_date'), 'bookings');
-  const filteredOrders = filterBySearch(filterByDate(orders, 'created_at'), 'orders');
+  const bookingAccessors = {
+    customer: (b) => `${b.profiles?.first_name || ''} ${b.profiles?.last_name || ''}`.trim(),
+    service: (b) => b.services?.name || '',
+    date: (b) => b.booking_date || '',
+    mechanic: (b) => (b.mechanic ? `${b.mechanic.first_name} ${b.mechanic.last_name}` : 'Unassigned'),
+    status: (b) => b.status || '',
+    total: (b) => (b.services?.base_price || 0) + (b.services?.labor_cost || 0),
+    paid: (b) => getPaymentInfo(bookingPayments, b.id, (b.services?.base_price || 0) + (b.services?.labor_cost || 0)).totalPaid,
+    balance: (b) => getPaymentInfo(bookingPayments, b.id, (b.services?.base_price || 0) + (b.services?.labor_cost || 0)).balance,
+  };
+
+  const orderAccessors = {
+    customer: (o) => `${o.profiles?.first_name || ''} ${o.profiles?.last_name || ''}`.trim(),
+    total: (o) => o.total_amount || 0,
+    paid: (o) => getPaymentInfo(orderPayments, o.id, o.total_amount || 0).totalPaid,
+    balance: (o) => getPaymentInfo(orderPayments, o.id, o.total_amount || 0).balance,
+    status: (o) => o.status || '',
+    date: (o) => o.created_at || '',
+  };
+
+  const filteredBookings = sortRows(filterBySearch(filterByDate(bookings, 'booking_date'), 'bookings'), bookingAccessors);
+  const filteredOrders = sortRows(filterBySearch(filterByDate(orders, 'created_at'), 'orders'), orderAccessors);
 
   const bookingRevenue = filteredBookings
     .filter((b) => b.status === 'completed')
@@ -342,7 +388,7 @@ export default function ReportsScreen() {
         <View style={s.tabRow}>
           <TouchableOpacity
             style={[s.tabBtn, activeTab === 'bookings' && s.tabBtnActive]}
-            onPress={() => setActiveTab('bookings')}
+            onPress={() => { setActiveTab('bookings'); setSortField(null); setSortDirection('asc'); }}
           >
             <Text style={[s.tabBtnText, activeTab === 'bookings' && s.tabBtnTextActive]}>
               Bookings ({filteredBookings.length})
@@ -350,7 +396,7 @@ export default function ReportsScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={[s.tabBtn, activeTab === 'orders' && s.tabBtnActive]}
-            onPress={() => setActiveTab('orders')}
+            onPress={() => { setActiveTab('orders'); setSortField(null); setSortDirection('asc'); }}
           >
             <Text style={[s.tabBtnText, activeTab === 'orders' && s.tabBtnTextActive]}>
               Orders ({filteredOrders.length})
@@ -360,6 +406,43 @@ export default function ReportsScreen() {
             <Text style={s.exportBtnText}>⬇ Export</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Sort chips */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.sortRow}>
+          {(activeTab === 'bookings'
+            ? [
+                { key: 'customer', label: 'Customer' },
+                { key: 'service', label: 'Service' },
+                { key: 'date', label: 'Date' },
+                { key: 'mechanic', label: 'Mechanic' },
+                { key: 'status', label: 'Status' },
+                { key: 'total', label: 'Total' },
+                { key: 'paid', label: 'Paid' },
+                { key: 'balance', label: 'Balance' },
+              ]
+            : [
+                { key: 'customer', label: 'Customer' },
+                { key: 'total', label: 'Total' },
+                { key: 'paid', label: 'Paid' },
+                { key: 'balance', label: 'Balance' },
+                { key: 'status', label: 'Status' },
+                { key: 'date', label: 'Date' },
+              ]
+          ).map((opt) => {
+            const isActive = sortField === opt.key;
+            return (
+              <TouchableOpacity
+                key={opt.key}
+                style={[s.sortChip, isActive && s.sortChipActive]}
+                onPress={() => handleSort(opt.key)}
+              >
+                <Text style={[s.sortChipText, isActive && s.sortChipTextActive]}>
+                  {opt.label} {isActive ? (sortDirection === 'asc' ? '▲' : '▼') : ''}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
 
         {/* Bookings list */}
         {activeTab === 'bookings' &&
@@ -526,6 +609,12 @@ const styles = (theme) =>
     tabBtnTextActive: { color: '#fff' },
     exportBtn: { marginLeft: 'auto', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, backgroundColor: theme.bg3 },
     exportBtnText: { fontSize: 12, color: theme.text, fontWeight: '600' },
+
+    sortRow: { marginBottom: 14 },
+    sortChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, marginRight: 8 },
+    sortChipActive: { backgroundColor: theme.primary + '22', borderColor: theme.primary },
+    sortChipText: { fontSize: 12, color: theme.textSub, fontWeight: '500' },
+    sortChipTextActive: { color: theme.primaryLight, fontWeight: 'bold' },
 
     card: { backgroundColor: theme.card, borderRadius: 14, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: theme.border },
     cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },

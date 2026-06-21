@@ -30,9 +30,12 @@ export default function AdminDashboardScreen({ navigation }) {
     orderRevenue: 0,
     bookingRevenue: 0,
     totalRevenue: 0,
+    lowStockCount: 0,
+    outOfStockCount: 0,
   });
   const [recentBookings, setRecentBookings] = useState([]);
   const [recentOrders, setRecentOrders] = useState([]);
+  const [lowStockParts, setLowStockParts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -45,7 +48,7 @@ export default function AdminDashboardScreen({ navigation }) {
       supabase.from('pre_assessments').select('id, status'),
       supabase.from('profiles').select('id').eq('role', 'customer'),
       supabase.from('profiles').select('id').eq('role', 'mechanic'),
-      supabase.from('parts').select('id'),
+      supabase.from('parts').select('id, name, stock_quantity, reorder_threshold').order('stock_quantity', { ascending: true }),
       supabase.from('services').select('id'),
     ]);
 
@@ -57,6 +60,13 @@ export default function AdminDashboardScreen({ navigation }) {
       .filter(b => b.status === 'completed')
       .reduce((sum, b) => sum + (b.services?.base_price || 0) + (b.services?.labor_cost || 0), 0);
 
+    const allParts = parts.data || [];
+    const outOfStock = allParts.filter((p) => p.stock_quantity <= 0);
+    const lowStock = allParts.filter(
+      (p) => p.stock_quantity > 0 && p.stock_quantity <= (p.reorder_threshold ?? 5)
+    );
+    setLowStockParts([...outOfStock, ...lowStock].slice(0, 6));
+
     setStats({
       totalBookings: bookings.data?.length || 0,
       pendingBookings: bookings.data?.filter(b => b.status === 'pending').length || 0,
@@ -64,11 +74,13 @@ export default function AdminDashboardScreen({ navigation }) {
       pendingAssessments: assessments.data?.filter(a => a.status === 'pending').length || 0,
       totalCustomers: customers.data?.length || 0,
       totalMechanics: mechanics.data?.length || 0,
-      totalParts: parts.data?.length || 0,
+      totalParts: allParts.length,
       totalServices: services.data?.length || 0,
       orderRevenue,
       bookingRevenue,
       totalRevenue: orderRevenue + bookingRevenue,
+      lowStockCount: lowStock.length,
+      outOfStockCount: outOfStock.length,
     });
 
     const [rb, ro] = await Promise.all([
@@ -117,8 +129,22 @@ export default function AdminDashboardScreen({ navigation }) {
         <StatCard icon="📋" label="Pending Assessments" value={stats.pendingAssessments} color="#eab308" theme={theme} />
         <StatCard icon="👥" label="Customers" value={stats.totalCustomers} color="#22c55e" theme={theme} />
         <StatCard icon="🔧" label="Mechanics" value={stats.totalMechanics} color="#db2777" theme={theme} />
-        <StatCard icon="⚙️" label="Parts" value={stats.totalParts} color="#a855f7" theme={theme} />
-        <StatCard icon="🛠️" label="Services" value={stats.totalServices} color="#eab308" theme={theme} />
+        <StatCard
+          icon="⚠️"
+          label="Low Stock"
+          value={stats.lowStockCount}
+          color={stats.lowStockCount > 0 ? '#eab308' : theme.textMuted}
+          theme={theme}
+          onPress={() => navigation.navigate('Inventory')}
+        />
+        <StatCard
+          icon="🚫"
+          label="Out of Stock"
+          value={stats.outOfStockCount}
+          color={stats.outOfStockCount > 0 ? '#ef4444' : theme.textMuted}
+          theme={theme}
+          onPress={() => navigation.navigate('Inventory')}
+        />
       </View>
 
       {/* Revenue Card */}
@@ -142,6 +168,37 @@ export default function AdminDashboardScreen({ navigation }) {
           </View>
         </View>
       </View>
+
+      {/* Low Stock Alert */}
+      {(stats.lowStockCount > 0 || stats.outOfStockCount > 0) && (
+        <View style={s.section}>
+          <View style={s.sectionHeader}>
+            <Text style={s.sectionTitle}>⚠️ Low Stock Alert</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('Inventory')}>
+              <Text style={s.sectionLink}>Manage →</Text>
+            </TouchableOpacity>
+          </View>
+          {lowStockParts.map((p) => {
+            const isOut = p.stock_quantity <= 0;
+            return (
+              <TouchableOpacity
+                key={p.id}
+                style={s.recentCard}
+                onPress={() => navigation.navigate('Inventory')}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={s.recentName}>{p.name}</Text>
+                </View>
+                <View style={[s.badge, { backgroundColor: (isOut ? '#ef4444' : '#eab308') + '22' }]}>
+                  <Text style={[s.badgeText, { color: isOut ? '#ef4444' : '#eab308' }]}>
+                    {isOut ? 'Out of stock' : `${p.stock_quantity} left`}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
 
       {/* Recent Bookings */}
       <View style={s.section}>
@@ -210,16 +267,17 @@ export default function AdminDashboardScreen({ navigation }) {
   );
 }
 
-function StatCard({ icon, label, value, color, theme }) {
+function StatCard({ icon, label, value, color, theme, onPress }) {
   const s = statStyles(theme);
+  const Wrapper = onPress ? TouchableOpacity : View;
   return (
-    <View style={s.card}>
+    <Wrapper style={s.card} onPress={onPress} activeOpacity={onPress ? 0.7 : 1}>
       <View style={s.topRow}>
         <Text style={s.icon}>{icon}</Text>
         <Text style={[s.value, { color }]}>{value}</Text>
       </View>
       <Text style={s.label}>{label}</Text>
-    </View>
+    </Wrapper>
   );
 }
 

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'; // Added Navigate for legacy redirects
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import Navbar from './components/Navbar';
@@ -35,7 +35,7 @@ import AdminReports from './pages/admin/AdminReports';
 import AdminAssessments from './pages/admin/AdminAssessments';
 import AdminStaff from './pages/admin/AdminStaff';
 import AdminSettings from './pages/admin/AdminSettings';
-
+import AdminUsers from './pages/admin/AdminUsers'; // <-- Added Import
 
 import StaffDashboard from './pages/staff/StaffDashboard';
 
@@ -54,122 +54,123 @@ export default function App() {
             <Route path="/mechanics" element={<Mechanics />} />
 
             {/* Customer */}
-<Route
-  path="/dashboard"
-  element={
-    <ProtectedRoute allowedRoles={['customer']}>
-      <Dashboard />
-    </ProtectedRoute>
-  }
-/>
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <Dashboard />
+                </ProtectedRoute>
+              }
+            />
 
-<Route
-  path="/booking"
-  element={
-    <ProtectedRoute allowedRoles={['customer']}>
-      <Booking />
-    </ProtectedRoute>
-  }
-/>
+            <Route
+              path="/booking"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <Booking />
+                </ProtectedRoute>
+              }
+            />
 
-<Route
-  path="/customize"
-  element={
-    <ProtectedRoute allowedRoles={['customer']}>
-      <Customize />
-    </ProtectedRoute>
-  }
-/>
+            <Route
+              path="/customize"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <Customize />
+                </ProtectedRoute>
+              }
+            />
 
-<Route
-  path="/profile"
-  element={
-    <ProtectedRoute>
-      <Profile />
-    </ProtectedRoute>
-  }
-/>
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <Profile />
+                </ProtectedRoute>
+              }
+            />
 
-<Route
-  path="/appointments"
-  element={
-    <ProtectedRoute allowedRoles={['customer']}>
-      <Appointments />
-    </ProtectedRoute>
-  }
-/>
+            <Route
+              path="/appointments"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <Appointments />
+                </ProtectedRoute>
+              }
+            />
 
-<Route
-  path="/chat"
-  element={
-    <ProtectedRoute allowedRoles={['customer']}>
-      <Chat />
-    </ProtectedRoute>
-  }
-/>
+            <Route
+              path="/chat"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <Chat />
+                </ProtectedRoute>
+              }
+            />
 
-<Route
-  path="/pre-assessment"
-  element={
-    <ProtectedRoute allowedRoles={['customer']}>
-      <PreAssessment />
-    </ProtectedRoute>
-  }
-/>
+            <Route
+              path="/pre-assessment"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <PreAssessment />
+                </ProtectedRoute>
+              }
+            />
 
-<Route
-  path="/my-assessments"
-  element={
-    <ProtectedRoute allowedRoles={['customer']}>
-      <MyAssessments />
-    </ProtectedRoute>
-  }
-/>
+            <Route
+              path="/my-assessments"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <MyAssessments />
+                </ProtectedRoute>
+              }
+            />
 
-<Route
-  path="/my-orders"
-  element={
-    <ProtectedRoute allowedRoles={['customer']}>
-      <MyOrders />
-    </ProtectedRoute>
-  }
-/>
+            <Route
+              path="/my-orders"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <MyOrders />
+                </ProtectedRoute>
+              }
+            />
 
-<Route
-  path="/shop"
-  element={
-    <ProtectedRoute allowedRoles={['customer']}>
-      <Shop />
-    </ProtectedRoute>
-  }
-/>
+            <Route
+              path="/shop"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <Shop />
+                </ProtectedRoute>
+              }
+            />
 
-<Route
-  path="/checkout"
-  element={
-    <ProtectedRoute allowedRoles={['customer']}>
-      <Checkout />
-    </ProtectedRoute>
-  }
-/>
+            <Route
+              path="/checkout"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <Checkout />
+                </ProtectedRoute>
+              }
+            />
 
-<Route
-  path="/order-confirmation"
-  element={
-    <ProtectedRoute allowedRoles={['customer']}>
-      <OrderConfirmation />
-    </ProtectedRoute>
-  }
-/>
+            <Route
+              path="/order-confirmation"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <OrderConfirmation />
+                </ProtectedRoute>
+              }
+            />
 
-<Route
-  path="/booking-confirmation"
-  element={
-    <ProtectedRoute allowedRoles={['customer']}>
-      <BookingConfirmation />
-    </ProtectedRoute>
-  }
-/>
+            <Route
+              path="/booking-confirmation"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <BookingConfirmation />
+                </ProtectedRoute>
+              }
+            />
+
             {/* Staff */}
             <Route
               path="/staff"
@@ -200,11 +201,14 @@ export default function App() {
             />
 
             {/* Admin */}
-            <Route path="/admin/settings" element={
-  <ProtectedRoute allowedRoles={['admin']}>
-    <AdminSettings />
-  </ProtectedRoute>
-} />
+            <Route 
+              path="/admin/settings" 
+              element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <AdminSettings />
+                </ProtectedRoute>
+              } 
+            />
 
             <Route
               path="/admin"
@@ -242,23 +246,24 @@ export default function App() {
               }
             />
 
+            {/* Legacy Mechanic Route Redirect */}
             <Route
               path="/admin/mechanics"
               element={
                 <ProtectedRoute allowedRoles={['admin']}>
-                  <AdminMechanics />
+                  <Navigate to="/admin/users" replace />
                 </ProtectedRoute>
               }
             />
 
-<Route
-  path="/admin/chat"
-  element={
-    <ProtectedRoute allowedRoles={['admin', 'mechanic', 'staff']}>
-      <AdminChat />
-    </ProtectedRoute>
-  }
-/>
+            <Route
+              path="/admin/chat"
+              element={
+                <ProtectedRoute allowedRoles={['admin', 'mechanic', 'staff']}>
+                  <AdminChat />
+                </ProtectedRoute>
+              }
+            />
 
             <Route
               path="/admin/orders"
@@ -287,11 +292,22 @@ export default function App() {
               }
             />
 
+            {/* Legacy Staff Route Redirect */}
             <Route
               path="/admin/staff"
               element={
                 <ProtectedRoute allowedRoles={['admin']}>
-                  <AdminStaff />
+                  <Navigate to="/admin/users" replace />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* New Admin Users Route */}
+            <Route
+              path="/admin/users"
+              element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <AdminUsers />
                 </ProtectedRoute>
               }
             />

@@ -22,6 +22,8 @@ export default function Navbar() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [pendingOrders, setPendingOrders] = useState(0);
   const [pendingBookings, setPendingBookings] = useState(0);
+  const [pendingAssessments, setPendingAssessments] = useState(0);
+  const [lowStockParts, setLowStockParts] = useState(0);
 
   const dropdownRef = useRef(null);
 
@@ -99,6 +101,24 @@ export default function Navbar() {
           },
           fetchAdminNotifs
         )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'assessments',
+          },
+          fetchAdminNotifs
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'parts',
+          },
+          fetchAdminNotifs
+        )
         .subscribe();
 
       return () => supabase.removeChannel(channel);
@@ -106,20 +126,35 @@ export default function Navbar() {
   }, [user, profile]);
 
   async function fetchAdminNotifs() {
-const [bookings, orders] = await Promise.all([
-  supabase
-    .from('bookings')
-    .select('*', { count: 'exact', head: true })
-    .eq('status', 'pending'),
+    const [bookings, orders, assessments, parts] = await Promise.all([
+      supabase
+        .from('bookings')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pending'),
 
-  supabase
-    .from('orders')
-    .select('*', { count: 'exact', head: true })
-    .eq('status', 'pending'),
-]);
+      supabase
+        .from('orders')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pending'),
+
+      supabase
+        .from('pre_assessments')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pending'),
+
+      supabase
+        .from('parts')
+        .select('id, stock_quantity, reorder_threshold'),
+    ]);
 
     setPendingBookings(bookings.count || 0);
     setPendingOrders(orders.count || 0);
+    setPendingAssessments(assessments.count || 0);
+
+    const lowCount = (parts.data || []).filter(
+      (p) => p.stock_quantity <= (p.reorder_threshold ?? 5)
+    ).length;
+    setLowStockParts(lowCount);
   }
 
   async function fetchUnreadCount() {
@@ -198,8 +233,7 @@ const [bookings, orders] = await Promise.all([
     { to: '/admin/assessments', label: 'Assessments' },
     { to: '/admin/parts', label: 'Parts' },
     { to: '/admin/services', label: 'Services' },
-    { to: '/admin/mechanics', label: 'Mechanics' },
-    { to: '/admin/staff', label: 'Staff' },
+    { to: '/admin/users', label: 'Users' }, // <-- Keeps user mapping clean
     { to: '/admin/reports', label: 'Reports' },
     { to: '/admin/settings', label: 'Settings' },
     { to: '/admin/chat', label: 'Chat' },
@@ -281,6 +315,20 @@ const [bookings, orders] = await Promise.all([
                 {link.to === '/admin/orders' && pendingOrders > 0 && (
                   <span className="absolute -top-1 -right-1 bg-orange-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
                     {pendingOrders > 9 ? '9+' : pendingOrders}
+                  </span>
+                )}
+
+                {/* Pending assessments badge */}
+                {link.to === '/admin/assessments' && pendingAssessments > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
+                    {pendingAssessments > 9 ? '9+' : pendingAssessments}
+                  </span>
+                )}
+
+                {/* Low stock parts */}
+                {link.to === '/admin/parts' && lowStockParts > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
+                    {lowStockParts > 9 ? '9+' : lowStockParts}
                   </span>
                 )}
               </Link>
@@ -460,9 +508,26 @@ const [bookings, orders] = await Promise.all([
                 key={link.to}
                 to={link.to}
                 onClick={() => setMenuOpen(false)}
-                className="block rounded-xl px-4 py-3 text-gray-700 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-dark-800 dark:hover:text-white"
+                className="block rounded-xl px-4 py-3 text-gray-700 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-dark-800 dark:hover:text-white flex justify-between items-center"
               >
-                {link.label}
+                <span>{link.label}</span>
+                
+                {/* Mobile Assessments Count Support */}
+                {link.to === '/admin/assessments' && pendingAssessments > 0 && (
+                  <span className="bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
+                    {pendingAssessments}
+                  </span>
+                )}
+                {link.to === '/admin/bookings' && pendingBookings > 0 && (
+                  <span className="bg-yellow-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
+                    {pendingBookings}
+                  </span>
+                )}
+                {link.to === '/admin/orders' && pendingOrders > 0 && (
+                  <span className="bg-orange-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
+                    {pendingOrders}
+                  </span>
+                )}
               </Link>
             ))}
 

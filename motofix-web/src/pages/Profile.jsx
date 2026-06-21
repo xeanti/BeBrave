@@ -19,6 +19,8 @@ export default function Profile() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [certificates, setCertificates] = useState([]);
+  const [loadingCerts, setLoadingCerts] = useState(false);
 
   useEffect(() => {
     if (profile) {
@@ -35,11 +37,23 @@ export default function Profile() {
       // Conditionally set the initial preview depending on user role
       if (profile.role === 'mechanic') {
         setPhotoPreview(profile.mechanic_photo_url || null);
+        fetchCertificates(profile.id);
       } else {
         setPhotoPreview(profile.moto_photo_url || null);
       }
     }
   }, [profile]);
+
+  async function fetchCertificates(mechanicId) {
+    setLoadingCerts(true);
+    const { data } = await supabase
+      .from('mechanic_certificates')
+      .select('*')
+      .eq('mechanic_id', mechanicId)
+      .order('created_at', { ascending: false });
+    if (data) setCertificates(data);
+    setLoadingCerts(false);
+  }
 
   function handleChange(e) {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -284,6 +298,48 @@ export default function Profile() {
                   />
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* My Certificates - read-only, managed by admin */}
+          {profile?.role === 'mechanic' && (
+            <div className="bg-dark-800 rounded-xl p-6">
+              <h2 className="text-lg font-semibold mb-1 flex items-center gap-2">
+                <span className="text-primary-500">●</span> My Certificates
+              </h2>
+              <p className="text-xs text-gray-500 mb-4">
+                Certificates are uploaded and managed by an administrator.
+              </p>
+
+              {loadingCerts ? (
+                <p className="text-gray-400 text-sm">Loading...</p>
+              ) : certificates.length === 0 ? (
+                <p className="text-gray-500 text-sm">No certificates on file yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {certificates.map((c) => (
+                    <div key={c.id} className="flex items-center justify-between bg-dark-900 rounded-lg p-3 border border-gray-800">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-base flex-shrink-0">📄</span>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-white truncate">{c.name}</p>
+                          <p className="text-xs text-gray-500">
+                            Uploaded {new Date(c.created_at).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+                      <a
+                        href={c.file_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs text-primary-400 border border-primary-500/30 px-2.5 py-1 rounded-md hover:bg-primary-500/10 transition flex-shrink-0"
+                      >
+                        View
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

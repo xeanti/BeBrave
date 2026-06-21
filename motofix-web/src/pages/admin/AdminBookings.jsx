@@ -140,12 +140,12 @@ export default function AdminBookings() {
   };
 
   return (
-    <div className="min-h-[calc(100vh-65px)] bg-dark-900 text-white px-6 py-10">
+    <div className="min-h-[calc(100vh-65px)] bg-gray-50 dark:bg-dark-900 text-gray-900 dark:text-white px-6 py-10">
       <div className="max-w-5xl mx-auto">
 
         <div className="mb-8">
           <h1 className="text-3xl font-bold mb-1">Manage Bookings</h1>
-          <p className="text-gray-400">View, assign mechanics, track payments, and update booking statuses.</p>
+          <p className="text-gray-600 dark:text-gray-400">View, assign mechanics, track payments, and update booking statuses.</p>
         </div>
 
         {/* Filter pills */}
@@ -155,7 +155,9 @@ export default function AdminBookings() {
               key={f}
               onClick={() => setFilter(f)}
               className={`px-4 py-1.5 rounded-full text-sm font-medium capitalize transition ${
-                filter === f ? 'bg-primary-600 text-white' : 'bg-dark-800 text-gray-400 hover:text-white'
+                filter === f
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-gray-200 dark:bg-dark-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
               }`}
             >
               {f.replace('_', ' ')} <span className="opacity-60">({counts[f]})</span>
@@ -170,16 +172,16 @@ export default function AdminBookings() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by customer name..."
-            className="w-full md:w-80 px-4 py-2 rounded-lg bg-dark-800 border border-gray-700 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-primary-600"
+            className="w-full md:w-80 px-4 py-2 rounded-lg bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-primary-600"
           />
         </div>
 
         {loading ? (
-          <p className="text-gray-400">Loading...</p>
+          <p className="text-gray-600 dark:text-gray-400">Loading...</p>
         ) : filtered.length === 0 ? (
-          <div className="bg-dark-800 rounded-xl p-10 text-center">
+          <div className="bg-white dark:bg-dark-800 border border-gray-200 dark:border-transparent rounded-xl p-10 text-center">
             <p className="text-4xl mb-3">📅</p>
-            <p className="text-gray-400">No bookings found.</p>
+            <p className="text-gray-600 dark:text-gray-400">No bookings found.</p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -194,27 +196,27 @@ export default function AdminBookings() {
               const isHistoryOpen = expandedHistory === b.id;
 
               return (
-                <div key={b.id} className="bg-dark-800 rounded-xl p-5 border border-dark-700">
+                <div key={b.id} className="bg-white dark:bg-dark-800 rounded-xl p-5 border border-gray-200 dark:border-dark-700 shadow-sm dark:shadow-none">
 
                   {/* Header Row */}
                   <div className="flex items-start justify-between gap-3 mb-4">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <p className="font-semibold text-lg leading-tight">
+                        <p className="font-semibold text-lg leading-tight text-gray-900 dark:text-white">
                           {b.profiles?.first_name} {b.profiles?.last_name}
                         </p>
-                        <span className="text-[11px] text-gray-500 font-mono">
+                        <span className="text-[11px] text-gray-400 dark:text-gray-500 font-mono">
                           #{b.id.slice(0, 8).toUpperCase()}
                         </span>
                       </div>
-                      <p className="text-sm text-gray-400 mt-0.5">
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">
                         👤 {b.profiles?.email}
                         {b.profiles?.phone ? ` · ${b.profiles.phone}` : ''}
                       </p>
-                      <p className="text-sm text-primary-400 mt-0.5">
+                      <p className="text-sm text-primary-600 dark:text-primary-400 mt-0.5">
                         🔧 {b.services?.name || 'No service selected'}
                       </p>
-                      <p className="text-xs text-gray-500 mt-1">
+                      <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
                         {b.booking_date} at {b.booking_time}
                       </p>
                     </div>
@@ -223,7 +225,7 @@ export default function AdminBookings() {
                         {b.status?.replace('_', ' ')}
                       </span>
                       <span className={`text-xs px-3 py-1 rounded-full font-medium whitespace-nowrap ${
-                        isFullyPaid ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
+                        isFullyPaid ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400' : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-400'
                       }`}>
                         {isFullyPaid ? '✓ Fully Paid' : `₱${balance.toFixed(2)} balance due`}
                       </span>
@@ -231,27 +233,27 @@ export default function AdminBookings() {
                   </div>
 
                   {b.notes && (
-                    <div className="mb-4 bg-dark-900 rounded-lg px-4 py-2.5 text-sm text-gray-300 italic">
+                    <div className="mb-4 bg-gray-50 dark:bg-dark-900 rounded-lg px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 italic border border-gray-200 dark:border-transparent">
                       "{b.notes}"
                     </div>
                   )}
 
                   {/* Summary Strip */}
-                  <div className="mb-4 bg-dark-900 rounded-lg px-4 py-3 flex flex-wrap gap-x-8 gap-y-2 text-sm">
+                  <div className="mb-4 bg-gray-50 dark:bg-dark-900 rounded-lg px-4 py-3 flex flex-wrap gap-x-8 gap-y-2 text-sm border border-gray-200 dark:border-transparent">
                     <div>
-                      <span className="text-xs text-gray-500 mr-1.5">Total</span>
-                      <span className="font-medium">₱{total.toFixed(2)}</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-500 mr-1.5">Total</span>
+                      <span className="font-medium text-gray-900 dark:text-white">₱{total.toFixed(2)}</span>
                     </div>
                     <div>
-                      <span className="text-xs text-gray-500 mr-1.5">Paid</span>
-                      <span className="font-medium text-green-400">₱{totalPaid.toFixed(2)}</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-500 mr-1.5">Paid</span>
+                      <span className="font-medium text-green-600 dark:text-green-400">₱{totalPaid.toFixed(2)}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-500">Mechanic</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-500">Mechanic</span>
                       <select
                         value={b.mechanic_id || ''}
                         onChange={(e) => assignMechanic(b.id, e.target.value)}
-                        className="bg-dark-800 border border-gray-700 rounded-md px-2 py-1 text-sm text-white"
+                        className="bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 rounded-md px-2 py-1 text-sm text-gray-900 dark:text-white"
                       >
                         <option value="">Unassigned</option>
                         {mechanics.map((m) => (
@@ -261,9 +263,9 @@ export default function AdminBookings() {
                     </div>
                   </div>
 
-                  {/* Status Actions Row (Mirrors Orders Page UI) */}
-                  <div className="mb-4 flex gap-2 flex-wrap items-center bg-dark-900/50 p-3 rounded-lg border border-dark-700">
-                    <p className="text-xs text-gray-500 mr-1">Update status:</p>
+                  {/* Status Actions Row */}
+                  <div className="mb-4 flex gap-2 flex-wrap items-center bg-gray-50 dark:bg-dark-900/50 p-3 rounded-lg border border-gray-200 dark:border-dark-700">
+                    <p className="text-xs text-gray-500 dark:text-gray-500 mr-1">Update status:</p>
                     {['pending', 'confirmed', 'in_progress', 'completed', 'cancelled']
                       .filter(s => s !== b.status)
                       .map(s => (
@@ -282,7 +284,9 @@ export default function AdminBookings() {
                     <button
                       onClick={() => setExpandedPayment(isPaymentOpen ? null : b.id)}
                       className={`text-sm px-3 py-1.5 rounded-md font-medium transition ${
-                        isPaymentOpen ? 'bg-primary-600 text-white' : 'bg-dark-900 border border-gray-700 text-gray-300 hover:text-white'
+                        isPaymentOpen
+                          ? 'bg-primary-600 text-white'
+                          : 'bg-gray-100 dark:bg-dark-900 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
                       }`}
                     >
                       {isPaymentOpen ? 'Close Form' : '+ Record Payment'}
@@ -291,7 +295,7 @@ export default function AdminBookings() {
                     {bookingPayments.length > 0 && (
                       <button
                         onClick={() => setExpandedHistory(isHistoryOpen ? null : b.id)}
-                        className="text-sm px-3 py-1.5 rounded-md bg-dark-900 border border-gray-700 text-gray-300 hover:text-white transition"
+                        className="text-sm px-3 py-1.5 rounded-md bg-gray-100 dark:bg-dark-900 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition"
                       >
                         {isHistoryOpen ? 'Hide Payment History' : 'View Payment History'} ({bookingPayments.length})
                       </button>
@@ -300,18 +304,18 @@ export default function AdminBookings() {
 
                   {/* Payment history (collapsible) */}
                   {isHistoryOpen && bookingPayments.length > 0 && (
-                    <div className="mt-4 bg-dark-900 rounded-lg p-3">
-                      <p className="text-xs font-semibold text-gray-400 mb-2">PAYMENT HISTORY</p>
+                    <div className="mt-4 bg-gray-50 dark:bg-dark-900 rounded-lg p-3 border border-gray-200 dark:border-transparent">
+                      <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">PAYMENT HISTORY</p>
                       <div className="space-y-1.5">
                         {bookingPayments.map((p) => (
                           <div key={p.id} className="flex items-center justify-between text-xs">
-                            <span className="text-gray-400 capitalize">
+                            <span className="text-gray-600 dark:text-gray-400 capitalize">
                               {p.payment_type.replace('_', ' ')} · {p.method}
-                              <span className="text-gray-600 ml-1">
+                              <span className="text-gray-400 dark:text-gray-600 ml-1">
                                 — processed by {p.profiles ? `${p.profiles.first_name} ${p.profiles.last_name}` : 'System'}
                               </span>
                             </span>
-                            <span className="text-white font-medium">
+                            <span className="text-gray-900 dark:text-white font-medium">
                               {p.payment_type === 'refund' ? '-' : ''}₱{Number(p.amount).toFixed(2)}
                             </span>
                           </div>
@@ -322,23 +326,23 @@ export default function AdminBookings() {
 
                   {/* Record payment form (collapsible) */}
                   {isPaymentOpen && (
-                    <div className="mt-4 bg-dark-900 rounded-lg p-4 flex flex-wrap items-end gap-3">
+                    <div className="mt-4 bg-gray-50 dark:bg-dark-900 rounded-lg p-4 flex flex-wrap items-end gap-3 border border-gray-200 dark:border-transparent">
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">Amount (₱)</label>
+                        <label className="block text-xs text-gray-500 dark:text-gray-500 mb-1">Amount (₱)</label>
                         <input
                           type="number"
                           autoFocus
                           value={form.amount}
                           onChange={(e) => setPaymentForm((f) => ({ ...f, [b.id]: { ...form, amount: e.target.value } }))}
-                          className="w-28 px-2 py-1.5 rounded-md bg-dark-800 border border-gray-700 text-sm"
+                          className="w-28 px-2 py-1.5 rounded-md bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 text-sm text-gray-900 dark:text-white"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">Type</label>
+                        <label className="block text-xs text-gray-500 dark:text-gray-500 mb-1">Type</label>
                         <select
                           value={form.payment_type}
                           onChange={(e) => setPaymentForm((f) => ({ ...f, [b.id]: { ...form, payment_type: e.target.value } }))}
-                          className="px-2 py-1.5 rounded-md bg-dark-800 border border-gray-700 text-sm"
+                          className="px-2 py-1.5 rounded-md bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 text-sm text-gray-900 dark:text-white"
                         >
                           <option value="down_payment">Down Payment</option>
                           <option value="balance">Balance</option>
@@ -347,11 +351,11 @@ export default function AdminBookings() {
                         </select>
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">Method</label>
+                        <label className="block text-xs text-gray-500 dark:text-gray-500 mb-1">Method</label>
                         <select
                           value={form.method}
                           onChange={(e) => setPaymentForm((f) => ({ ...f, [b.id]: { ...form, method: e.target.value } }))}
-                          className="px-2 py-1.5 rounded-md bg-dark-800 border border-gray-700 text-sm"
+                          className="px-2 py-1.5 rounded-md bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 text-sm text-gray-900 dark:text-white"
                         >
                           <option value="cash">Cash</option>
                           <option value="gcash">GCash</option>
@@ -362,7 +366,7 @@ export default function AdminBookings() {
                       <button
                         onClick={() => submitPayment(b.id)}
                         disabled={savingPayment === b.id}
-                        className="bg-primary-600 hover:bg-primary-700 disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-medium transition"
+                        className="bg-primary-600 hover:bg-primary-700 disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-medium transition text-white"
                       >
                         {savingPayment === b.id ? 'Saving...' : 'Save Payment'}
                       </button>
@@ -378,11 +382,11 @@ export default function AdminBookings() {
 
       {/* Toast Alert */}
       {paymentToast && (
-        <div className="fixed bottom-6 right-6 bg-dark-800 border border-primary-600 rounded-xl px-5 py-4 shadow-xl max-w-xs z-50">
-          <p className="text-sm font-semibold text-white mb-1">
+        <div className="fixed bottom-6 right-6 bg-white dark:bg-dark-800 border border-primary-300 dark:border-primary-600 rounded-xl px-5 py-4 shadow-xl max-w-xs z-50">
+          <p className="text-sm font-semibold text-gray-900 dark:text-white mb-1">
             ₱{paymentToast.amount.toFixed(2)} payment recorded
           </p>
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-600 dark:text-gray-400">
             {paymentToast.isFullyPaid ? '✓ Booking is now fully paid' : `₱${paymentToast.balance.toFixed(2)} balance remaining`}
           </p>
         </div>
@@ -392,17 +396,17 @@ export default function AdminBookings() {
 }
 
 const STATUS_COLORS = {
-  pending: 'bg-yellow-500/20 text-yellow-400',
-  confirmed: 'bg-green-500/20 text-green-400',
-  in_progress: 'bg-blue-500/20 text-blue-400',
-  completed: 'bg-gray-500/20 text-gray-400',
-  cancelled: 'bg-red-500/20 text-red-400',
+  pending: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-400',
+  confirmed: 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400',
+  in_progress: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400',
+  completed: 'bg-gray-200 text-gray-700 dark:bg-gray-500/20 dark:text-gray-400',
+  cancelled: 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400',
 };
 
 const ACTION_STYLES = {
-  pending: 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30',
-  confirmed: 'bg-green-500/20 text-green-400 hover:bg-green-500/30',
-  in_progress: 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30',
-  completed: 'bg-gray-500/20 text-gray-400 hover:bg-gray-500/30',
-  cancelled: 'bg-red-500/20 text-red-400 hover:bg-red-500/30',
+  pending: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-500/20 dark:text-yellow-400 dark:hover:bg-yellow-500/30',
+  confirmed: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-500/20 dark:text-green-400 dark:hover:bg-green-500/30',
+  in_progress: 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-500/20 dark:text-blue-400 dark:hover:bg-blue-500/30',
+  completed: 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-500/20 dark:text-gray-400 dark:hover:bg-gray-500/30',
+  cancelled: 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-500/20 dark:text-red-400 dark:hover:bg-red-500/30',
 };

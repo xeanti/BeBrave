@@ -9,7 +9,7 @@ export default function AdminOrders() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
-  
+
   // Payment States (Mirrors Bookings Workflow)
   const [payments, setPayments] = useState({}); // orderId -> [payments]
   const [paymentForm, setPaymentForm] = useState({}); // orderId -> { amount, payment_type, method }
@@ -25,15 +25,13 @@ export default function AdminOrders() {
       .from('orders')
       .select('*, profiles!orders_customer_id_fkey(first_name, last_name, email, phone), order_items(*, parts(name, image_url))')
       .order('created_at', { ascending: false });
-    
+
     if (data) {
       setOrders(data);
-      // Fetch financial ledgers for all pulled items matching your database schema
       const allPayments = await fetchPaymentsFor({ orderIds: data.map((o) => o.id) });
       const grouped = {};
       allPayments.forEach((p) => {
-        // Fallback checks to catch order or booking relationship definitions smoothly
-        const targetId = p.order_id || p.booking_id; 
+        const targetId = p.order_id || p.booking_id;
         if (targetId) {
           if (!grouped[targetId]) grouped[targetId] = [];
           grouped[targetId].push(p);
@@ -62,13 +60,13 @@ export default function AdminOrders() {
     setSavingPayment(orderId);
     try {
       await recordPayment({
-        orderId, // explicitly passing down context identifier
+        orderId,
         amount: form.amount,
         paymentType: form.payment_type || 'balance',
         method: form.method || 'cash',
         processedBy: user.id,
       });
-      
+
       await supabase.from('audit_logs').insert({
         action: 'RECORD_ORDER_PAYMENT',
         entity: 'orders',
@@ -77,7 +75,6 @@ export default function AdminOrders() {
         details: { amount: parseFloat(form.amount), payment_type: form.payment_type || 'balance' },
       });
 
-      // Quick dynamic calculations for real-time customer feedback toasts
       const currentOrder = orders.find((o) => o.id === orderId);
       const total = currentOrder?.total_amount || 0;
       const existingPaid = (payments[orderId] || []).reduce(
@@ -120,13 +117,13 @@ export default function AdminOrders() {
   };
 
   return (
-    <div className="min-h-[calc(100vh-65px)] bg-dark-900 text-white px-6 py-10">
+    <div className="min-h-[calc(100vh-65px)] bg-gray-50 dark:bg-dark-900 text-gray-900 dark:text-white px-6 py-10">
       <div className="max-w-5xl mx-auto">
 
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold mb-1">Manage Orders</h1>
-          <p className="text-gray-400">View and update parts orders from customers.</p>
+          <p className="text-gray-600 dark:text-gray-400">View and update parts orders from customers.</p>
         </div>
 
         {/* Filter tabs */}
@@ -134,7 +131,9 @@ export default function AdminOrders() {
           {['all', 'pending', 'confirmed', 'preparing', 'ready', 'completed', 'cancelled'].map((f) => (
             <button key={f} onClick={() => setFilter(f)}
               className={`px-4 py-1.5 rounded-full text-sm font-medium capitalize transition ${
-                filter === f ? 'bg-primary-600 text-white' : 'bg-dark-800 text-gray-400 hover:text-white'
+                filter === f
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-gray-200 dark:bg-dark-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
               }`}>
               {f} <span className="opacity-60">({counts[f]})</span>
             </button>
@@ -148,16 +147,16 @@ export default function AdminOrders() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by customer name..."
-            className="w-full md:w-80 px-4 py-2 rounded-lg bg-dark-800 border border-gray-700 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-primary-600"
+            className="w-full md:w-80 px-4 py-2 rounded-lg bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-primary-600"
           />
         </div>
 
         {loading ? (
-          <p className="text-gray-400">Loading...</p>
+          <p className="text-gray-600 dark:text-gray-400">Loading...</p>
         ) : filtered.length === 0 ? (
-          <div className="bg-dark-800 rounded-xl p-10 text-center">
+          <div className="bg-white dark:bg-dark-800 border border-gray-200 dark:border-transparent rounded-xl p-10 text-center">
             <p className="text-4xl mb-3">📦</p>
-            <p className="text-gray-400">No orders found.</p>
+            <p className="text-gray-600 dark:text-gray-400">No orders found.</p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -171,19 +170,19 @@ export default function AdminOrders() {
               const isHistoryOpen = expandedHistory === order.id;
 
               return (
-                <div key={order.id} className="bg-dark-800 rounded-xl p-5 border border-dark-700">
+                <div key={order.id} className="bg-white dark:bg-dark-800 rounded-xl p-5 border border-gray-200 dark:border-dark-700 shadow-sm dark:shadow-none">
 
                   {/* Top Row Wrap */}
                   <div className="flex items-start justify-between gap-3 mb-4">
                     <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-lg">
+                      <p className="font-semibold text-lg text-gray-900 dark:text-white">
                         {order.profiles?.first_name} {order.profiles?.last_name}
                       </p>
-                      <p className="text-sm text-gray-400 mt-0.5">
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">
                         👤 {order.profiles?.email}
                         {order.profiles?.phone ? ` · ${order.profiles.phone}` : ''}
                       </p>
-                      <p className="text-xs text-gray-500 mt-1">
+                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
                         Order #{order.id.slice(0, 8).toUpperCase()} · {new Date(order.created_at).toLocaleString()}
                       </p>
                     </div>
@@ -192,7 +191,7 @@ export default function AdminOrders() {
                         {order.status}
                       </span>
                       <span className={`text-xs px-3 py-1 rounded-full font-medium whitespace-nowrap ${
-                        isFullyPaid ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
+                        isFullyPaid ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400' : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-400'
                       }`}>
                         {isFullyPaid ? '✓ Fully Paid' : `₱${balance.toFixed(2)} balance due`}
                       </span>
@@ -201,26 +200,26 @@ export default function AdminOrders() {
 
                   {/* Notes */}
                   {order.notes && (
-                    <div className="bg-dark-900 rounded-lg px-4 py-3 mb-4 text-sm text-gray-300 italic">
+                    <div className="bg-gray-50 dark:bg-dark-900 rounded-lg px-4 py-3 mb-4 text-sm text-gray-700 dark:text-gray-300 italic border border-gray-200 dark:border-transparent">
                       "{order.notes}"
                     </div>
                   )}
 
                   {/* Items breakdown */}
-                  <div className="bg-dark-900 rounded-lg p-3 mb-4 space-y-2">
-                    <p className="text-xs font-semibold text-gray-400 mb-2">ORDER ITEMS</p>
+                  <div className="bg-gray-50 dark:bg-dark-900 rounded-lg p-3 mb-4 space-y-2 border border-gray-200 dark:border-transparent">
+                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">ORDER ITEMS</p>
                     {order.order_items?.map((item) => (
                       <div key={item.id} className="flex items-center gap-3">
                         {item.parts?.image_url ? (
                           <img src={item.parts.image_url} alt={item.parts.name}
                             className="w-8 h-8 rounded-lg object-cover flex-shrink-0" />
                         ) : (
-                          <div className="w-8 h-8 rounded-lg bg-dark-800 flex items-center justify-center text-xs flex-shrink-0">⚙️</div>
+                          <div className="w-8 h-8 rounded-lg bg-gray-200 dark:bg-dark-800 flex items-center justify-center text-xs flex-shrink-0">⚙️</div>
                         )}
                         <div className="flex-1 flex justify-between items-center min-w-0">
-                          <p className="text-sm text-gray-300 truncate mr-2">{item.parts?.name}</p>
-                          <p className="text-sm text-gray-400 whitespace-nowrap">
-                            ₱{item.unit_price} × {item.quantity} = <span className="text-white font-medium">₱{item.subtotal}</span>
+                          <p className="text-sm text-gray-700 dark:text-gray-300 truncate mr-2">{item.parts?.name}</p>
+                          <p className="text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                            ₱{item.unit_price} × {item.quantity} = <span className="text-gray-900 dark:text-white font-medium">₱{item.subtotal}</span>
                           </p>
                         </div>
                       </div>
@@ -228,28 +227,28 @@ export default function AdminOrders() {
                   </div>
 
                   {/* Financial Breakdown Grid */}
-                  <div className="bg-dark-900 rounded-lg p-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-4">
+                  <div className="bg-gray-50 dark:bg-dark-900 rounded-lg p-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-4 border border-gray-200 dark:border-transparent">
                     <div>
-                      <p className="text-xs text-gray-500 mb-0.5">Total Amount</p>
-                      <p className="font-medium text-white">₱{Number(order.total_amount).toFixed(2)}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-500 mb-0.5">Total Amount</p>
+                      <p className="font-medium text-gray-900 dark:text-white">₱{Number(order.total_amount).toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-gray-500 mb-0.5">Down Payment (15%)</p>
-                      <p className="font-medium text-yellow-500">₱{(order.total_amount * 0.15).toFixed(2)}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-500 mb-0.5">Down Payment (15%)</p>
+                      <p className="font-medium text-yellow-600 dark:text-yellow-500">₱{(order.total_amount * 0.15).toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-gray-500 mb-0.5">Total Collected</p>
-                      <p className="font-medium text-green-400">₱{totalPaid.toFixed(2)}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-500 mb-0.5">Total Collected</p>
+                      <p className="font-medium text-green-600 dark:text-green-400">₱{totalPaid.toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-gray-500 mb-0.5">Remaining Balance</p>
-                      <p className={`font-medium ${balance === 0 ? 'text-green-400' : 'text-red-400'}`}>₱{balance.toFixed(2)}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-500 mb-0.5">Remaining Balance</p>
+                      <p className={`font-medium ${balance === 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>₱{balance.toFixed(2)}</p>
                     </div>
                   </div>
 
                   {/* Operational Status Updates */}
-                  <div className="flex gap-2 flex-wrap items-center bg-dark-900/40 p-3 rounded-lg border border-dark-700 mb-4">
-                    <p className="text-xs text-gray-500 mr-1">Update status:</p>
+                  <div className="flex gap-2 flex-wrap items-center bg-gray-50 dark:bg-dark-900/40 p-3 rounded-lg border border-gray-200 dark:border-dark-700 mb-4">
+                    <p className="text-xs text-gray-500 dark:text-gray-500 mr-1">Update status:</p>
                     {['pending', 'confirmed', 'preparing', 'ready', 'completed', 'cancelled']
                       .filter(s => s !== order.status)
                       .map(s => (
@@ -268,7 +267,9 @@ export default function AdminOrders() {
                     <button
                       onClick={() => setExpandedPayment(isPaymentOpen ? null : order.id)}
                       className={`text-xs px-3 py-1.5 rounded-md font-medium transition ${
-                        isPaymentOpen ? 'bg-primary-600 text-white' : 'bg-dark-900 border border-gray-700 text-gray-300 hover:text-white'
+                        isPaymentOpen
+                          ? 'bg-primary-600 text-white'
+                          : 'bg-gray-100 dark:bg-dark-900 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
                       }`}
                     >
                       {isPaymentOpen ? 'Close Form' : '+ Record Payment'}
@@ -277,7 +278,7 @@ export default function AdminOrders() {
                     {orderPayments.length > 0 && (
                       <button
                         onClick={() => setExpandedHistory(isHistoryOpen ? null : order.id)}
-                        className="text-xs px-3 py-1.5 rounded-md bg-dark-900 border border-gray-700 text-gray-300 hover:text-white transition"
+                        className="text-xs px-3 py-1.5 rounded-md bg-gray-100 dark:bg-dark-900 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition"
                       >
                         {isHistoryOpen ? 'Hide History' : 'View History'} ({orderPayments.length})
                       </button>
@@ -286,18 +287,18 @@ export default function AdminOrders() {
 
                   {/* Payment Records Accordion */}
                   {isHistoryOpen && orderPayments.length > 0 && (
-                    <div className="mt-4 bg-dark-900 rounded-lg p-3">
-                      <p className="text-xs font-semibold text-gray-400 mb-2">PAYMENT LEDGER</p>
+                    <div className="mt-4 bg-gray-50 dark:bg-dark-900 rounded-lg p-3 border border-gray-200 dark:border-transparent">
+                      <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">PAYMENT LEDGER</p>
                       <div className="space-y-1.5">
                         {orderPayments.map((p) => (
                           <div key={p.id} className="flex items-center justify-between text-xs">
-                            <span className="text-gray-400 capitalize">
+                            <span className="text-gray-600 dark:text-gray-400 capitalize">
                               {p.payment_type.replace('_', ' ')} · {p.method}
-                              <span className="text-gray-600 ml-1">
+                              <span className="text-gray-400 dark:text-gray-600 ml-1">
                                 — processed by {p.profiles ? `${p.profiles.first_name} ${p.profiles.last_name}` : 'System'}
                               </span>
                             </span>
-                            <span className="text-white font-medium">
+                            <span className="text-gray-900 dark:text-white font-medium">
                               {p.payment_type === 'refund' ? '-' : ''}₱{Number(p.amount).toFixed(2)}
                             </span>
                           </div>
@@ -308,23 +309,23 @@ export default function AdminOrders() {
 
                   {/* Dynamic Financial Payment Entry Form */}
                   {isPaymentOpen && (
-                    <div className="mt-4 bg-dark-900 rounded-lg p-4 flex flex-wrap items-end gap-3 border border-dark-700">
+                    <div className="mt-4 bg-gray-50 dark:bg-dark-900 rounded-lg p-4 flex flex-wrap items-end gap-3 border border-gray-200 dark:border-dark-700">
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">Amount (₱)</label>
+                        <label className="block text-xs text-gray-500 dark:text-gray-500 mb-1">Amount (₱)</label>
                         <input
                           type="number"
                           autoFocus
                           value={form.amount}
                           onChange={(e) => setPaymentForm((f) => ({ ...f, [order.id]: { ...form, amount: e.target.value } }))}
-                          className="w-28 px-2 py-1.5 rounded-md bg-dark-800 border border-gray-700 text-sm text-white"
+                          className="w-28 px-2 py-1.5 rounded-md bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 text-sm text-gray-900 dark:text-white"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">Type</label>
+                        <label className="block text-xs text-gray-500 dark:text-gray-500 mb-1">Type</label>
                         <select
                           value={form.payment_type}
                           onChange={(e) => setPaymentForm((f) => ({ ...f, [order.id]: { ...form, payment_type: e.target.value } }))}
-                          className="px-2 py-1.5 rounded-md bg-dark-800 border border-gray-700 text-sm text-white"
+                          className="px-2 py-1.5 rounded-md bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 text-sm text-gray-900 dark:text-white"
                         >
                           <option value="down_payment">Down Payment (15%)</option>
                           <option value="balance">Remaining Balance</option>
@@ -333,11 +334,11 @@ export default function AdminOrders() {
                         </select>
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">Method</label>
+                        <label className="block text-xs text-gray-500 dark:text-gray-500 mb-1">Method</label>
                         <select
                           value={form.method}
                           onChange={(e) => setPaymentForm((f) => ({ ...f, [order.id]: { ...form, method: e.target.value } }))}
-                          className="px-2 py-1.5 rounded-md bg-dark-800 border border-gray-700 text-sm text-white"
+                          className="px-2 py-1.5 rounded-md bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 text-sm text-gray-900 dark:text-white"
                         >
                           <option value="cash">Cash</option>
                           <option value="gcash">GCash</option>
@@ -364,11 +365,11 @@ export default function AdminOrders() {
 
       {/* Floating Global Toasts */}
       {paymentToast && (
-        <div className="fixed bottom-6 right-6 bg-dark-800 border border-primary-600 rounded-xl px-5 py-4 shadow-xl max-w-xs z-50">
-          <p className="text-sm font-semibold text-white mb-1">
+        <div className="fixed bottom-6 right-6 bg-white dark:bg-dark-800 border border-primary-300 dark:border-primary-600 rounded-xl px-5 py-4 shadow-xl max-w-xs z-50">
+          <p className="text-sm font-semibold text-gray-900 dark:text-white mb-1">
             ₱{paymentToast.amount.toFixed(2)} payment recorded
           </p>
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-600 dark:text-gray-400">
             {paymentToast.isFullyPaid ? '✓ Order invoice is fully settled' : `₱${paymentToast.balance.toFixed(2)} balance remaining`}
           </p>
         </div>
@@ -378,19 +379,19 @@ export default function AdminOrders() {
 }
 
 const STATUS_COLORS = {
-  pending: 'bg-yellow-500/20 text-yellow-400',
-  confirmed: 'bg-green-500/20 text-green-400',
-  preparing: 'bg-purple-500/20 text-purple-400',
-  ready: 'bg-cyan-500/20 text-cyan-400',
-  completed: 'bg-gray-500/20 text-gray-400',
-  cancelled: 'bg-red-500/20 text-red-400',
+  pending: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-400',
+  confirmed: 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400',
+  preparing: 'bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-400',
+  ready: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-400',
+  completed: 'bg-gray-200 text-gray-700 dark:bg-gray-500/20 dark:text-gray-400',
+  cancelled: 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400',
 };
 
 const ACTION_STYLES = {
-  pending: 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30',
-  confirmed: 'bg-green-500/20 text-green-400 hover:bg-green-500/30',
-  preparing: 'bg-purple-500/20 text-purple-400 hover:bg-purple-500/30',
-  ready: 'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30',
-  completed: 'bg-gray-500/20 text-gray-400 hover:bg-gray-500/30',
-  cancelled: 'bg-red-500/20 text-red-400 hover:bg-red-500/30',
+  pending: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-500/20 dark:text-yellow-400 dark:hover:bg-yellow-500/30',
+  confirmed: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-500/20 dark:text-green-400 dark:hover:bg-green-500/30',
+  preparing: 'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-500/20 dark:text-purple-400 dark:hover:bg-purple-500/30',
+  ready: 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200 dark:bg-cyan-500/20 dark:text-cyan-400 dark:hover:bg-cyan-500/30',
+  completed: 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-500/20 dark:text-gray-400 dark:hover:bg-gray-500/30',
+  cancelled: 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-500/20 dark:text-red-400 dark:hover:bg-red-500/30',
 };

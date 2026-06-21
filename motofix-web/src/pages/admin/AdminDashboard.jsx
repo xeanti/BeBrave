@@ -15,9 +15,12 @@ export default function AdminDashboard() {
     totalRevenue: 0,
     orderRevenue: 0,
     bookingRevenue: 0,
+    lowStockCount: 0,
+    outOfStockCount: 0,
   });
   const [recentBookings, setRecentBookings] = useState([]);
   const [recentOrders, setRecentOrders] = useState([]);
+  const [lowStockParts, setLowStockParts] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -34,7 +37,7 @@ export default function AdminDashboard() {
         supabase.from('orders').select('id, status, total_amount'),
         supabase.from('profiles').select('id').eq('role', 'customer'),
         supabase.from('profiles').select('id').eq('role', 'mechanic'),
-        supabase.from('parts').select('id'),
+        supabase.from('parts').select('id, name, stock_quantity, reorder_threshold, image_url').order('stock_quantity', { ascending: true }),
         supabase.from('services').select('id'),
       ]);
 
@@ -51,6 +54,14 @@ export default function AdminDashboard() {
 
     const totalRevenue = orderRevenue + bookingRevenue;
 
+    const allParts = parts.data || [];
+    const outOfStock = allParts.filter((p) => p.stock_quantity <= 0);
+    const lowStock = allParts.filter(
+      (p) => p.stock_quantity > 0 && p.stock_quantity <= (p.reorder_threshold ?? 5)
+    );
+
+    setLowStockParts([...outOfStock, ...lowStock].slice(0, 6));
+
     setStats({
       totalBookings: bookings.data?.length || 0,
       pendingBookings: bookings.data?.filter((b) => b.status === 'pending').length || 0,
@@ -58,11 +69,13 @@ export default function AdminDashboard() {
       pendingOrders: orders.data?.filter((o) => o.status === 'pending').length || 0,
       totalCustomers: customers.data?.length || 0,
       totalMechanics: mechanics.data?.length || 0,
-      totalParts: parts.data?.length || 0,
+      totalParts: allParts.length,
       totalServices: services.data?.length || 0,
       totalRevenue,
       orderRevenue,
       bookingRevenue,
+      lowStockCount: lowStock.length,
+      outOfStockCount: outOfStock.length,
     });
 
     setLoading(false);
@@ -100,8 +113,20 @@ export default function AdminDashboard() {
           <StatCard label="Pending Orders" value={stats.pendingOrders} icon="📦" color="text-orange-400" />
           <StatCard label="Customers" value={stats.totalCustomers} icon="👥" color="text-green-400" />
           <StatCard label="Mechanics" value={stats.totalMechanics} icon="🔧" color="text-primary-400" />
-          <StatCard label="Parts in Catalog" value={stats.totalParts} icon="⚙️" color="text-purple-400" />
-          <StatCard label="Services" value={stats.totalServices} icon="🛠️" color="text-accent-400" />
+          <StatCard
+            label="Low Stock Parts"
+            value={stats.lowStockCount}
+            icon="⚠️"
+            color={stats.lowStockCount > 0 ? 'text-yellow-400' : 'text-gray-500'}
+            to="/admin/parts"
+          />
+          <StatCard
+            label="Out of Stock"
+            value={stats.outOfStockCount}
+            icon="🚫"
+            color={stats.outOfStockCount > 0 ? 'text-red-400' : 'text-gray-500'}
+            to="/admin/parts"
+          />
         </div>
 
         {/* Revenue card */}
@@ -131,15 +156,53 @@ export default function AdminDashboard() {
           </div>
         </div>
 
+        {/* Low stock alert panel */}
+        {(stats.lowStockCount > 0 || stats.outOfStockCount > 0) && (
+          <div className="bg-dark-800 border border-yellow-500/20 rounded-xl p-6 mb-10">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <span>⚠️</span> Low Stock Alert
+              </h2>
+              <Link to="/admin/parts" className="text-xs text-primary-500 hover:underline">
+                Manage parts →
+              </Link>
+            </div>
+            <div className="space-y-2">
+              {lowStockParts.map((p) => {
+                const isOut = p.stock_quantity <= 0;
+                return (
+                  <div key={p.id} className="flex items-center justify-between bg-dark-900 rounded-lg p-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-9 h-9 rounded-lg bg-dark-800 flex items-center justify-center overflow-hidden flex-shrink-0">
+                        {p.image_url ? (
+                          <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-sm opacity-50">⚙️</span>
+                        )}
+                      </div>
+                      <p className="text-sm font-medium truncate">{p.name}</p>
+                    </div>
+                    <span className={`text-xs px-3 py-1 rounded-full font-medium whitespace-nowrap ${
+                      isOut ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'
+                    }`}>
+                      {isOut ? 'Out of stock' : `${p.stock_quantity} left`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Quick links */}
         <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-4 mb-10">
           <QuickLink to="/admin/bookings" label="Manage Bookings" icon="📋" />
           <QuickLink to="/admin/orders" label="Manage Orders" icon="📦" />
           <QuickLink to="/admin/parts" label="Manage Parts" icon="⚙️" />
           <QuickLink to="/admin/services" label="Manage Services" icon="🛠️" />
-          <QuickLink to="/admin/mechanics" label="Manage Mechanics" icon="🔧" />
           <QuickLink to="/admin/assessments" label="Assessments" icon="📋" />
           <QuickLink to="/admin/chat" label="Customer Chats" icon="💬" />
+          <QuickLink to="/admin/users" label="Manage Users" icon="👥" />
         </div>
 
         {/* Recent activity — two columns */}
@@ -216,9 +279,9 @@ export default function AdminDashboard() {
   );
 }
 
-function StatCard({ label, value, icon, color }) {
-  return (
-    <div className="bg-dark-800 rounded-xl p-5">
+function StatCard({ label, value, icon, color, to }) {
+  const content = (
+    <div className="bg-dark-800 rounded-xl p-5 h-full hover:bg-dark-800/70 transition">
       <div className="flex items-center gap-3 mb-2">
         <span className="text-2xl">{icon}</span>
         <span className={`text-2xl font-bold ${color}`}>{value}</span>
@@ -226,6 +289,7 @@ function StatCard({ label, value, icon, color }) {
       <p className="text-sm text-gray-400">{label}</p>
     </div>
   );
+  return to ? <Link to={to}>{content}</Link> : content;
 }
 
 function QuickLink({ to, label, icon }) {
