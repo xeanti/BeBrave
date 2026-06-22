@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, StatusBar, Alert, Platform, Image
@@ -10,6 +10,12 @@ import { useTheme } from '../../lib/ThemeContext';
 // Align slot coverage with web implementation (8am–5pm, 18 half-hour slots)
 const SHOP_OPEN = 8;
 const SHOP_CLOSE = 17;
+
+function timeToMinutes(t) {
+  if (!t) return 0;
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
 
 function generateTimeSlots() {
   const slots = [];
@@ -23,7 +29,7 @@ function generateTimeSlots() {
 const timeSlots = generateTimeSlots();
 const TOTAL_STEPS = 5;
 
-export default function BookingScreen({ navigation }) {
+export default function BookingScreen({ route, navigation }) {
   const { theme, isDark } = useTheme();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -49,6 +55,14 @@ export default function BookingScreen({ navigation }) {
   const [bookedMechanicIds, setBookedMechanicIds] = useState([]);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
 
+  // Pre-select service from route params if available
+  useEffect(() => {
+    if (route?.params?.preselectedService) {
+      setSelectedService(route.params.preselectedService);
+      setStep(2); // skip step 1 and jump to motorcycle details
+    }
+  }, [route?.params?.preselectedService]);
+
   useEffect(() => { fetchData(); }, []);
 
   useEffect(() => {
@@ -62,44 +76,45 @@ export default function BookingScreen({ navigation }) {
     const dateStr = toISODateString(bookingDate);
     const { data, error } = await supabase
       .from('bookings')
-      .select('mechanic_id')
+      .select('mechanic_id, booking_time, services(estimated_duration_minutes)')
       .eq('booking_date', dateStr)
-      .eq('booking_time', bookingTime)
       .in('status', ['pending', 'confirmed', 'in_progress'])
       .not('mechanic_id', 'is', null);
+
     if (!error && data) {
-      setBookedMechanicIds(data.map((b) => b.mechanic_id));
+      const newStart = timeToMinutes(bookingTime);
+      const newDuration = selectedService?.estimated_duration_minutes || 30;
+      const newEnd = newStart + newDuration;
+
+      const conflicting = data.filter((b) => {
+        const start = timeToMinutes((b.booking_time || '').slice(0, 5));
+        const duration = b.services?.estimated_duration_minutes || 30;
+        const end = start + duration;
+        return newStart < end && newEnd > start;
+      });
+
+      setBookedMechanicIds(conflicting.map((b) => b.mechanic_id));
     }
     setCheckingAvailability(false);
   }
 
   async function fetchData() {
     setLoading(true);
-
     try {
       const { data: s, error: serviceError } = await supabase
         .from('services')
         .select('*')
         .eq('is_active', true);
 
-      console.log("SERVICES:", s);
-      console.log("SERVICE ERROR:", serviceError);
-
       const { data: m, error: modelError } = await supabase
         .from('motorcycle_models')
         .select('*')
         .order('make');
 
-      console.log("MODELS:", m);
-      console.log("MODEL ERROR:", modelError);
-
       const { data: mech, error: mechError } = await supabase
         .from('profiles')
         .select('*')
         .eq('role', 'mechanic');
-
-      console.log("MECHANICS:", mech);
-      console.log("MECHANIC ERROR:", mechError);
 
       setServices(s || []);
       setMotorcycleModels(m || []);
@@ -151,15 +166,25 @@ export default function BookingScreen({ navigation }) {
     const bookingDateStr = toISODateString(bookingDate);
 
     if (selectedMechanic) {
-      const { data: conflict } = await supabase
+      const { data: existingBookings } = await supabase
         .from('bookings')
-        .select('id')
+        .select('booking_time, services(estimated_duration_minutes)')
         .eq('mechanic_id', selectedMechanic.id)
         .eq('booking_date', bookingDateStr)
-        .eq('booking_time', bookingTime)
-        .in('status', ['pending', 'confirmed', 'in_progress'])
-        .limit(1);
-      if (conflict && conflict.length > 0) {
+        .in('status', ['pending', 'confirmed', 'in_progress']);
+
+      const newStart = timeToMinutes(bookingTime);
+      const newDuration = selectedService?.estimated_duration_minutes || 30;
+      const newEnd = newStart + newDuration;
+
+      const hasConflict = (existingBookings || []).some((b) => {
+        const start = timeToMinutes((b.booking_time || '').slice(0, 5));
+        const duration = b.services?.estimated_duration_minutes || 30;
+        const end = start + duration;
+        return newStart < end && newEnd > start;
+      });
+
+      if (hasConflict) {
         Alert.alert(
           'Mechanic Unavailable',
           'This mechanic was just booked for this time slot. Please choose another mechanic or time.'

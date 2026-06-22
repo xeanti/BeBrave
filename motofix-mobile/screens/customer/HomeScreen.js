@@ -103,7 +103,11 @@ export default function HomeScreen({ navigation }) {
           <Text style={s.emptyText}>No services available.</Text>
         ) : (
           services.map((sv) => (
-            <TouchableOpacity key={sv.id} style={s.serviceCard}>
+            <TouchableOpacity 
+              key={sv.id} 
+              style={s.serviceCard} 
+              onPress={() => navigation.navigate('Booking', { preselectedService: sv })}
+            >
               <Text style={s.serviceIcon}>🔧</Text>
               <Text style={s.serviceName}>{sv.name}</Text>
               <Text style={s.serviceDesc}>{sv.description}</Text>

@@ -31,6 +31,12 @@ function normalizeTime(t) {
   return t?.slice(0, 5);
 }
 
+// Helper to convert time strings (HH:MM) to total minutes
+function timeToMinutes(t) {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+
 function StepHeader({ number, title, optional }) {
   return (
     <div className="flex items-center gap-3 mb-4">
@@ -70,15 +76,15 @@ export default function Booking() {
   const [loading, setLoading] = useState(false);
   const [downPaymentRate, setDownPaymentRate] = useState(0.15);
 
-useEffect(() => {
-  fetchServices();
-  fetchMechanics();
-  getDownPaymentPercent().then(setDownPaymentRate);
+  useEffect(() => {
+    fetchServices();
+    fetchMechanics();
+    getDownPaymentPercent().then(setDownPaymentRate);
 
-  if (location.state?.service_id) {
-    setForm((f) => ({ ...f, service_id: location.state.service_id }));
-  }
-}, []);
+    if (location.state?.service_id) {
+      setForm((f) => ({ ...f, service_id: location.state.service_id }));
+    }
+  }, []);
 
   async function fetchServices() {
     const { data } = await supabase
@@ -96,10 +102,11 @@ useEffect(() => {
     if (data) setMechanics(data);
   }
 
+  // Updated to select estimated_duration_minutes from nested services relationship
   async function fetchMechanicSchedule(mechanicId) {
     const { data } = await supabase
       .from('bookings')
-      .select('booking_date, booking_time, status')
+      .select('booking_date, booking_time, status, services(estimated_duration_minutes)')
       .eq('mechanic_id', mechanicId)
       .in('status', ['pending', 'confirmed', 'in_progress'])
       .gte('booking_date', new Date().toISOString().split('T')[0])
@@ -113,21 +120,39 @@ useEffect(() => {
 
   const selectedService = services.find((s) => s.id === form.service_id);
   const effectiveCartTotal = includeCartParts ? cartTotal : 0;
-const downpayment = selectedService
-  ? (
-      (
-        (selectedService.base_price || 0) +
-        (selectedService.labor_cost || 0) +
-        effectiveCartTotal
-      ) * downPaymentRate
-    ).toFixed(2)
-  : null;
+  const downpayment = selectedService
+    ? (
+        (
+          (selectedService.base_price || 0) +
+          (selectedService.labor_cost || 0) +
+          effectiveCartTotal
+        ) * downPaymentRate
+      ).toFixed(2)
+    : null;
 
-  const bookedSlotsForDate = new Set(
-    mechanicBookings
-      .filter((b) => b.booking_date === form.booking_date)
-      .map((b) => normalizeTime(b.booking_time))
-  );
+  // New Duration-Aware Blocked Slots Logic
+  const selectedDuration = selectedService?.estimated_duration_minutes || 30;
+  
+  const bookedIntervalsForDate = mechanicBookings
+    .filter((b) => b.booking_date === form.booking_date)
+    .map((b) => {
+      const start = timeToMinutes(normalizeTime(b.booking_time));
+      const duration = b.services?.estimated_duration_minutes || 30;
+      return { start, end: start + duration };
+    });
+
+  function isSlotBooked(slot) {
+    const slotStart = timeToMinutes(slot);
+    const slotEnd = slotStart + selectedDuration;
+    
+    // Block the slot if the service wouldn't finish before closing time
+    if (slotEnd > SHOP_CLOSE * 60) return true; 
+    
+    // Check if the requested interval overlaps with any existing booked interval
+    return bookedIntervalsForDate.some((b) => slotStart < b.end && slotEnd > b.start);
+  }
+
+  const bookedSlotsForDate = new Set(TIME_SLOTS.filter(isSlotBooked));
 
   const hasScheduleData = Boolean(selectedMechanic && form.booking_date);
   const allSlotsBooked = hasScheduleData && bookedSlotsForDate.size >= TIME_SLOTS.length;
@@ -223,9 +248,9 @@ const downpayment = selectedService
                   <span className="text-gray-300">{selectedService.estimated_duration_minutes} mins</span>
                 </div>
                 <div className="border-t border-gray-700 pt-2.5 mt-1 flex justify-between font-semibold text-accent-400">
-<span>
-  Required Down Payment ({Math.round(downPaymentRate * 100)}%)
-</span>
+                  <span>
+                    Required Down Payment ({Math.round(downPaymentRate * 100)}%)
+                  </span>
                   <span>₱{downpayment}</span>
                 </div>
               </div>
@@ -426,21 +451,20 @@ const downpayment = selectedService
                     <span>Grand Total Estimate</span>
                     <span>₱{((selectedService?.base_price || 0) + (selectedService?.labor_cost || 0) + cartTotal).toFixed(2)}</span>
                   </div>
-<div className="flex justify-between text-accent-400 font-semibold">
-  <span>
-    Down Payment ({Math.round(downPaymentRate * 100)}%)
-  </span>
-
-  <span>
-    ₱{(
-      (
-        (selectedService?.base_price || 0) +
-        (selectedService?.labor_cost || 0) +
-        cartTotal
-      ) * downPaymentRate
-    ).toFixed(2)}
-  </span>
-</div>
+                  <div className="flex justify-between text-accent-400 font-semibold">
+                    <span>
+                      Down Payment ({Math.round(downPaymentRate * 100)}%)
+                    </span>
+                    <span>
+                      ₱{(
+                        (
+                          (selectedService?.base_price || 0) +
+                          (selectedService?.labor_cost || 0) +
+                          cartTotal
+                        ) * downPaymentRate
+                      ).toFixed(2)}
+                    </span>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -454,10 +478,11 @@ const downpayment = selectedService
           {selectedService && (
             <div className="bg-accent-500/10 border border-accent-500/30 rounded-lg p-4 text-sm text-accent-400 flex items-start gap-2.5">
               <span className="flex-shrink-0">⚠️</span>
-<span>
-  A down payment of <strong>₱{downpayment}</strong> (
-  {Math.round(downPaymentRate * 100)}% of total) is required to confirm your booking.
-</span>            </div>
+              <span>
+                A down payment of <strong>₱{downpayment}</strong> (
+                {Math.round(downPaymentRate * 100)}% of total) is required to confirm your booking.
+              </span>
+            </div>
           )}
 
           <button

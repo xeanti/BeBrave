@@ -20,8 +20,8 @@ export default function AdminParts() {
 
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
-  const [stockFilter, setStockFilter] = useState('all'); // all | low | out
-  const [sortBy, setSortBy] = useState('name'); // name | price_asc | price_desc | stock_asc | stock_desc
+  const [stockFilter, setStockFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('name');
 
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -30,7 +30,15 @@ export default function AdminParts() {
   const [formError, setFormError] = useState('');
   const [toast, setToast] = useState('');
   const [deletingId, setDeletingId] = useState(null);
-  const [stockEdits, setStockEdits] = useState({}); // id -> pending qty string
+  const [stockEdits, setStockEdits] = useState({});
+
+  // Category management state
+  const [catPanelOpen, setCatPanelOpen] = useState(false);
+  const [customCategories, setCustomCategories] = useState([]);
+  const [newCatName, setNewCatName] = useState('');
+  const [renamingCat, setRenamingCat] = useState(null); // { old, value }
+  const [catSaving, setCatSaving] = useState(false);
+  const [showCategoryInput, setShowCategoryInput] = useState(false);
 
   useEffect(() => { fetchParts(); }, []);
 
@@ -77,6 +85,7 @@ export default function AdminParts() {
     setEditingId(null);
     setForm(EMPTY_FORM);
     setFormError('');
+    setShowCategoryInput(false);
   }
 
   async function handleSubmit(e) {
@@ -183,9 +192,71 @@ export default function AdminParts() {
     });
   }
 
-  const categories = useMemo(
-    () => ['all', ...new Set(parts.map((p) => p.category).filter(Boolean))],
+  // ── Category management helpers ──────────────────────────────────────────
+
+  // All known categories: from parts + any locally added ones not yet on a part
+  const derivedCategories = useMemo(
+    () => [...new Set(parts.map((p) => p.category).filter(Boolean))].sort(),
     [parts]
+  );
+
+  const allCategories = useMemo(
+    () => [...new Set([...derivedCategories, ...customCategories])].sort(),
+    [derivedCategories, customCategories]
+  );
+
+  function addCustomCategory() {
+    const name = newCatName.trim();
+    if (!name || allCategories.includes(name)) return;
+    setCustomCategories((prev) => [...prev, name]);
+    setNewCatName('');
+    setToast(`✓ Category "${name}" added`);
+  }
+
+  async function renameCategory(oldName, newName) {
+    if (!newName.trim() || newName.trim() === oldName) {
+      setRenamingCat(null);
+      return;
+    }
+    setCatSaving(true);
+    const trimmed = newName.trim();
+    await supabase.from('parts').update({ category: trimmed }).eq('category', oldName);
+    await supabase.from('audit_logs').insert({
+      action: 'RENAME_CATEGORY',
+      entity: 'parts',
+      performed_by: user.id,
+      details: { old_category: oldName, new_category: trimmed },
+    });
+    setCustomCategories((prev) => prev.map((c) => (c === oldName ? trimmed : c)));
+    if (categoryFilter === oldName) setCategoryFilter(trimmed);
+    setRenamingCat(null);
+    setCatSaving(false);
+    setToast(`✓ Renamed "${oldName}" → "${trimmed}"`);
+    fetchParts();
+  }
+
+  async function deleteCategory(name) {
+    if (!confirm(`Remove category "${name}"? Parts using it will become uncategorized.`)) return;
+    setCatSaving(true);
+    await supabase.from('parts').update({ category: null }).eq('category', name);
+    await supabase.from('audit_logs').insert({
+      action: 'DELETE_CATEGORY',
+      entity: 'parts',
+      performed_by: user.id,
+      details: { category: name },
+    });
+    setCustomCategories((prev) => prev.filter((c) => c !== name));
+    if (categoryFilter === name) setCategoryFilter('all');
+    setCatSaving(false);
+    setToast(`Removed category "${name}"`);
+    fetchParts();
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+
+  const categories = useMemo(
+    () => ['all', ...allCategories],
+    [allCategories]
   );
 
   const stats = useMemo(() => {
@@ -229,12 +300,20 @@ export default function AdminParts() {
             <h1 className="text-3xl font-bold mb-1">Manage Parts</h1>
             <p className="text-gray-400">Add, edit, and track inventory levels.</p>
           </div>
-          <button
-            onClick={openAddPanel}
-            className="bg-primary-600 hover:bg-primary-700 px-5 py-2.5 rounded-lg font-medium transition text-sm flex items-center gap-2"
-          >
-            <span className="text-lg leading-none">+</span> Add Part
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setCatPanelOpen(true)}
+              className="bg-dark-800 hover:bg-dark-700 border border-gray-700 hover:border-gray-500 px-4 py-2.5 rounded-lg font-medium transition text-sm flex items-center gap-2"
+            >
+              🏷 Categories
+            </button>
+            <button
+              onClick={openAddPanel}
+              className="bg-primary-600 hover:bg-primary-700 px-5 py-2.5 rounded-lg font-medium transition text-sm flex items-center gap-2"
+            >
+              <span className="text-lg leading-none">+</span> Add Part
+            </button>
+          </div>
         </div>
 
         {/* Stats */}
@@ -250,7 +329,7 @@ export default function AdminParts() {
           />
         </div>
 
-        {/* Filter pills (category) — mirrors AdminOrders status tabs */}
+        {/* Filter pills (category) */}
         <div className="flex gap-2 mb-4 flex-wrap">
           {categories.map((c) => (
             <button
@@ -342,7 +421,6 @@ export default function AdminParts() {
                   key={p.id}
                   className="bg-dark-800 rounded-xl p-5 flex flex-col gap-4 hover:bg-dark-800/70 transition"
                 >
-                  {/* Top row — image + name/price + stock badge, echoes AdminOrders' top row */}
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="w-12 h-12 rounded-lg bg-dark-900 flex items-center justify-center overflow-hidden flex-shrink-0">
@@ -364,7 +442,6 @@ export default function AdminParts() {
                     </span>
                   </div>
 
-                  {/* Compatible models */}
                   {p.compatible_models?.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
                       {p.compatible_models.slice(0, 3).map((m, i) => (
@@ -378,7 +455,6 @@ export default function AdminParts() {
                     </div>
                   )}
 
-                  {/* Cost / stock summary grid — mirrors AdminOrders' cost summary grid */}
                   <div className="bg-dark-900 rounded-lg p-3 grid grid-cols-2 gap-3 text-sm">
                     <div>
                       <p className="text-xs text-gray-500 mb-0.5">Price</p>
@@ -390,7 +466,6 @@ export default function AdminParts() {
                     </div>
                   </div>
 
-                  {/* Stock control */}
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
                       <p className="text-xs text-gray-500">Stock Quantity</p>
@@ -424,7 +499,6 @@ export default function AdminParts() {
                     </div>
                   </div>
 
-                  {/* Actions — styled like AdminOrders' status action buttons */}
                   <div className="flex gap-2 flex-wrap pt-1 border-t border-gray-800">
                     <button
                       onClick={() => openEditPanel(p)}
@@ -454,7 +528,125 @@ export default function AdminParts() {
         </div>
       )}
 
-      {/* Add/Edit slide-over panel */}
+      {/* ── Manage Categories slide-over ──────────────────────────────────── */}
+      {catPanelOpen && (
+        <div className="fixed inset-0 z-[100] flex justify-end" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setCatPanelOpen(false)} />
+          <div className="relative w-full sm:max-w-sm h-full bg-dark-800 shadow-2xl overflow-y-auto flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 sticky top-0 bg-dark-800 z-10">
+              <div>
+                <h2 className="text-lg font-semibold">Manage Categories</h2>
+                <p className="text-xs text-gray-400 mt-0.5">Rename or remove existing categories, or add new ones.</p>
+              </div>
+              <button onClick={() => setCatPanelOpen(false)} className="text-gray-400 hover:text-white text-xl leading-none ml-4">✕</button>
+            </div>
+
+            <div className="p-6 flex-1 flex flex-col gap-6">
+              {/* Add new category */}
+              <div>
+                <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Add Category</p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newCatName}
+                    onChange={(e) => setNewCatName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') addCustomCategory(); }}
+                    placeholder="e.g. brakes, electrical"
+                    className="flex-1 px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 capitalize"
+                  />
+                  <button
+                    onClick={addCustomCategory}
+                    disabled={!newCatName.trim()}
+                    className="px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:opacity-40 rounded-lg text-sm font-medium transition"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+
+              {/* Category list */}
+              <div>
+                <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">
+                  All Categories <span className="normal-case text-gray-600">({allCategories.length})</span>
+                </p>
+
+                {allCategories.length === 0 ? (
+                  <div className="text-center py-10 text-gray-500 text-sm">
+                    No categories yet. Add one above.
+                  </div>
+                ) : (
+                  <ul className="space-y-2">
+                    {allCategories.map((cat) => {
+                      const partCount = parts.filter((p) => p.category === cat).length;
+                      const isRenaming = renamingCat?.old === cat;
+
+                      return (
+                        <li key={cat} className="bg-dark-900 rounded-lg px-4 py-3">
+                          {isRenaming ? (
+                            <div className="flex gap-2 items-center">
+                              <input
+                                autoFocus
+                                type="text"
+                                value={renamingCat.value}
+                                onChange={(e) => setRenamingCat({ ...renamingCat, value: e.target.value })}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') renameCategory(cat, renamingCat.value);
+                                  if (e.key === 'Escape') setRenamingCat(null);
+                                }}
+                                className="flex-1 px-2 py-1 rounded-md bg-dark-800 border border-primary-500 text-white text-sm focus:outline-none"
+                              />
+                              <button
+                                onClick={() => renameCategory(cat, renamingCat.value)}
+                                disabled={catSaving}
+                                className="text-xs px-3 py-1.5 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 rounded-md transition"
+                              >
+                                {catSaving ? '…' : 'Save'}
+                              </button>
+                              <button
+                                onClick={() => setRenamingCat(null)}
+                                className="text-xs px-2 py-1.5 text-gray-400 hover:text-white transition"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium capitalize truncate">{cat}</p>
+                                <p className="text-xs text-gray-500 mt-0.5">{partCount} {partCount === 1 ? 'part' : 'parts'}</p>
+                              </div>
+                              <div className="flex gap-1 flex-shrink-0">
+                                <button
+                                  onClick={() => setRenamingCat({ old: cat, value: cat })}
+                                  className="text-xs px-2.5 py-1.5 rounded-md bg-primary-500/20 text-primary-400 hover:bg-primary-500/30 transition"
+                                  title="Rename"
+                                >
+                                  ✎
+                                </button>
+                                <button
+                                  onClick={() => deleteCategory(cat)}
+                                  disabled={catSaving}
+                                  className="text-xs px-2.5 py-1.5 rounded-md bg-red-500/20 text-red-400 hover:bg-red-500/30 disabled:opacity-50 transition"
+                                  title="Delete"
+                                >
+                                  🗑
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add/Edit Part slide-over panel ────────────────────────────────── */}
       {panelOpen && (
         <div className="fixed inset-0 z-[100] flex justify-end" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/60" onClick={closePanel} />
@@ -498,10 +690,57 @@ export default function AdminParts() {
                   className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
               </div>
 
+              {/* Category — select from list or type custom */}
               <div>
                 <label className="block text-sm text-gray-300 mb-1">Category</label>
-                <input name="category" value={form.category} onChange={handleChange} placeholder="e.g. exhaust, headlight"
-                  className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                {allCategories.length > 0 && !showCategoryInput ? (
+                  <div className="flex gap-2">
+                    <select
+                      name="category"
+                      value={allCategories.includes(form.category) ? form.category : ''}
+                      onChange={(e) => {
+                        if (e.target.value === '__other__') {
+                          setShowCategoryInput(true);
+                          setForm((f) => ({ ...f, category: '' }));
+                        } else {
+                          setForm((f) => ({ ...f, category: e.target.value }));
+                        }
+                      }}
+                      className="flex-1 px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 capitalize"
+                    >
+                      <option value="">— Select a category —</option>
+                      {allCategories.map((c) => (
+                        <option key={c} value={c} className="capitalize">{c}</option>
+                      ))}
+                      <option value="__other__">Other (type new)…</option>
+                    </select>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <input
+                      name="category"
+                      value={form.category}
+                      onChange={handleChange}
+                      placeholder="e.g. exhaust, headlight"
+                      autoFocus={showCategoryInput}
+                      className="flex-1 px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500"
+                    />
+                    {allCategories.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowCategoryInput(false)}
+                        className="text-xs px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-gray-400 hover:text-white transition"
+                      >
+                        List
+                      </button>
+                    )}
+                  </div>
+                )}
+                <p className="text-xs text-gray-500 mt-1">
+                  {allCategories.length > 0
+                    ? 'Choose an existing category or type a new one.'
+                    : 'No categories yet — type one to create it.'}
+                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
