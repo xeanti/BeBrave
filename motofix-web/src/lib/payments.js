@@ -3,27 +3,38 @@ import { supabase } from './supabaseClient';
 export async function fetchPaymentsFor({ bookingIds = [], orderIds = [] }) {
   if (bookingIds.length === 0 && orderIds.length === 0) return [];
 
-  let query = supabase
-    .from('payments')
-    .select('*, profiles!payments_processed_by_fkey(first_name, last_name)')
-    .order('created_at', { ascending: true });
+  // Fetch separately and merge — avoids the .or() UUID string parsing bug
+  const results = [];
 
-  if (bookingIds.length > 0 && orderIds.length > 0) {
-    query = query.or(
-      `booking_id.in.(${bookingIds.join(',')}),order_id.in.(${orderIds.join(',')})`
-    );
-  } else if (bookingIds.length > 0) {
-    query = query.in('booking_id', bookingIds);
-  } else {
-    query = query.in('order_id', orderIds);
+  if (bookingIds.length > 0) {
+    const { data, error } = await supabase
+      .from('payments')
+      .select('*, profiles!payments_processed_by_fkey(first_name, last_name)')
+      .in('booking_id', bookingIds)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('fetchPaymentsFor (bookings) error:', error);
+    } else if (data) {
+      results.push(...data);
+    }
   }
 
-  const { data, error } = await query;
-  if (error) {
-    console.error('fetchPaymentsFor error:', error);
-    return [];
+  if (orderIds.length > 0) {
+    const { data, error } = await supabase
+      .from('payments')
+      .select('*, profiles!payments_processed_by_fkey(first_name, last_name)')
+      .in('order_id', orderIds)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('fetchPaymentsFor (orders) error:', error);
+    } else if (data) {
+      results.push(...data);
+    }
   }
-  return data || [];
+
+  return results;
 }
 
 export async function recordPayment({ bookingId, orderId, amount, paymentType, method, processedBy, notes }) {

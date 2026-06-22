@@ -340,7 +340,9 @@ function WalkInPOS({ staffId, onReceipt }) {
 function PendingPayments({ staffId, onReceipt }) {
   const [bookings, setBookings] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [paymentsByBooking, setPaymentsByBooking] = useState({});
+  // Separate payment maps for bookings and orders
+  const [bookingPayments, setBookingPayments] = useState({});
+  const [orderPayments, setOrderPayments] = useState({});
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(null);
   const [amount, setAmount] = useState('');
@@ -350,6 +352,10 @@ function PendingPayments({ staffId, onReceipt }) {
 
   async function fetchPending() {
     setLoading(true);
+    // Clear stale payment state immediately
+    setBookingPayments({});
+    setOrderPayments({});
+
     const [b, o] = await Promise.all([
       supabase.from('bookings')
         .select('*, services(name, base_price, labor_cost), profiles!bookings_customer_id_fkey(first_name, last_name)')
@@ -364,25 +370,46 @@ function PendingPayments({ staffId, onReceipt }) {
     ]);
 
     const bookingsData = b.data || [];
+    const ordersData = o.data || [];
 
-    let grouped = {};
+    // Fetch payments for bookings
+    let groupedBookingPayments = {};
     if (bookingsData.length) {
-      const allPayments = await fetchPaymentsFor({ bookingIds: bookingsData.map((bk) => bk.id) });
-      allPayments.forEach((p) => {
-        if (!grouped[p.booking_id]) grouped[p.booking_id] = [];
-        grouped[p.booking_id].push(p);
+      const allBookingPayments = await fetchPaymentsFor({ bookingIds: bookingsData.map((bk) => bk.id) });
+      allBookingPayments.forEach((p) => {
+        if (!groupedBookingPayments[p.booking_id]) groupedBookingPayments[p.booking_id] = [];
+        groupedBookingPayments[p.booking_id].push(p);
       });
     }
-    setPaymentsByBooking(grouped);
 
-    const withBalance = bookingsData.filter((bk) => {
+    // Fetch payments for orders — THIS WAS MISSING before
+    let groupedOrderPayments = {};
+    if (ordersData.length) {
+      const allOrderPayments = await fetchPaymentsFor({ orderIds: ordersData.map((o) => o.id) });
+      allOrderPayments.forEach((p) => {
+        if (!groupedOrderPayments[p.order_id]) groupedOrderPayments[p.order_id] = [];
+        groupedOrderPayments[p.order_id].push(p);
+      });
+    }
+
+    // Filter bookings that still have a balance due
+    const bookingsWithBalance = bookingsData.filter((bk) => {
       const total = (bk.services?.base_price || 0) + (bk.services?.labor_cost || 0) || bk.total_amount || 0;
-      const { totalPaid } = summarizePayments(grouped[bk.id] || []);
+      const { totalPaid } = summarizePayments(groupedBookingPayments[bk.id] || []);
       return total - totalPaid > 0;
     });
 
-    setBookings(withBalance);
-    setOrders(o.data || []);
+    // Filter orders that still have a balance due
+    const ordersWithBalance = ordersData.filter((o) => {
+      const total = o.total_amount || 0;
+      const { totalPaid } = summarizePayments(groupedOrderPayments[o.id] || []);
+      return total - totalPaid > 0;
+    });
+
+    setBookingPayments(groupedBookingPayments);
+    setOrderPayments(groupedOrderPayments);
+    setBookings(bookingsWithBalance);
+    setOrders(ordersWithBalance);
     setLoading(false);
   }
 
@@ -398,23 +425,23 @@ function PendingPayments({ staffId, onReceipt }) {
     const paidAmount = parseFloat(amount);
     if (!paidAmount || paidAmount <= 0) return;
 
-    // Prevent overpayment
     if (paidAmount > due) {
       alert(`Amount cannot exceed the due amount of ₱${due.toFixed(2)}.`);
       return;
     }
 
+    const isFullPayment = paidAmount >= due;
+
     if (type === 'booking') {
       await supabase.from('payments').insert({
         booking_id: record.id,
         amount: paidAmount,
-        payment_type: paidAmount >= due ? 'full' : 'balance',
+        payment_type: isFullPayment ? 'full' : 'balance',
         method,
         processed_by: staffId,
       });
 
-      // Only mark completed if fully paid
-      if (paidAmount >= due) {
+      if (isFullPayment) {
         await supabase.from('bookings')
           .update({ status: 'completed' })
           .eq('id', record.id);
@@ -423,13 +450,12 @@ function PendingPayments({ staffId, onReceipt }) {
       await supabase.from('payments').insert({
         order_id: record.id,
         amount: paidAmount,
-        payment_type: paidAmount >= due ? 'full' : 'balance',
+        payment_type: isFullPayment ? 'full' : 'balance',
         method,
         processed_by: staffId,
       });
 
-      // Only mark completed if fully paid
-      if (paidAmount >= due) {
+      if (isFullPayment) {
         await supabase.from('orders').update({
           payment_received: true,
           payment_method: method,
@@ -461,6 +487,7 @@ function PendingPayments({ staffId, onReceipt }) {
     });
 
     setConfirming(null);
+    // Refetch everything fresh after payment
     fetchPending();
   }
 
@@ -475,13 +502,16 @@ function PendingPayments({ staffId, onReceipt }) {
           <div className="space-y-2">
             {bookings.map((b) => {
               const total = (b.services?.base_price || 0) + (b.services?.labor_cost || 0) || b.total_amount || 0;
-              const { totalPaid } = summarizePayments(paymentsByBooking[b.id] || []);
+              const { totalPaid } = summarizePayments(bookingPayments[b.id] || []);
               const due = Math.max(total - totalPaid, 0);
               return (
                 <div key={b.id} className="flex items-center justify-between bg-gray-50 dark:bg-dark-900 border border-gray-200 dark:border-transparent rounded-lg p-3">
                   <div>
                     <p className="text-sm font-semibold text-gray-900 dark:text-white">{b.profiles?.first_name} {b.profiles?.last_name}</p>
-                    <p className="text-xs text-gray-600 dark:text-gray-400">{b.services?.name} · ₱{due.toFixed(2)} due</p>
+                    <p className="text-xs text-gray-600 dark:text-gray-400">
+                      {b.services?.name} · <span className="font-medium">₱{due.toFixed(2)} due</span>
+                      {totalPaid > 0 && <span className="text-green-600 dark:text-green-400 ml-1">(₱{totalPaid.toFixed(2)} paid)</span>}
+                    </p>
                   </div>
                   <button onClick={() => openConfirm('booking', b, due)}
                     className="text-xs bg-primary-600 hover:bg-primary-700 text-white px-3 py-1.5 rounded-md transition shadow-sm">
@@ -499,18 +529,26 @@ function PendingPayments({ staffId, onReceipt }) {
         <h2 className="font-semibold mb-4 text-gray-900 dark:text-white">Orders Awaiting Payment ({orders.length})</h2>
         {orders.length === 0 ? <p className="text-gray-500 dark:text-gray-400 text-sm">None pending.</p> : (
           <div className="space-y-2">
-            {orders.map((o) => (
-              <div key={o.id} className="flex items-center justify-between bg-gray-50 dark:bg-dark-900 border border-gray-200 dark:border-transparent rounded-lg p-3">
-                <div>
-                  <p className="text-sm font-semibold text-gray-900 dark:text-white">{o.profiles?.first_name} {o.profiles?.last_name}</p>
-                  <p className="text-xs text-gray-600 dark:text-gray-400">₱{Number(o.total_amount).toFixed(2)} due</p>
+            {orders.map((o) => {
+              const total = o.total_amount || 0;
+              const { totalPaid } = summarizePayments(orderPayments[o.id] || []);
+              const due = Math.max(total - totalPaid, 0);
+              return (
+                <div key={o.id} className="flex items-center justify-between bg-gray-50 dark:bg-dark-900 border border-gray-200 dark:border-transparent rounded-lg p-3">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white">{o.profiles?.first_name} {o.profiles?.last_name}</p>
+                    <p className="text-xs text-gray-600 dark:text-gray-400">
+                      <span className="font-medium">₱{due.toFixed(2)} due</span>
+                      {totalPaid > 0 && <span className="text-green-600 dark:text-green-400 ml-1">(₱{totalPaid.toFixed(2)} paid)</span>}
+                    </p>
+                  </div>
+                  <button onClick={() => openConfirm('order', o, due)}
+                    className="text-xs bg-primary-600 hover:bg-primary-700 text-white px-3 py-1.5 rounded-md transition shadow-sm">
+                    Confirm Payment
+                  </button>
                 </div>
-                <button onClick={() => openConfirm('order', o, o.total_amount)}
-                  className="text-xs bg-primary-600 hover:bg-primary-700 text-white px-3 py-1.5 rounded-md transition shadow-sm">
-                  Confirm Payment
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
