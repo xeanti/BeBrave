@@ -18,6 +18,7 @@ import AppointmentsScreen from './screens/customer/AppointmentsScreen';
 import ChatScreen from './screens/customer/ChatScreen';
 import CustomizeScreen from './screens/customer/CustomizeScreen';
 import ProfileScreen from './screens/customer/ProfileScreen';
+import AppointmentDetailScreen from './screens/customer/AppointmentDetailScreen';
 
 // --- MECHANIC MODULE SCREENS ---
 import JobsScreen from './screens/mechanic/JobsScreen';
@@ -142,6 +143,17 @@ export function RootNav() {
             headerTintColor: theme.primaryLight
           }} 
         />
+        <Stack.Screen
+  name="AppointmentDetail"
+  component={AppointmentDetailScreen}
+  options={{
+    headerShown: true,
+    title: 'Appointment Details',
+    headerStyle: { backgroundColor: theme.bg, borderBottomWidth: 1, borderBottomColor: theme.border },
+    headerTitleStyle: { color: theme.text, fontWeight: 'bold' },
+    headerTintColor: theme.primaryLight
+  }}
+/>
 
         <Stack.Screen 
           name="JobDetail" 

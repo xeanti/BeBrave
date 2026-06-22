@@ -12,7 +12,7 @@ function formatTimeSlot(time) {
   return `${displayHour}:${m} ${ampm}`;
 }
 
-export default function BookingsScreen() {
+export default function BookingsScreen({ navigation }) {
   const { theme, isDark } = useTheme();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -94,7 +94,7 @@ export default function BookingsScreen() {
           </View>
         ) : (
           bookings.map((b) => (
-            <View key={b.id} style={s.card}>
+            <TouchableOpacity key={b.id} style={s.card} activeOpacity={0.7} onPress={() => navigation.navigate('AppointmentDetail', { booking: b })}>
 
               {/* Status Badge */}
               <View style={s.cardHeader}>
@@ -130,7 +130,7 @@ export default function BookingsScreen() {
                 </View>
               ) : null}
 
-            </View>
+            </TouchableOpacity>
           ))
         )}
         <View style={{ height: 32 }} />
