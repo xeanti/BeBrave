@@ -14,8 +14,11 @@ export default function Profile() {
     moto_year: '',
     specialization: '',
   });
+
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
+  const [savedPhotoUrl, setSavedPhotoUrl] = useState(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -33,12 +36,13 @@ export default function Profile() {
         moto_year: profile.moto_year || '',
         specialization: profile.specialization || '',
       });
-      
-      // Conditionally set the initial preview depending on user role
+
       if (profile.role === 'mechanic') {
+        setSavedPhotoUrl(profile.mechanic_photo_url || null);
         setPhotoPreview(profile.mechanic_photo_url || null);
         fetchCertificates(profile.id);
       } else {
+        setSavedPhotoUrl(profile.moto_photo_url || null);
         setPhotoPreview(profile.moto_photo_url || null);
       }
     }
@@ -64,6 +68,34 @@ export default function Profile() {
     if (!file) return;
     setPhotoFile(file);
     setPhotoPreview(URL.createObjectURL(file));
+    setMessage('');
+    setError('');
+  }
+
+  async function handlePhotoUpload() {
+    if (!photoFile) return null;
+    setUploadingPhoto(true);
+    try {
+      const fileExt = photoFile.name.split('.').pop();
+      const prefix = profile?.role === 'mechanic' ? 'mechanic' : 'profile';
+      const filePath = `${user.id}/${prefix}_${Date.now()}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('motorcycle-photos')
+        .upload(filePath, photoFile, { upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = supabase.storage
+        .from('motorcycle-photos')
+        .getPublicUrl(filePath);
+
+      return urlData.publicUrl;
+    } catch (err) {
+      throw err;
+    } finally {
+      setUploadingPhoto(false);
+    }
   }
 
   async function handleSubmit(e) {
@@ -73,50 +105,37 @@ export default function Profile() {
     setSaving(true);
 
     try {
-      let moto_photo_url = profile?.moto_photo_url || null;
-      let mechanic_photo_url = profile?.mechanic_photo_url || null;
+      let newPhotoUrl = null;
 
       if (photoFile) {
-        const fileExt = photoFile.name.split('.').pop();
-        // Dynamically name the storage path based on the user's role
-        const prefix = profile?.role === 'mechanic' ? 'mechanic' : 'profile';
-        const filePath = `${user.id}/${prefix}_${Date.now()}.${fileExt}`;
+        newPhotoUrl = await handlePhotoUpload();
+      }
 
-        const { error: uploadError } = await supabase.storage
-          .from('motorcycle-photos')
-          .upload(filePath, photoFile);
+      const updatePayload = {
+        first_name: form.first_name,
+        last_name: form.last_name,
+        phone: form.phone || null,
+      };
 
-        if (uploadError) throw uploadError;
-
-        const { data: urlData } = supabase.storage
-          .from('motorcycle-photos')
-          .getPublicUrl(filePath);
-
-        if (profile?.role === 'mechanic') {
-          mechanic_photo_url = urlData.publicUrl;
-        } else {
-          moto_photo_url = urlData.publicUrl;
-        }
+      if (profile?.role === 'mechanic') {
+        updatePayload.specialization = form.specialization || null;
+        if (newPhotoUrl) updatePayload.mechanic_photo_url = newPhotoUrl;
+      } else {
+        updatePayload.moto_make = form.moto_make || null;
+        updatePayload.moto_model = form.moto_model || null;
+        updatePayload.moto_year = form.moto_year ? parseInt(form.moto_year) : null;
+        if (newPhotoUrl) updatePayload.moto_photo_url = newPhotoUrl;
       }
 
       const { error: updateError } = await supabase
         .from('profiles')
-        .update({
-          first_name: form.first_name,
-          last_name: form.last_name,
-          phone: form.phone,
-          moto_make: profile?.role === 'mechanic' ? null : form.moto_make,
-          moto_model: profile?.role === 'mechanic' ? null : form.moto_model,
-          moto_year: (profile?.role !== 'mechanic' && form.moto_year) ? parseInt(form.moto_year) : null,
-          moto_photo_url: profile?.role === 'mechanic' ? profile?.moto_photo_url : moto_photo_url,
-          specialization: profile?.role === 'mechanic' ? form.specialization : null,
-          mechanic_photo_url: profile?.role === 'mechanic' ? mechanic_photo_url : profile?.mechanic_photo_url,
-          updated_at: new Date().toISOString(),
-        })
+        .update(updatePayload)
         .eq('id', user.id);
 
       if (updateError) throw updateError;
 
+      if (newPhotoUrl) setSavedPhotoUrl(newPhotoUrl);
+      setPhotoFile(null);
       setMessage('Profile updated successfully!');
     } catch (err) {
       setError(err.message || 'Failed to update profile');
@@ -124,6 +143,9 @@ export default function Profile() {
       setSaving(false);
     }
   }
+
+  const displayPhoto = savedPhotoUrl || photoPreview;
+  const isMechanic = profile?.role === 'mechanic';
 
   return (
     <div className="min-h-[calc(100vh-72px)] bg-dark-900 text-white px-6 py-10">
@@ -143,7 +165,82 @@ export default function Profile() {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Account Info */}
+
+          {/* ── Profile Picture Card ── */}
+          <div className="bg-dark-800 rounded-xl p-6">
+            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <span className="text-primary-500">●</span>
+              {isMechanic ? 'Profile Photo' : 'Motorcycle Photo'}
+            </h2>
+
+            <div className="flex items-center gap-6">
+              {/* Avatar / Photo Preview */}
+              <div className="relative flex-shrink-0">
+                {displayPhoto ? (
+                  <img
+                    src={displayPhoto}
+                    alt="Profile"
+                    className={`object-cover border-2 border-primary-500/30 ${
+                      isMechanic
+                        ? 'w-24 h-24 rounded-full'
+                        : 'w-28 h-20 rounded-xl'
+                    }`}
+                  />
+                ) : (
+                  <div className={`bg-dark-900 border-2 border-dashed border-gray-600 flex items-center justify-center ${
+                    isMechanic
+                      ? 'w-24 h-24 rounded-full'
+                      : 'w-28 h-20 rounded-xl'
+                  }`}>
+                    <span className="text-3xl">
+                      {isMechanic ? '👤' : '🏍️'}
+                    </span>
+                  </div>
+                )}
+
+                {/* Camera overlay badge */}
+                <label
+                  htmlFor="photo-upload"
+                  className="absolute -bottom-1 -right-1 w-8 h-8 bg-primary-600 hover:bg-primary-700 rounded-full flex items-center justify-center cursor-pointer transition shadow-lg"
+                  title="Change photo"
+                >
+                  <span className="text-sm">📷</span>
+                </label>
+              </div>
+
+              {/* Upload info */}
+              <div className="flex-1">
+                <p className="text-sm font-medium text-gray-300 mb-1">
+                  {isMechanic ? 'Your profile photo' : 'Your motorcycle photo'}
+                </p>
+                <p className="text-xs text-gray-500 mb-3">
+                  JPG, PNG or WEBP. Max 5MB. Click the camera icon or the button below to change.
+                </p>
+                <label
+                  htmlFor="photo-upload"
+                  className="inline-flex items-center gap-2 cursor-pointer bg-dark-900 hover:bg-dark-700 border border-gray-700 hover:border-primary-500 px-4 py-2 rounded-lg text-sm transition"
+                >
+                  <span>📷</span>
+                  <span>{photoFile ? 'Change Photo' : 'Upload Photo'}</span>
+                </label>
+                {photoFile && (
+                  <p className="text-xs text-green-400 mt-2">
+                    ✓ {photoFile.name} selected — save to apply
+                  </p>
+                )}
+              </div>
+
+              <input
+                id="photo-upload"
+                type="file"
+                accept="image/*"
+                onChange={handlePhotoChange}
+                className="hidden"
+              />
+            </div>
+          </div>
+
+          {/* ── Account Info ── */}
           <div className="bg-dark-800 rounded-xl p-6">
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
               <span className="text-primary-500">●</span> Account Information
@@ -198,14 +295,14 @@ export default function Profile() {
             </div>
           </div>
 
-          {/* Motorcycle Info - Only displays if user is NOT a mechanic */}
-          {profile?.role !== 'mechanic' && (
+          {/* ── Motorcycle Info (customers only) ── */}
+          {!isMechanic && (
             <div className="bg-dark-800 rounded-xl p-6">
               <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                 <span className="text-primary-500">●</span> My Motorcycle
               </h2>
 
-              <div className="grid md:grid-cols-3 gap-4 mb-4">
+              <div className="grid md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm text-gray-300 mb-1">Make</label>
                   <input
@@ -238,39 +335,16 @@ export default function Profile() {
                   />
                 </div>
               </div>
-
-              <div>
-                <label className="block text-sm text-gray-300 mb-2">Motorcycle Photo</label>
-                <div className="flex items-center gap-4">
-                  {photoPreview ? (
-                    <img
-                      src={photoPreview}
-                      alt="Motorcycle"
-                      className="w-24 h-24 object-cover rounded-lg border border-gray-700"
-                    />
-                  ) : (
-                    <div className="w-24 h-24 rounded-lg bg-dark-900 border border-gray-700 flex items-center justify-center text-gray-500 text-xs text-center px-2">
-                      No photo
-                    </div>
-                  )}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handlePhotoChange}
-                    className="text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-primary-600 file:text-white file:cursor-pointer file:hover:bg-primary-700"
-                  />
-                </div>
-              </div>
             </div>
           )}
 
-          {/* Mechanic Info - Only displays if user IS a mechanic */}
-          {profile?.role === 'mechanic' && (
+          {/* ── Mechanic Info ── */}
+          {isMechanic && (
             <div className="bg-dark-800 rounded-xl p-6">
               <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                 <span className="text-primary-500">●</span> Mechanic Profile
               </h2>
-              <div className="mb-4">
+              <div>
                 <label className="block text-sm text-gray-300 mb-1">Specialization</label>
                 <input
                   name="specialization"
@@ -280,29 +354,11 @@ export default function Profile() {
                   className="w-full px-3 py-2 rounded-md bg-dark-900 border border-gray-700 text-white focus:outline-none focus:border-primary-500"
                 />
               </div>
-              <div>
-                <label className="block text-sm text-gray-300 mb-2">Profile Photo</label>
-                <div className="flex items-center gap-4">
-                  {photoPreview ? (
-                    <img src={photoPreview} alt="Profile" className="w-24 h-24 object-cover rounded-full border border-gray-700" />
-                  ) : (
-                    <div className="w-24 h-24 rounded-full bg-dark-900 border border-gray-700 flex items-center justify-center text-gray-500 text-xs">
-                      No photo
-                    </div>
-                  )}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handlePhotoChange}
-                    className="text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-primary-600 file:text-white file:cursor-pointer file:hover:bg-primary-700"
-                  />
-                </div>
-              </div>
             </div>
           )}
 
-          {/* My Certificates - read-only, managed by admin */}
-          {profile?.role === 'mechanic' && (
+          {/* ── Certificates (mechanic read-only) ── */}
+          {isMechanic && (
             <div className="bg-dark-800 rounded-xl p-6">
               <h2 className="text-lg font-semibold mb-1 flex items-center gap-2">
                 <span className="text-primary-500">●</span> My Certificates
@@ -328,14 +384,15 @@ export default function Profile() {
                           </p>
                         </div>
                       </div>
-                      <a
-                        href={c.file_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs text-primary-400 border border-primary-500/30 px-2.5 py-1 rounded-md hover:bg-primary-500/10 transition flex-shrink-0"
-                      >
-                        View
-                      </a>
+                      
+<a
+  href={c.file_url}
+  target="_blank"
+  rel="noreferrer"
+  className="text-xs text-primary-400 border border-primary-500/30 px-2.5 py-1 rounded-md hover:bg-primary-500/10 transition flex-shrink-0"
+>
+  View
+</a>
                     </div>
                   ))}
                 </div>
@@ -343,12 +400,16 @@ export default function Profile() {
             </div>
           )}
 
+          {/* ── Save Button ── */}
           <button
             type="submit"
-            disabled={saving}
-            className="w-full bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white font-semibold py-3 rounded-md transition"
+            disabled={saving || uploadingPhoto}
+            className="w-full bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white font-semibold py-3 rounded-md transition flex items-center justify-center gap-2"
           >
-            {saving ? 'Saving...' : 'Save Changes'}
+            {(saving || uploadingPhoto) && (
+              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            )}
+            {saving || uploadingPhoto ? 'Saving...' : 'Save Changes'}
           </button>
         </form>
       </div>
