@@ -395,10 +395,10 @@ export default function AdminUsers() {
                   <div key={u.id} className="px-5 py-4">
                     <div className="flex items-center justify-between flex-wrap gap-3">
                       <div className="flex items-center gap-3">
-                        {u.mechanic_photo_url ? (
-                          <img src={u.mechanic_photo_url} alt=""
-                            className="w-10 h-10 rounded-full object-cover border border-primary-500/30 flex-shrink-0" />
-                        ) : (
+                    {u.profile_photo_url ? (
+                      <img src={u.profile_photo_url} alt=""
+                        className="w-10 h-10 rounded-full object-cover border border-primary-500/30 flex-shrink-0" />
+                    ) : (
                           <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-sm font-bold flex-shrink-0">
                             {(u.first_name?.[0] || '') + (u.last_name?.[0] || '')}
                           </div>

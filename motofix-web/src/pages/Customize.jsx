@@ -25,6 +25,7 @@ export default function Customize() {
   const [selectedParts, setSelectedParts] = useState([]);
   const [partSearch, setPartSearch] = useState('');
   const [partCategory, setPartCategory] = useState('all');
+  const [partMessage, setPartMessage] = useState('');
 
   // Result
   const [resultImage, setResultImage] = useState(null);
@@ -77,14 +78,39 @@ export default function Customize() {
     setResultImage(null);
   }
 
+  // One part per category — selecting a new part from an already-represented
+  // category swaps out the old one instead of blocking the click.
   function togglePart(partId) {
+    const part = parts.find((p) => p.id === partId);
+    if (!part) return;
+
     setSelectedParts((prev) => {
-      if (prev.includes(partId)) return prev.filter((id) => id !== partId);
-      if (prev.length >= 3) {
+      // Deselecting
+      if (prev.includes(partId)) {
+        return prev.filter((id) => id !== partId);
+      }
+
+      // Find any existing selection in the same category
+      const existingInCategory = prev
+        .map((id) => parts.find((p) => p.id === id))
+        .find((p) => p?.category === part.category);
+
+      const prevWithoutSameCategory = prev.filter((id) => {
+        const p = parts.find((pp) => pp.id === id);
+        return p?.category !== part.category;
+      });
+
+      if (prevWithoutSameCategory.length >= 3) {
         alert('You can only select up to 3 parts for the AI preview.');
         return prev;
       }
-      return [...prev, partId];
+
+      if (existingInCategory) {
+        setPartMessage(`Swapped "${existingInCategory.name}" for "${part.name}" — only 1 part per category.`);
+        setTimeout(() => setPartMessage(''), 2500);
+      }
+
+      return [...prevWithoutSameCategory, partId];
     });
   }
 
@@ -119,6 +145,17 @@ export default function Customize() {
     const matchCategory = partCategory === 'all' || p.category === partCategory;
     return matchSearch && matchCategory;
   });
+
+  // Categories already represented in the current selection
+  const selectedCategories = useMemo(
+    () =>
+      new Set(
+        selectedParts
+          .map((id) => parts.find((p) => p.id === id)?.category)
+          .filter(Boolean)
+      ),
+    [selectedParts, parts]
+  );
 
   const readyForParts =
     (imageSource === 'reference' && selectedModelId) ||
@@ -207,6 +244,12 @@ export default function Customize() {
         {cartMessage && (
           <div className="bg-green-500/10 border border-green-500/30 text-green-400 text-sm rounded-lg p-3 mb-4">
             🛒 {cartMessage}
+          </div>
+        )}
+
+        {partMessage && (
+          <div className="bg-primary-500/10 border border-primary-500/30 text-primary-400 text-sm rounded-lg p-3 mb-4">
+            🔁 {partMessage}
           </div>
         )}
 
@@ -340,11 +383,10 @@ export default function Customize() {
                   </span>
                 </div>
 
-                {!motorcycleLabel && (
-                  <p className="text-xs text-gray-500 mb-3">
-                    Showing all parts — add your make/model above to narrow this down.
-                  </p>
-                )}
+                <p className="text-xs text-gray-500 mb-3">
+                  Only 1 part per category — picking another from the same category swaps your current pick.
+                  {!motorcycleLabel && ' Showing all parts — add your make/model above to narrow this down.'}
+                </p>
 
                 {compatibleParts.length === 0 ? (
                   <p className="text-gray-400 text-sm">
@@ -359,13 +401,16 @@ export default function Customize() {
 
                     <div className="flex gap-2 flex-wrap mb-3">
                       {categories.map((cat) => (
-<button key={cat} type="button" onClick={() => setPartCategory(partCategory === cat ? 'all' : cat)}
-                          className={`px-3 py-1 rounded-full text-xs font-medium capitalize transition ${
+                        <button key={cat} type="button" onClick={() => setPartCategory(partCategory === cat ? 'all' : cat)}
+                          className={`px-3 py-1 rounded-full text-xs font-medium capitalize transition flex items-center gap-1 ${
                             partCategory === cat
                               ? 'bg-primary-600 text-white'
                               : 'bg-dark-900 text-gray-400 hover:text-white'
                           }`}>
                           {cat}
+                          {cat !== 'all' && selectedCategories.has(cat) && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-accent-400" />
+                          )}
                         </button>
                       ))}
                     </div>
@@ -376,7 +421,15 @@ export default function Customize() {
                       ) : (
                         filteredParts.map((part) => {
                           const isSelected = selectedParts.includes(part.id);
-                          const isDisabled = !isSelected && selectedParts.length >= 3;
+                          // Only disabled if we're at the 3-category cap AND this part's
+                          // category isn't already one of the picks (so swaps still work).
+                          const isDisabled =
+                            !isSelected &&
+                            selectedParts.length >= 3 &&
+                            !selectedCategories.has(part.category);
+                          const willSwap =
+                            !isSelected && !isDisabled && selectedCategories.has(part.category);
+
                           return (
                             <div key={part.id}
                               className={`flex items-center justify-between bg-dark-900 rounded-lg p-3 transition ${
@@ -399,7 +452,10 @@ export default function Customize() {
                                 )}
                                 <div>
                                   <p className="text-sm font-medium">{part.name}</p>
-                                  <p className="text-xs text-gray-400 capitalize">{part.category}</p>
+                                  <p className="text-xs text-gray-400 capitalize">
+                                    {part.category}
+                                    {willSwap && <span className="text-accent-400"> · will replace your current pick</span>}
+                                  </p>
                                 </div>
                               </label>
                               <div className="flex flex-col items-end gap-1 ml-2">

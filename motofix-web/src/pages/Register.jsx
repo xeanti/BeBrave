@@ -46,7 +46,7 @@ export default function Register() {
       return;
     }
 
-    loading(true);
+    setLoading(true); // <-- was loading(true), which crashes
     try {
       await signUp({
         email: form.email,

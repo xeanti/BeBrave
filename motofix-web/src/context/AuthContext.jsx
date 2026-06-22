@@ -9,7 +9,6 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get current session on load
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session?.user) {
@@ -19,7 +18,6 @@ export function AuthProvider({ children }) {
       }
     });
 
-    // Listen for auth changes (login, logout, token refresh)
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session?.user) {
@@ -33,46 +31,49 @@ export function AuthProvider({ children }) {
     return () => listener.subscription.unsubscribe();
   }, []);
 
-    async function fetchProfile(userId) {
-      try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', userId)
-          .single();
+  async function fetchProfile(userId) {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
 
-        if (error) {
-          console.error('Error fetching profile:', error.message);
-          // Profile might not exist yet — create it
-          if (error.code === 'PGRST116') {
-            const { data: userData } = await supabase.auth.getUser();
-            if (userData?.user) {
-              await supabase.from('profiles').insert({
-                id: userId,
-                first_name: userData.user.user_metadata?.first_name || '',
-                last_name: userData.user.user_metadata?.last_name || '',
-                email: userData.user.email || '',
-                phone: userData.user.user_metadata?.phone || '',
-                role: 'customer',
-              });
-              // Retry fetch
-              const { data: retryData } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('id', userId)
-                .single();
-              if (retryData) setProfile(retryData);
-            }
+      if (error) {
+        console.error('Error fetching profile:', error.message);
+        if (error.code === 'PGRST116') {
+          const { data: userData } = await supabase.auth.getUser();
+          if (userData?.user) {
+            await supabase.from('profiles').insert({
+              id: userId,
+              first_name: userData.user.user_metadata?.first_name || '',
+              last_name: userData.user.user_metadata?.last_name || '',
+              email: userData.user.email || '',
+              phone: userData.user.user_metadata?.phone || '',
+              role: 'customer',
+            });
+            const { data: retryData } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', userId)
+              .single();
+            if (retryData) setProfile(retryData);
           }
-        } else {
-          setProfile(data);
         }
-      } catch (err) {
-        console.error('fetchProfile error:', err);
-      } finally {
-        setLoading(false);
+      } else {
+        setProfile(data);
       }
+    } catch (err) {
+      console.error('fetchProfile error:', err);
+    } finally {
+      setLoading(false);
     }
+  }
+
+  // Call this after any profile update to sync context with DB
+  async function refreshProfile() {
+    if (session?.user) await fetchProfile(session.user.id);
+  }
 
   async function signUp({ email, password, firstName, lastName, phone }) {
     const { data, error } = await supabase.auth.signUp({
@@ -84,7 +85,6 @@ export function AuthProvider({ children }) {
     });
     if (error) throw error;
 
-    // Create profile row (also do this via DB trigger for safety - see schema.sql)
     if (data.user) {
       await supabase.from('profiles').insert({
         id: data.user.id,
@@ -118,6 +118,7 @@ export function AuthProvider({ children }) {
     signUp,
     signIn,
     signOut,
+    refreshProfile, // <-- newly exposed
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -52,11 +52,8 @@ export default function ProfileScreen({ navigation }) {
       setMotoModel(data.moto_model || '');
       setMotoYear(data.moto_year ? String(data.moto_year) : '');
 
-      const photoUrl = data.role === 'mechanic'
-        ? data.mechanic_photo_url
-        : data.moto_photo_url;
-      setSavedPhotoUrl(photoUrl || null);
-      setPhotoUri(photoUrl || null);
+      setSavedPhotoUrl(data.profile_photo_url || null);
+      setPhotoUri(data.profile_photo_url || null);
 
       if (data.role === 'mechanic') fetchCertificates(user.id);
     }
@@ -84,31 +81,39 @@ export default function ProfileScreen({ navigation }) {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
-      aspect: profile?.role === 'mechanic' ? [1, 1] : [16, 9],
+      aspect: [1, 1],
       quality: 0.8,
-      base64: true,
     });
 
-    if (!result.canceled && result.assets[0]) {
-      setPhotoUri(result.assets[0].uri);
+    if (!result.canceled && result.assets && result.assets[0]) {
+      const selectedAsset = result.assets[0];
+      if (selectedAsset?.uri) {
+        setPhotoUri(selectedAsset.uri);
+      } else {
+        Alert.alert('Error', 'Unable to retrieve image path.');
+      }
     }
   }
 
-  async function uploadPhoto(asset) {
+  async function uploadPhoto(localUri) {
+    if (!localUri) throw new Error('No local image path available');
+
     const { data: { user } } = await supabase.auth.getUser();
-    const ext = asset.uri.split('.').pop() || 'jpg';
+    // Defensive extraction fallback for content:// paths missing explicit extensions
+    const ext = localUri.match(/\.(\w+)$/)?.[1]?.toLowerCase() || 'jpg';
     const prefix = profile?.role === 'mechanic' ? 'mechanic' : 'profile';
     const filePath = `${user.id}/${prefix}_${Date.now()}.${ext}`;
 
     setUploadingPhoto(true);
     try {
-      const response = await fetch(asset.uri);
-      const blob = await response.blob();
+      // Direct stream conversions supporting content:// and file:// natively
+      const response = await fetch(localUri);
+      const arrayBuffer = await response.arrayBuffer();
 
       const { error: uploadError } = await supabase.storage
         .from('motorcycle-photos')
-        .upload(filePath, blob, {
-          contentType: `image/${ext}`,
+        .upload(filePath, arrayBuffer, {
+          contentType: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
           upsert: true,
         });
 
@@ -131,9 +136,8 @@ export default function ProfileScreen({ navigation }) {
     try {
       let newPhotoUrl = null;
 
-      // Upload photo if changed
       if (photoUri && photoUri !== savedPhotoUrl) {
-        newPhotoUrl = await uploadPhoto({ uri: photoUri });
+        newPhotoUrl = await uploadPhoto(photoUri);
       }
 
       const payload = {
@@ -142,14 +146,14 @@ export default function ProfileScreen({ navigation }) {
         phone: phone || null,
       };
 
+      if (newPhotoUrl) payload.profile_photo_url = newPhotoUrl;
+
       if (profile?.role === 'mechanic') {
         payload.specialization = specialization || null;
-        if (newPhotoUrl) payload.mechanic_photo_url = newPhotoUrl;
       } else {
         payload.moto_make = motoMake || null;
         payload.moto_model = motoModel || null;
         payload.moto_year = motoYear ? parseInt(motoYear) : null;
-        if (newPhotoUrl) payload.moto_photo_url = newPhotoUrl;
       }
 
       const { error } = await supabase
@@ -198,12 +202,12 @@ export default function ProfileScreen({ navigation }) {
           {displayPhoto ? (
             <Image
               source={{ uri: displayPhoto }}
-              style={isMechanic ? s.avatarCircle : s.motoPhoto}
+              style={s.avatarCircle}
               resizeMode="cover"
             />
           ) : (
-            <View style={[isMechanic ? s.avatarCircle : s.motoPhoto, s.avatarPlaceholder]}>
-              <Text style={s.avatarInitials}>{isMechanic ? initials : '🏍️'}</Text>
+            <View style={[s.avatarCircle, s.avatarPlaceholder]}>
+              <Text style={s.avatarInitials}>{initials}</Text>
             </View>
           )}
 
@@ -214,9 +218,7 @@ export default function ProfileScreen({ navigation }) {
         </TouchableOpacity>
 
         <View style={s.photoInfo}>
-          <Text style={s.photoTitle}>
-            {isMechanic ? 'Profile Photo' : 'Motorcycle Photo'}
-          </Text>
+          <Text style={s.photoTitle}>Profile Photo</Text>
           <Text style={s.photoSubtitle}>
             Tap the photo to change it
           </Text>
@@ -475,9 +477,9 @@ const styles = (theme) => StyleSheet.create({
     borderColor: theme.primary,
   },
   motoPhoto: {
-    width: 100,
-    height: 70,
-    borderRadius: 12,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     borderWidth: 2,
     borderColor: theme.primary,
   },

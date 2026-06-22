@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 
 export default function Profile() {
-  const { user, profile } = useAuth();
+  const { user, profile, refreshProfile } = useAuth();
 
   const [form, setForm] = useState({
     first_name: '',
@@ -37,13 +37,12 @@ export default function Profile() {
         specialization: profile.specialization || '',
       });
 
+      // Unified profile picture for every role
+      setSavedPhotoUrl(profile.profile_photo_url || null);
+      setPhotoPreview(profile.profile_photo_url || null);
+
       if (profile.role === 'mechanic') {
-        setSavedPhotoUrl(profile.mechanic_photo_url || null);
-        setPhotoPreview(profile.mechanic_photo_url || null);
         fetchCertificates(profile.id);
-      } else {
-        setSavedPhotoUrl(profile.moto_photo_url || null);
-        setPhotoPreview(profile.moto_photo_url || null);
       }
     }
   }, [profile]);
@@ -77,8 +76,7 @@ export default function Profile() {
     setUploadingPhoto(true);
     try {
       const fileExt = photoFile.name.split('.').pop();
-      const prefix = profile?.role === 'mechanic' ? 'mechanic' : 'profile';
-      const filePath = `${user.id}/${prefix}_${Date.now()}.${fileExt}`;
+      const filePath = `${user.id}/profile_${Date.now()}.${fileExt}`;
 
       const { error: uploadError } = await supabase.storage
         .from('motorcycle-photos')
@@ -117,14 +115,14 @@ export default function Profile() {
         phone: form.phone || null,
       };
 
+      if (newPhotoUrl) updatePayload.profile_photo_url = newPhotoUrl;
+
       if (profile?.role === 'mechanic') {
         updatePayload.specialization = form.specialization || null;
-        if (newPhotoUrl) updatePayload.mechanic_photo_url = newPhotoUrl;
       } else {
         updatePayload.moto_make = form.moto_make || null;
         updatePayload.moto_model = form.moto_model || null;
         updatePayload.moto_year = form.moto_year ? parseInt(form.moto_year) : null;
-        if (newPhotoUrl) updatePayload.moto_photo_url = newPhotoUrl;
       }
 
       const { error: updateError } = await supabase
@@ -133,6 +131,9 @@ export default function Profile() {
         .eq('id', user.id);
 
       if (updateError) throw updateError;
+
+      // Sync context so the form doesn't revert on re-render
+      await refreshProfile();
 
       if (newPhotoUrl) setSavedPhotoUrl(newPhotoUrl);
       setPhotoFile(null);
@@ -166,39 +167,26 @@ export default function Profile() {
 
         <form onSubmit={handleSubmit} className="space-y-6">
 
-          {/* ── Profile Picture Card ── */}
+          {/* ── Profile Picture Card (every role can set their own) ── */}
           <div className="bg-dark-800 rounded-xl p-6">
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <span className="text-primary-500">●</span>
-              {isMechanic ? 'Profile Photo' : 'Motorcycle Photo'}
+              <span className="text-primary-500">●</span> Profile Picture
             </h2>
 
             <div className="flex items-center gap-6">
-              {/* Avatar / Photo Preview */}
               <div className="relative flex-shrink-0">
                 {displayPhoto ? (
                   <img
                     src={displayPhoto}
                     alt="Profile"
-                    className={`object-cover border-2 border-primary-500/30 ${
-                      isMechanic
-                        ? 'w-24 h-24 rounded-full'
-                        : 'w-28 h-20 rounded-xl'
-                    }`}
+                    className="w-24 h-24 rounded-full object-cover border-2 border-primary-500/30"
                   />
                 ) : (
-                  <div className={`bg-dark-900 border-2 border-dashed border-gray-600 flex items-center justify-center ${
-                    isMechanic
-                      ? 'w-24 h-24 rounded-full'
-                      : 'w-28 h-20 rounded-xl'
-                  }`}>
-                    <span className="text-3xl">
-                      {isMechanic ? '👤' : '🏍️'}
-                    </span>
+                  <div className="w-24 h-24 rounded-full bg-dark-900 border-2 border-dashed border-gray-600 flex items-center justify-center">
+                    <span className="text-3xl">👤</span>
                   </div>
                 )}
 
-                {/* Camera overlay badge */}
                 <label
                   htmlFor="photo-upload"
                   className="absolute -bottom-1 -right-1 w-8 h-8 bg-primary-600 hover:bg-primary-700 rounded-full flex items-center justify-center cursor-pointer transition shadow-lg"
@@ -208,13 +196,12 @@ export default function Profile() {
                 </label>
               </div>
 
-              {/* Upload info */}
               <div className="flex-1">
                 <p className="text-sm font-medium text-gray-300 mb-1">
-                  {isMechanic ? 'Your profile photo' : 'Your motorcycle photo'}
+                  Your profile photo
                 </p>
                 <p className="text-xs text-gray-500 mb-3">
-                  JPG, PNG or WEBP. Max 5MB. Click the camera icon or the button below to change.
+                  JPG, PNG or WEBP. Max 5MB. This is shown to others (e.g. on bookings). Click the camera icon or the button below to change.
                 </p>
                 <label
                   htmlFor="photo-upload"
@@ -384,15 +371,14 @@ export default function Profile() {
                           </p>
                         </div>
                       </div>
-                      
-<a
-  href={c.file_url}
-  target="_blank"
-  rel="noreferrer"
-  className="text-xs text-primary-400 border border-primary-500/30 px-2.5 py-1 rounded-md hover:bg-primary-500/10 transition flex-shrink-0"
->
-  View
-</a>
+                      <a
+                        href={c.file_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs text-primary-400 border border-primary-500/30 px-2.5 py-1 rounded-md hover:bg-primary-500/10 transition flex-shrink-0"
+                      >
+                        View
+                      </a>
                     </div>
                   ))}
                 </div>
