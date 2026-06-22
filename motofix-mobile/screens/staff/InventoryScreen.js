@@ -58,8 +58,8 @@ export default function InventoryScreen() {
   async function fetchParts() {
     const { data } = await supabase.from('parts').select('*').order('name');
     if (data) setParts(data);
-    setLoading(false);
-    setRefreshing(false);
+    loading && setLoading(false);
+    refreshing && setRefreshing(false);
   }
 
   function onRefresh() {
@@ -72,7 +72,10 @@ export default function InventoryScreen() {
   }
 
   function openAddModal() {
-    return;
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+    setFormError('');
+    setModalOpen(true);
   }
 
   function openEditModal(part) {
@@ -144,9 +147,19 @@ export default function InventoryScreen() {
         details: payload,
       });
     } else {
-      setFormError('Adding parts has been disabled.');
-      setSaving(false);
-      return;
+      const { data, error } = await supabase.from('parts').insert([payload]).select().single();
+      if (error) {
+        setFormError(error.message);
+        setSaving(false);
+        return;
+      }
+      await supabase.from('audit_logs').insert({
+        action: 'ADD_PART',
+        entity: 'parts',
+        entity_id: data.id,
+        performed_by: userId,
+        details: payload,
+      });
     }
 
     setSaving(false);
@@ -270,25 +283,19 @@ export default function InventoryScreen() {
         contentContainerStyle={s.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primaryLight} />}
       >
-        <View style={s.headerRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={s.title}>Inventory</Text>
-            <Text style={s.subtitle}>Manage parts and stock levels.</Text>
-          </View>
+        {/* Header Simplified */}
+        <View style={{ marginBottom: 16 }}>
+          <Text style={s.title}>Inventory</Text>
+          <Text style={s.subtitle}>Manage parts and stock levels.</Text>
         </View>
 
-        {/* Stats */}
-        <View style={s.statsGrid}>
-          <StatCard theme={theme} label="Total Parts" value={stats.total} color={theme.text} />
-          <StatCard theme={theme} label="Low Stock" value={stats.lowStock} color={theme.warning} />
-          <StatCard theme={theme} label="Out of Stock" value={stats.outOfStock} color={theme.danger} />
-          <StatCard
-            theme={theme}
-            label="Inventory Value"
-            value={`₱${stats.totalValue.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`}
-            color={theme.accent}
-          />
-        </View>
+        {/* Stats Section with Horizontal Scroll */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+          <StatCard theme={theme} label="Total Parts" value={stats.total} color={theme.primaryLight} borderColor="#3b82f6" />
+          <StatCard theme={theme} label="Low Stock" value={stats.lowStock} color={theme.warning} borderColor={theme.warning} />
+          <StatCard theme={theme} label="Out of Stock" value={stats.outOfStock} color={theme.danger} borderColor={theme.danger} />
+          <StatCard theme={theme} label="Inventory Value" value={`₱${stats.totalValue.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`} color={theme.accent} borderColor={theme.accent} />
+        </ScrollView>
 
         {/* Search */}
         <View style={s.searchBar}>
@@ -359,10 +366,23 @@ export default function InventoryScreen() {
         {/* Parts list */}
         {filteredParts.length === 0 ? (
           <View style={s.emptyState}>
-            <Text style={{ fontSize: 36, marginBottom: 10 }}>🔍</Text>
-            <Text style={s.emptyText}>
-              {parts.length === 0 ? 'No parts in inventory yet.' : 'No parts match your filters.'}
+            <Text style={{ fontSize: 48, marginBottom: 12 }}>🔧</Text>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: theme.text, marginBottom: 8 }}>
+              {parts.length === 0 ? 'No parts yet' : 'No parts match'}
             </Text>
+            <Text style={{ fontSize: 14, color: theme.textSub, textAlign: 'center', marginBottom: 20 }}>
+              {parts.length === 0
+                ? 'Add your first part using the + button below.'
+                : 'Try adjusting your search or filters.'}
+            </Text>
+            {parts.length > 0 && (
+              <TouchableOpacity
+                style={{ backgroundColor: theme.bg2, borderRadius: 10, paddingHorizontal: 20, paddingVertical: 10, borderWidth: 1, borderColor: theme.border }}
+                onPress={() => { setSearch(''); setCategoryFilter('all'); setStockFilter('all'); }}
+              >
+                <Text style={{ color: theme.primaryLight, fontWeight: '600' }}>Clear Filters</Text>
+              </TouchableOpacity>
+            )}
           </View>
         ) : (
           filteredParts.map((p) => {
@@ -372,7 +392,7 @@ export default function InventoryScreen() {
             const badgeText = isOut ? 'Out of Stock' : isLow ? 'Low Stock' : 'In Stock';
 
             return (
-              <View key={p.id} style={s.card}>
+              <View key={p.id} style={[s.card, { borderLeftColor: isOut ? theme.danger : isLow ? theme.warning : theme.success }]}>
                 <View style={s.cardTop}>
                   <View style={s.cardImage}>
                     {p.image_url ? (
@@ -416,6 +436,15 @@ export default function InventoryScreen() {
                   </View>
                 </View>
 
+                {/* Stock progress bar */}
+                <View style={{ height: 4, backgroundColor: theme.bg3, borderRadius: 4, marginBottom: 10 }}>
+                  <View style={{
+                    height: 4, borderRadius: 4,
+                    width: `${Math.min(100, (p.stock_quantity / Math.max(p.reorder_threshold * 3, 1)) * 100)}%`,
+                    backgroundColor: isOut ? theme.danger : isLow ? theme.warning : theme.success,
+                  }} />
+                </View>
+
                 {/* Stock stepper */}
                 <View style={s.stockRow}>
                   <TouchableOpacity
@@ -452,8 +481,13 @@ export default function InventoryScreen() {
           })
         )}
 
-        <View style={{ height: 32 }} />
+        <View style={{ height: 80 }} />
       </ScrollView>
+
+      {/* Floating Action Button */}
+      <TouchableOpacity style={s.fab} onPress={openAddModal}>
+        <Text style={s.fabText}>+</Text>
+      </TouchableOpacity>
 
       {/* Add/Edit Modal */}
       <Modal visible={modalOpen} animationType="slide" transparent onRequestClose={closeModal}>
@@ -463,7 +497,7 @@ export default function InventoryScreen() {
         >
           <View style={s.modalSheet}>
             <View style={s.modalHeader}>
-              <Text style={s.modalTitle}>Edit Part</Text>
+              <Text style={s.modalTitle}>{editingId ? 'Edit Part' : 'Add New Part'}</Text>
               <TouchableOpacity onPress={closeModal}>
                 <Text style={s.modalClose}>✕</Text>
               </TouchableOpacity>
@@ -568,10 +602,15 @@ export default function InventoryScreen() {
   );
 }
 
-function StatCard({ theme, label, value, color }) {
+function StatCard({ theme, label, value, color, borderColor }) {
   return (
-    <View style={{ width: '48%', backgroundColor: theme.card, borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: theme.border }}>
-      <Text style={{ fontSize: 18, fontWeight: 'bold', color }}>{value}</Text>
+    <View style={{
+      backgroundColor: theme.card, borderRadius: 14, padding: 16,
+      marginRight: 10, minWidth: 130,
+      borderWidth: 1, borderColor: theme.border,
+      borderLeftWidth: 4, borderLeftColor: borderColor,
+    }}>
+      <Text style={{ fontSize: 20, fontWeight: 'bold', color }}>{value}</Text>
       <Text style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>{label}</Text>
     </View>
   );
@@ -583,13 +622,8 @@ const styles = (theme) =>
     centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.bg },
     content: { padding: 16, paddingBottom: 24 },
 
-    headerRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16 },
     title: { fontSize: 24, fontWeight: 'bold', color: theme.text },
     subtitle: { fontSize: 13, color: theme.textSub, marginTop: 2 },
-    addBtn: { backgroundColor: theme.primary, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
-    addBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
-
-    statsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
 
     searchBar: {
       flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bg2,
@@ -609,12 +643,18 @@ const styles = (theme) =>
     resultsCount: { fontSize: 12, color: theme.textMuted, marginBottom: 12 },
 
     emptyState: { alignItems: 'center', padding: 40 },
-    emptyText: { color: theme.textSub, fontSize: 14, textAlign: 'center', marginBottom: 8 },
-    emptyLink: { color: theme.primaryLight, fontSize: 13, fontWeight: '600' },
 
-    card: { backgroundColor: theme.card, borderRadius: 14, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: theme.border },
+    card: { 
+      backgroundColor: theme.card, 
+      borderRadius: 14, 
+      padding: 14, 
+      marginBottom: 12, 
+      borderWidth: 1, 
+      borderColor: theme.border,
+      borderLeftWidth: 3 
+    },
     cardTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-    cardImage: { width: 44, height: 44, borderRadius: 10, backgroundColor: theme.bg2, justifyContent: 'center', alignItems: 'center', marginRight: 10, overflow: 'hidden' },
+    cardImage: { width: 56, height: 56, borderRadius: 12, backgroundColor: theme.bg2, justifyContent: 'center', alignItems: 'center', marginRight: 10, overflow: 'hidden' },
     cardImageInner: { width: '100%', height: '100%' },
     cardName: { fontSize: 14, fontWeight: 'bold', color: theme.text },
     cardCategory: { fontSize: 11, color: theme.textMuted, marginTop: 1, textTransform: 'capitalize' },
@@ -641,6 +681,16 @@ const styles = (theme) =>
     editBtn: { backgroundColor: theme.primary + '18' },
     deleteBtn: { backgroundColor: '#ef444418' },
     actionBtnText: { fontSize: 12, fontWeight: '600' },
+
+    fab: {  
+      position: 'absolute', bottom: 24, right: 20,  
+      width: 58, height: 58, borderRadius: 29,  
+      backgroundColor: theme.primary,  
+      justifyContent: 'center', alignItems: 'center',  
+      shadowColor: '#000', shadowOffset: { width: 0, height: 4 },  
+      shadowOpacity: 0.3, shadowRadius: 6, elevation: 8,
+    },
+    fabText: { color: '#fff', fontSize: 30, fontWeight: 'bold', lineHeight: 34 },
 
     modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
     modalSheet: { backgroundColor: theme.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '88%' },

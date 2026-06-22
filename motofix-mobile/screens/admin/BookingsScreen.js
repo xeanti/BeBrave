@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, StatusBar, RefreshControl, TextInput,
-  Modal, FlatList
+  Modal, Image, FlatList
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
@@ -16,6 +16,15 @@ const STATUS_COLORS = {
 };
 
 const ALL_STATUSES = ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'];
+const FILTER_KEYS = ['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled'];
+
+function formatStatus(status) {
+  if (!status) return '—';
+  return status
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
 
 export default function AdminBookingsScreen() {
   const { theme, isDark } = useTheme();
@@ -26,9 +35,8 @@ export default function AdminBookingsScreen() {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
 
-  // Modal state
-  const [statusModal, setStatusModal] = useState(null); // bookingId
-  const [mechanicModal, setMechanicModal] = useState(null); // bookingId
+  const [statusModal, setStatusModal] = useState(null);
+  const [mechanicModal, setMechanicModal] = useState(null);
 
   useEffect(() => { fetchAll(); }, []);
 
@@ -36,11 +44,11 @@ export default function AdminBookingsScreen() {
     const [b, m] = await Promise.all([
       supabase
         .from('bookings')
-        .select('*, services(name, base_price, labor_cost), profiles!bookings_customer_id_fkey(first_name, last_name, email), mechanic:profiles!bookings_mechanic_id_fkey(first_name, last_name)')
+        .select('*, services(name, base_price, labor_cost), profiles!bookings_customer_id_fkey(first_name, last_name, email), mechanic:profiles!bookings_mechanic_id_fkey(first_name, last_name, profile_photo_url)')
         .order('booking_date', { ascending: false }),
       supabase
         .from('profiles')
-        .select('id, first_name, last_name')
+        .select('id, first_name, last_name, profile_photo_url')
         .eq('role', 'mechanic'),
     ]);
     setBookings(b.data || []);
@@ -86,26 +94,100 @@ export default function AdminBookingsScreen() {
     </View>
   );
 
+  const renderCard = ({ item: b }) => {
+    const total = (b.services?.base_price || 0) + (b.services?.labor_cost || 0);
+    return (
+      <View style={s.card}>
+        <View style={s.cardHeader}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.customerName}>
+              {b.profiles?.first_name} {b.profiles?.last_name}
+            </Text>
+            <Text style={s.customerEmail}>{b.profiles?.email}</Text>
+          </View>
+          <View style={[s.badge, { backgroundColor: STATUS_COLORS[b.status] + '22' }]}>
+            <Text style={[s.badgeText, { color: STATUS_COLORS[b.status] }]}>
+              {formatStatus(b.status)}
+            </Text>
+          </View>
+        </View>
+
+        <View style={s.divider} />
+
+        <InfoRow label="🔧 Service" value={b.services?.name || '—'} theme={theme} />
+        <InfoRow label="📅 Date" value={b.booking_date || '—'} theme={theme} />
+        <InfoRow label="🕐 Time" value={b.booking_time?.slice(0, 5) || '—'} theme={theme} />
+        <InfoRow label="💰 Total" value={`₱${total.toFixed(2)}`} theme={theme} highlight />
+
+        {b.notes ? (
+          <View style={s.notesBox}>
+            <Text style={s.notesText}>"{b.notes}"</Text>
+          </View>
+        ) : null}
+
+        <View style={s.divider} />
+
+        <View style={s.actionBlock}>
+          <Text style={s.actionLabel}>👨‍🔧 Mechanic</Text>
+          <TouchableOpacity style={s.pickerBtn} onPress={() => setMechanicModal(b.id)}>
+            {b.mechanic?.profile_photo_url ? (
+              <Image source={{ uri: b.mechanic.profile_photo_url }} style={s.mechanicAvatar} />
+            ) : b.mechanic ? (
+              <View style={s.mechanicAvatarFallback}>
+                <Text style={s.mechanicAvatarInitials}>
+                  {(b.mechanic.first_name?.[0] || '') + (b.mechanic.last_name?.[0] || '')}
+                </Text>
+              </View>
+            ) : null}
+            <Text style={s.pickerBtnText} numberOfLines={1}>
+              {b.mechanic ? `${b.mechanic.first_name} ${b.mechanic.last_name}` : 'Unassigned'}
+            </Text>
+            <Text style={s.chevron}>▾</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={s.actionBlock}>
+          <Text style={s.actionLabel}>⚡ Status</Text>
+          <TouchableOpacity style={s.pickerBtn} onPress={() => setStatusModal(b.id)}>
+            <View style={[s.statusDot, { backgroundColor: STATUS_COLORS[b.status] }]} />
+            <Text style={[s.pickerBtnText, { color: STATUS_COLORS[b.status] }]}>
+              {formatStatus(b.status)}
+            </Text>
+            <Text style={s.chevron}>▾</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={s.bookingId}>#{b.id?.slice(0, 8).toUpperCase()}</Text>
+      </View>
+    );
+  };
+
   return (
     <View style={s.container}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={theme.bg} />
 
-      {/* Filter Pills */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filterBar} contentContainerStyle={s.filterContent}>
-        {['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled'].map(f => (
-          <TouchableOpacity
-            key={f}
-            style={[s.filterChip, filter === f && s.filterChipActive]}
-            onPress={() => setFilter(f)}
-          >
-            <Text style={[s.filterText, filter === f && s.filterTextActive]}>
-              {f.replace('_', ' ')} ({counts[f]})
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      {/* Filter Pills — wrapped in fixed-height View so it never expands */}
+      <View style={s.filterBarWrap}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={s.filterContent}
+        >
+          {FILTER_KEYS.map(f => (
+            <TouchableOpacity
+              key={f}
+              style={[s.filterChip, filter === f && s.filterChipActive]}
+              onPress={() => setFilter(f)}
+            >
+              <Text style={[s.filterText, filter === f && s.filterTextActive]}>
+                {f === 'all' ? 'All' : formatStatus(f)} ({counts[f]})
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
 
-      {/* Search */}
+      {/* Search — fixed height, sits right below filter bar */}
       <View style={s.searchWrap}>
         <TextInput
           style={s.searchInput}
@@ -121,90 +203,30 @@ export default function AdminBookingsScreen() {
         )}
       </View>
 
-      {/* Bookings List */}
-      <ScrollView
+      {/* Bookings List — FlatList takes all remaining space */}
+      <FlatList
+        data={filtered}
+        keyExtractor={item => item.id}
+        renderItem={renderCard}
+        style={s.list}
+        contentContainerStyle={filtered.length === 0 ? s.listEmptyContent : s.listContent}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchAll(); }} tintColor={theme.primaryLight} />}
-      >
-        {filtered.length === 0 ? (
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => { setRefreshing(true); fetchAll(); }}
+            tintColor={theme.primaryLight}
+          />
+        }
+        ListEmptyComponent={
           <View style={s.emptyCard}>
             <Text style={s.emptyIcon}>📅</Text>
             <Text style={s.emptyTitle}>No bookings found</Text>
           </View>
-        ) : (
-          filtered.map(b => {
-            const total = (b.services?.base_price || 0) + (b.services?.labor_cost || 0);
-            return (
-              <View key={b.id} style={s.card}>
-
-                {/* Card Header */}
-                <View style={s.cardHeader}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.customerName}>
-                      {b.profiles?.first_name} {b.profiles?.last_name}
-                    </Text>
-                    <Text style={s.customerEmail}>{b.profiles?.email}</Text>
-                  </View>
-                  <View style={[s.badge, { backgroundColor: STATUS_COLORS[b.status] + '22' }]}>
-                    <Text style={[s.badgeText, { color: STATUS_COLORS[b.status] }]}>
-                      {b.status?.replace('_', ' ')}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={s.divider} />
-
-                {/* Details */}
-                <InfoRow label="🔧 Service" value={b.services?.name || '—'} theme={theme} />
-                <InfoRow label="📅 Date" value={b.booking_date || '—'} theme={theme} />
-                <InfoRow label="🕐 Time" value={b.booking_time?.slice(0, 5) || '—'} theme={theme} />
-                <InfoRow label="💰 Total" value={`₱${total.toFixed(2)}`} theme={theme} highlight />
-
-                {b.notes ? (
-                  <View style={s.notesBox}>
-                    <Text style={s.notesText}>"{b.notes}"</Text>
-                  </View>
-                ) : null}
-
-                <View style={s.divider} />
-
-                {/* Mechanic Picker */}
-                <View style={s.actionRow}>
-                  <Text style={s.actionLabel}>👨‍🔧 Mechanic</Text>
-                  <TouchableOpacity
-                    style={s.pickerBtn}
-                    onPress={() => setMechanicModal(b.id)}
-                  >
-                    <Text style={s.pickerBtnText}>
-                      {b.mechanic
-                        ? `${b.mechanic.first_name} ${b.mechanic.last_name}`
-                        : 'Unassigned'}
-                    </Text>
-                    <Text style={{ color: theme.textMuted, fontSize: 12 }}> ▾</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Status Picker */}
-                <View style={s.actionRow}>
-                  <Text style={s.actionLabel}>⚡ Status</Text>
-                  <TouchableOpacity
-                    style={s.pickerBtn}
-                    onPress={() => setStatusModal(b.id)}
-                  >
-                    <Text style={[s.pickerBtnText, { color: STATUS_COLORS[b.status] }]}>
-                      {b.status?.replace('_', ' ')}
-                    </Text>
-                    <Text style={{ color: theme.textMuted, fontSize: 12 }}> ▾</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={s.bookingId}>#{b.id?.slice(0, 8).toUpperCase()}</Text>
-              </View>
-            );
-          })
-        )}
-        <View style={{ height: 40 }} />
-      </ScrollView>
+        }
+        ListFooterComponent={<View style={{ height: 40 }} />}
+      />
 
       {/* Status Picker Modal */}
       <Modal visible={!!statusModal} transparent animationType="slide" onRequestClose={() => setStatusModal(null)}>
@@ -219,7 +241,7 @@ export default function AdminBookingsScreen() {
               >
                 <View style={[s.modalDot, { backgroundColor: STATUS_COLORS[st] }]} />
                 <Text style={[s.modalOptionText, { color: STATUS_COLORS[st] }]}>
-                  {st.replace('_', ' ')}
+                  {formatStatus(st)}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -235,37 +257,48 @@ export default function AdminBookingsScreen() {
         <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setMechanicModal(null)}>
           <View style={s.modalSheet}>
             <Text style={s.modalTitle}>Assign Mechanic</Text>
-            <TouchableOpacity
-              style={s.modalOption}
-              onPress={() => assignMechanic(mechanicModal, null)}
-            >
+
+            <TouchableOpacity style={s.modalOption} onPress={() => assignMechanic(mechanicModal, null)}>
+              <View style={s.mechanicAvatarFallback}>
+                <Text style={s.mechanicAvatarInitials}>—</Text>
+              </View>
               <Text style={[s.modalOptionText, { color: theme.textSub }]}>Unassigned</Text>
             </TouchableOpacity>
+
             {mechanics.map(m => (
               <TouchableOpacity
                 key={m.id}
                 style={s.modalOption}
                 onPress={() => assignMechanic(mechanicModal, m.id)}
               >
+                {m.profile_photo_url ? (
+                  <Image source={{ uri: m.profile_photo_url }} style={s.mechanicAvatar} />
+                ) : (
+                  <View style={s.mechanicAvatarFallback}>
+                    <Text style={s.mechanicAvatarInitials}>
+                      {(m.first_name?.[0] || '') + (m.last_name?.[0] || '')}
+                    </Text>
+                  </View>
+                )}
                 <Text style={[s.modalOptionText, { color: theme.text }]}>
                   {m.first_name} {m.last_name}
                 </Text>
               </TouchableOpacity>
             ))}
+
             <TouchableOpacity style={s.modalCancel} onPress={() => setMechanicModal(null)}>
               <Text style={{ color: theme.textSub, fontWeight: '600' }}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </Modal>
-
     </View>
   );
 }
 
 function InfoRow({ label, value, theme, highlight }) {
   return (
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
       <Text style={{ fontSize: 13, color: theme.textMuted }}>{label}</Text>
       <Text style={{ fontSize: 13, color: highlight ? theme.accent : theme.text, fontWeight: highlight ? 'bold' : '500' }}>
         {value}
@@ -277,37 +310,101 @@ function InfoRow({ label, value, theme, highlight }) {
 const styles = (theme) => StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.bg },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.bg },
-  filterBar: { maxHeight: 52, borderBottomWidth: 1, borderBottomColor: theme.border },
-  filterContent: { paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
-  filterChip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border },
+
+  // Filter bar — plain View with explicit height so it NEVER grows
+  filterBarWrap: {
+    height: 46,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
+  },
+  filterContent: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    gap: 6,
+    alignItems: 'center',
+  },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: theme.bg2,
+    borderWidth: 1,
+    borderColor: theme.border,
+  },
   filterChipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
-  filterText: { fontSize: 12, color: theme.textSub, fontWeight: '500' },
+  filterText: { fontSize: 13, color: theme.textSub, fontWeight: '500' },
   filterTextActive: { color: '#fff', fontWeight: 'bold' },
-  searchWrap: { flexDirection: 'row', alignItems: 'center', margin: 12, backgroundColor: theme.bg2, borderRadius: 10, borderWidth: 1, borderColor: theme.border, paddingHorizontal: 12 },
-  searchInput: { flex: 1, paddingVertical: 10, fontSize: 14, color: theme.text },
+
+  // Search — explicit height, no flex, sits right below filter bar
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 44,
+    marginHorizontal: 12,
+    marginTop: 10,
+    marginBottom: 6,
+    backgroundColor: theme.bg2,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: theme.border,
+    paddingHorizontal: 12,
+  },
+  searchInput: { flex: 1, fontSize: 14, color: theme.text },
   searchClear: { padding: 4 },
-  card: { backgroundColor: theme.card, marginHorizontal: 12, marginBottom: 12, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: theme.border },
-  cardHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 },
+
+  // FlatList takes all remaining space
+  list: { flex: 1 },
+  listContent: { paddingTop: 6 },
+  listEmptyContent: { flex: 1 },
+
+  card: {
+    backgroundColor: theme.card,
+    marginHorizontal: 12,
+    marginBottom: 10,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: theme.border,
+  },
+  cardHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 },
   customerName: { fontSize: 15, fontWeight: 'bold', color: theme.text },
   customerEmail: { fontSize: 12, color: theme.textSub, marginTop: 2 },
   badge: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
-  badgeText: { fontSize: 11, fontWeight: 'bold', textTransform: 'capitalize' },
-  divider: { height: 1, backgroundColor: theme.border, marginVertical: 10 },
+  badgeText: { fontSize: 11, fontWeight: 'bold' },
+  divider: { height: 1, backgroundColor: theme.border, marginVertical: 8 },
   notesBox: { backgroundColor: theme.bg2, borderRadius: 8, padding: 10, marginVertical: 6 },
   notesText: { fontSize: 12, color: theme.textSub, fontStyle: 'italic' },
-  actionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 },
-  actionLabel: { fontSize: 13, color: theme.textMuted },
-  pickerBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bg2, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: theme.border },
-  pickerBtnText: { fontSize: 13, color: theme.text, fontWeight: '500' },
-  bookingId: { fontSize: 10, color: theme.textMuted, textAlign: 'right', marginTop: 10 },
-  emptyCard: { alignItems: 'center', padding: 48 },
+
+  actionBlock: { marginTop: 6, gap: 4 },
+  actionLabel: { fontSize: 12, color: theme.textMuted, fontWeight: '500' },
+  pickerBtn: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bg2,
+    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9,
+    borderWidth: 1, borderColor: theme.border, gap: 8,
+  },
+  pickerBtnText: { flex: 1, fontSize: 13, color: theme.text, fontWeight: '600' },
+  chevron: { fontSize: 12, color: theme.textMuted },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  bookingId: { fontSize: 10, color: theme.textMuted, textAlign: 'right', marginTop: 8 },
+
+  emptyCard: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 48 },
   emptyIcon: { fontSize: 40, marginBottom: 12 },
   emptyTitle: { fontSize: 16, fontWeight: 'bold', color: theme.text },
+
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalSheet: { backgroundColor: theme.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
   modalTitle: { fontSize: 16, fontWeight: 'bold', color: theme.text, marginBottom: 16, textAlign: 'center' },
-  modalOption: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 10, borderWidth: 1, borderColor: theme.border, marginBottom: 8 },
-  modalDot: { width: 10, height: 10, borderRadius: 5, marginRight: 10 },
-  modalOptionText: { fontSize: 14, fontWeight: '600', textTransform: 'capitalize' },
+  modalOption: {
+    flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 10,
+    borderWidth: 1, borderColor: theme.border, marginBottom: 8, gap: 10,
+  },
+  modalDot: { width: 10, height: 10, borderRadius: 5 },
+  modalOptionText: { fontSize: 14, fontWeight: '600' },
   modalCancel: { marginTop: 4, padding: 14, alignItems: 'center', borderRadius: 10, backgroundColor: theme.bg2 },
+  mechanicAvatar: { width: 28, height: 28, borderRadius: 14, borderWidth: 1, borderColor: theme.border },
+  mechanicAvatarFallback: {
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: theme.primary + '44', alignItems: 'center', justifyContent: 'center',
+  },
+  mechanicAvatarInitials: { fontSize: 10, fontWeight: 'bold', color: theme.primaryLight },
 });

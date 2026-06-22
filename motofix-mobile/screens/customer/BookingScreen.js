@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, ActivityIndicator, StatusBar, Alert, Platform, Image
+  TextInput, ActivityIndicator, StatusBar, Alert, Platform, Image,
+  Modal, Linking
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
 
-// Align slot coverage with web implementation (8am–5pm, 18 half-hour slots)
 const SHOP_OPEN = 8;
 const SHOP_CLOSE = 17;
 
@@ -35,6 +35,11 @@ export default function BookingScreen({ route, navigation }) {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // Certificates State
+  const [certModal, setCertModal] = useState(null);
+  const [mechanicCerts, setMechanicCerts] = useState([]);
+  const [loadingCerts, setLoadingCerts] = useState(false);
+
   // Data
   const [services, setServices] = useState([]);
   const [motorcycleModels, setMotorcycleModels] = useState([]);
@@ -50,16 +55,15 @@ export default function BookingScreen({ route, navigation }) {
   const [bookingTime, setBookingTime] = useState('');
   const [notes, setNotes] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [selectedMechanic, setSelectedMechanic] = useState(null); // null = no preference
+  const [selectedMechanic, setSelectedMechanic] = useState(null);
 
   const [bookedMechanicIds, setBookedMechanicIds] = useState([]);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
 
-  // Pre-select service from route params if available
   useEffect(() => {
     if (route?.params?.preselectedService) {
       setSelectedService(route.params.preselectedService);
-      setStep(2); // skip step 1 and jump to motorcycle details
+      setStep(2);
     }
   }, [route?.params?.preselectedService]);
 
@@ -70,6 +74,18 @@ export default function BookingScreen({ route, navigation }) {
       fetchMechanicAvailability();
     }
   }, [step]);
+
+  async function viewCertificates(mechanic) {
+    setCertModal(mechanic);
+    setLoadingCerts(true);
+    const { data } = await supabase
+      .from('mechanic_certificates')
+      .select('*')
+      .eq('mechanic_id', mechanic.id)
+      .order('created_at', { ascending: false });
+    setMechanicCerts(data || []);
+    setLoadingCerts(false);
+  }
 
   async function fetchMechanicAvailability() {
     setCheckingAvailability(true);
@@ -101,17 +117,17 @@ export default function BookingScreen({ route, navigation }) {
   async function fetchData() {
     setLoading(true);
     try {
-      const { data: s, error: serviceError } = await supabase
+      const { data: s } = await supabase
         .from('services')
         .select('*')
         .eq('is_active', true);
 
-      const { data: m, error: modelError } = await supabase
+      const { data: m } = await supabase
         .from('motorcycle_models')
         .select('*')
         .order('make');
 
-      const { data: mech, error: mechError } = await supabase
+      const { data: mech } = await supabase
         .from('profiles')
         .select('*')
         .eq('role', 'mechanic');
@@ -120,7 +136,7 @@ export default function BookingScreen({ route, navigation }) {
       setMotorcycleModels(m || []);
       setMechanics(mech || []);
     } catch (err) {
-      console.log("FETCH ERROR:", err);
+      console.log('FETCH ERROR:', err);
     } finally {
       setLoading(false);
     }
@@ -224,7 +240,7 @@ export default function BookingScreen({ route, navigation }) {
       .insert({
         customer_id: user.id,
         service_id: selectedService.id,
-        mechanic_id: selectedMechanic?.id || null, 
+        mechanic_id: selectedMechanic?.id || null,
         booking_date: bookingDateStr,
         booking_time: bookingTime,
         status: 'pending',
@@ -440,51 +456,68 @@ export default function BookingScreen({ route, navigation }) {
             {checkingAvailability && (
               <Text style={s.checkingText}>Checking mechanic availability for this slot...</Text>
             )}
+
             {mechanics.length === 0 ? (
               <View style={s.emptyMechanics}>
                 <Text style={s.emptyMechanicsText}>No mechanics listed yet.</Text>
               </View>
             ) : (
-              mechanics.map((mech) => {
-                const isBooked = bookedMechanicIds.includes(mech.id);
-                return (
-                  <TouchableOpacity
-                    key={mech.id}
-                    style={[
-                      s.mechanicCard,
-                      selectedMechanic?.id === mech.id && s.mechanicCardActive,
-                      isBooked && s.mechanicCardDisabled,
-                    ]}
-                    onPress={() => !isBooked && setSelectedMechanic(mech)}
-                    disabled={isBooked}
-                  >
-                    {mech.mechanic_photo_url ? (
-                      <Image source={{ uri: mech.mechanic_photo_url }} style={s.mechanicAvatar} />
-                    ) : (
-                      <View style={s.mechanicAvatarPlaceholder}>
-                        <Text style={s.mechanicAvatarInitials}>
-                          {mech.first_name?.[0]}{mech.last_name?.[0]}
-                        </Text>
-                      </View>
-                    )}
-                    <View style={s.mechanicInfo}>
-                      <Text style={[s.mechanicName, isBooked && { opacity: 0.5 }]}>
-                        {mech.first_name} {mech.last_name}
-                      </Text>
-                      {mech.specialization ? (
-                        <Text style={s.mechanicSpec}>{mech.specialization}</Text>
-                      ) : null}
-                      {mech.rating_avg != null ? (
-                        <Text style={s.mechanicRating}>⭐ {Number(mech.rating_avg).toFixed(1)}</Text>
-                      ) : null}
-                      {isBooked && (
-                        <Text style={s.mechanicBookedText}>🚫 Already booked at this time</Text>
+              <View>
+                {mechanics.map((mech) => {
+                  const isBooked = bookedMechanicIds.includes(mech.id);
+                  return (
+                    <TouchableOpacity
+                      key={mech.id}
+                      style={[
+                        s.mechanicCard,
+                        selectedMechanic?.id === mech.id && s.mechanicCardActive,
+                        isBooked && s.mechanicCardDisabled,
+                      ]}
+                      onPress={() => !isBooked && setSelectedMechanic(mech)}
+                      disabled={isBooked}
+                    >
+                      {/* ✅ Fixed: was mech.mechanic_photo_url, now mech.profile_photo_url */}
+                      {mech.profile_photo_url ? (
+                        <Image source={{ uri: mech.profile_photo_url }} style={s.mechanicAvatar} />
+                      ) : (
+                        <View style={s.mechanicAvatarPlaceholder}>
+                          <Text style={s.mechanicAvatarInitials}>
+                            {mech.first_name?.[0]}{mech.last_name?.[0]}
+                          </Text>
+                        </View>
                       )}
-                    </View>
-                    {selectedMechanic?.id === mech.id && !isBooked && <Text style={s.checkmark}>✓</Text>}
-                  </TouchableOpacity>
-                );
-              })
+                      <View style={s.mechanicInfo}>
+                        <Text style={[s.mechanicName, isBooked && { opacity: 0.5 }]}>
+                          {mech.first_name} {mech.last_name}
+                        </Text>
+                        {mech.specialization ? (
+                          <Text style={s.mechanicSpec}>{mech.specialization}</Text>
+                        ) : null}
+                        {mech.rating_avg != null ? (
+                          <Text style={s.mechanicRating}>⭐ {Number(mech.rating_avg).toFixed(1)}</Text>
+                        ) : null}
+                        {isBooked && (
+                          <Text style={s.mechanicBookedText}>🚫 Already booked at this time</Text>
+                        )}
+                        {!isBooked && (
+                          <TouchableOpacity
+                            style={s.certBtn}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              viewCertificates(mech);
+                            }}
+                          >
+                            <Text style={[s.certBtnText, { color: theme.primaryLight }]}>
+                              🎓 View Certificates
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                      {selectedMechanic?.id === mech.id && !isBooked && <Text style={s.checkmark}>✓</Text>}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             )}
 
             <View style={s.optionalNote}>
@@ -544,6 +577,101 @@ export default function BookingScreen({ route, navigation }) {
         )}
 
       </ScrollView>
+
+      {/* Certificates Modal */}
+      <Modal
+        visible={!!certModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => { setCertModal(null); setMechanicCerts([]); }}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}
+          activeOpacity={1}
+          onPress={() => { setCertModal(null); setMechanicCerts([]); }}
+        >
+          <View
+            style={{
+              backgroundColor: theme.bg,
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              padding: 20,
+              maxHeight: '70%',
+            }}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <View>
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: theme.text }}>
+                  🎓 Certificates
+                </Text>
+                <Text style={{ fontSize: 12, color: theme.textSub, marginTop: 2 }}>
+                  {certModal?.first_name} {certModal?.last_name}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => { setCertModal(null); setMechanicCerts([]); }}>
+                <Text style={{ fontSize: 20, color: theme.textMuted }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {loadingCerts ? (
+              <ActivityIndicator size="large" color={theme.primaryLight} style={{ marginVertical: 32 }} />
+            ) : mechanicCerts.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+                <Text style={{ fontSize: 36, marginBottom: 12 }}>📄</Text>
+                <Text style={{ fontSize: 15, fontWeight: 'bold', color: theme.text, marginBottom: 6 }}>
+                  No Certificates
+                </Text>
+                <Text style={{ fontSize: 13, color: theme.textSub, textAlign: 'center' }}>
+                  This mechanic has no certificates on file yet.
+                </Text>
+              </View>
+            ) : (
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {mechanicCerts.map((c) => (
+                  <TouchableOpacity
+                    key={c.id}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: theme.card,
+                      borderRadius: 12,
+                      padding: 14,
+                      marginBottom: 10,
+                      borderWidth: 1,
+                      borderColor: theme.border,
+                    }}
+                    onPress={() => Linking.openURL(c.file_url)}
+                  >
+                    <Text style={{ fontSize: 24, marginRight: 12 }}>📄</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '600', color: theme.text }}>
+                        {c.name}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>
+                        Uploaded {new Date(c.created_at).toLocaleDateString()}
+                      </Text>
+                    </View>
+                    <View style={{
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      borderRadius: 8,
+                      backgroundColor: theme.primary + '18',
+                      borderWidth: 1,
+                      borderColor: theme.primary + '44',
+                    }}>
+                      <Text style={{ fontSize: 12, color: theme.primaryLight, fontWeight: '600' }}>
+                        View
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+                <View style={{ height: 20 }} />
+              </ScrollView>
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Footer */}
       <View style={s.footer}>
@@ -619,6 +747,7 @@ const styles = (theme) => StyleSheet.create({
   timeChipTextActive: { color: '#fff', fontWeight: 'bold' },
   mechanicCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.card, borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 2, borderColor: theme.border },
   mechanicCardActive: { borderColor: theme.primary, backgroundColor: theme.primary + '11' },
+  mechanicCardDisabled: { opacity: 0.6, backgroundColor: theme.bg2 },
   mechanicAvatar: { width: 52, height: 52, borderRadius: 26, marginRight: 14 },
   mechanicAvatarPlaceholder: { width: 52, height: 52, borderRadius: 26, backgroundColor: theme.bg3, justifyContent: 'center', alignItems: 'center', marginRight: 14 },
   mechanicAvatarEmoji: { fontSize: 22 },
@@ -627,22 +756,23 @@ const styles = (theme) => StyleSheet.create({
   mechanicName: { fontSize: 15, fontWeight: 'bold', color: theme.text, marginBottom: 2 },
   mechanicSpec: { fontSize: 12, color: theme.textSub, marginBottom: 2 },
   mechanicRating: { fontSize: 12, color: theme.textMuted },
+  mechanicBookedText: { fontSize: 12, color: '#ff4d4d', marginTop: 4, fontWeight: '600' },
+  certBtn: { marginTop: 8, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: theme.primary + '44', backgroundColor: theme.primary + '15', alignSelf: 'flex-start' },
+  certBtnText: { fontSize: 11, fontWeight: '600' },
   emptyMechanics: { padding: 20, alignItems: 'center' },
   emptyMechanicsText: { color: theme.textMuted, fontSize: 14 },
-  optionalNote: { marginTop: 16, backgroundColor: theme.bg2, borderRadius: 10, padding: 14, borderWidth: 1, borderColor: theme.border },
-  optionalNoteText: { fontSize: 13, color: theme.textSub, lineHeight: 20 },
-  summaryCard: { backgroundColor: theme.card, borderRadius: 12, padding: 20, borderWidth: 1, borderColor: theme.border, marginBottom: 12 },
-  summaryTitle: { fontSize: 12, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 },
+  optionalNote: { marginTop: 16, backgroundColor: theme.bg2, borderRadius: 10, padding: 14 },
+  optionalNoteText: { color: theme.textSub, fontSize: 13, lineHeight: 18 },
+  summaryCard: { backgroundColor: theme.card, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: theme.border },
+  summaryTitle: { fontSize: 12, fontWeight: 'bold', color: theme.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 },
   summaryValue: { fontSize: 15, color: theme.text, marginBottom: 12 },
   divider: { height: 1, backgroundColor: theme.border, marginBottom: 12 },
-  notesCard: { backgroundColor: theme.card, borderRadius: 12, padding: 20, borderWidth: 1, borderColor: theme.border, marginBottom: 16 },
-  footer: { flexDirection: 'row', padding: 16, gap: 12, backgroundColor: theme.bg2, borderTopWidth: 1, borderTopColor: theme.border, alignItems: 'center' },
-  backBtn: { flex: 1, borderWidth: 1, borderColor: theme.border, borderRadius: 12, padding: 16, alignItems: 'center', justifyContent: 'center' },
-  backBtnText: { color: theme.text, fontWeight: '600', fontSize: 15 },
-  nextBtn: { flex: 2, backgroundColor: theme.primary, borderRadius: 12, padding: 16, alignItems: 'center', justifyContent: 'center' },
-  nextBtnDisabled: { backgroundColor: theme.bg3 },
-  nextBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
-  mechanicCardDisabled: { opacity: 0.5, borderColor: theme.border },
-  mechanicBookedText: { fontSize: 11, color: theme.danger, marginTop: 2, fontWeight: '600' },
-  checkingText: { fontSize: 12, color: theme.textMuted, marginBottom: 10, fontStyle: 'italic' },
+  notesCard: { backgroundColor: theme.bg2, borderRadius: 12, padding: 16, marginTop: 12, borderWidth: 1, borderColor: theme.border },
+  footer: { flexDirection: 'row', padding: 20, backgroundColor: theme.bg, borderTopWidth: 1, borderTopColor: theme.border, gap: 12 },
+  backBtn: { flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: theme.bg3, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: theme.border },
+  backBtnText: { color: theme.text, fontSize: 15, fontWeight: 'bold' },
+  nextBtn: { flex: 2, paddingVertical: 14, borderRadius: 12, backgroundColor: theme.primary, justifyContent: 'center', alignItems: 'center' },
+  nextBtnDisabled: { backgroundColor: theme.primary + '55' },
+  nextBtnText: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
+  checkingText: { fontSize: 13, color: theme.primaryLight, fontStyle: 'italic', marginBottom: 12, textAlign: 'center' },
 });

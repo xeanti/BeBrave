@@ -25,6 +25,14 @@ export default function Profile() {
   const [certificates, setCertificates] = useState([]);
   const [loadingCerts, setLoadingCerts] = useState(false);
 
+  // Certificate Upload States
+  const [certName, setCertName] = useState('');
+  const [certFile, setCertFile] = useState(null);
+  const [uploadingCert, setUploadingCert] = useState(false);
+  const [certError, setCertError] = useState('');
+  const [certSuccess, setCertSuccess] = useState('');
+  const [deletingCertId, setDeletingCertId] = useState(null);
+
   useEffect(() => {
     if (profile) {
       setForm({
@@ -145,6 +153,66 @@ export default function Profile() {
     }
   }
 
+  function handleCertFileChange(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setCertFile(file);
+    if (!certName) {
+      setCertName(file.name.replace(/\.[^/.]+$/, ''));
+    }
+  }
+
+  async function handleUploadCertificate(e) {
+    e.preventDefault();
+    setCertError('');
+    setCertSuccess('');
+    if (!certName.trim()) { setCertError('Please enter a certificate name.'); return; }
+    if (!certFile) { setCertError('Please choose a file to upload.'); return; }
+    setUploadingCert(true);
+    try {
+      const fileExt = certFile.name.split('.').pop();
+      const filePath = `${user.id}/${Date.now()}.${fileExt}`;
+      const { error: uploadError } = await supabase.storage
+        .from('mechanic-certificates')
+        .upload(filePath, certFile);
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = supabase.storage
+        .from('mechanic-certificates')
+        .getPublicUrl(filePath);
+
+      const { error: insertError } = await supabase
+        .from('mechanic_certificates')
+        .insert({
+          mechanic_id: user.id,
+          name: certName.trim(),
+          file_url: urlData.publicUrl,
+          uploaded_by: user.id,
+        });
+      if (insertError) throw insertError;
+
+      setCertName('');
+      setCertFile(null);
+      setCertSuccess('Certificate uploaded successfully!');
+      fetchCertificates(user.id);
+    } catch (err) {
+      setCertError(err.message);
+    } finally {
+      setUploadingCert(false);
+    }
+  }
+
+  async function handleDeleteCertificate(cert) {
+    if (!confirm(`Delete "${cert.name}"?`)) return;
+    setDeletingCertId(cert.id);
+    try {
+      await supabase.from('mechanic_certificates').delete().eq('id', cert.id);
+      fetchCertificates(user.id);
+    } finally {
+      setDeletingCertId(null);
+    }
+  }
+
   const displayPhoto = savedPhotoUrl || photoPreview;
   const isMechanic = profile?.role === 'mechanic';
 
@@ -167,7 +235,7 @@ export default function Profile() {
 
         <form onSubmit={handleSubmit} className="space-y-6">
 
-          {/* ── Profile Picture Card (every role can set their own) ── */}
+          {/* ── Profile Picture Card ── */}
           <div className="bg-dark-800 rounded-xl p-6">
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
               <span className="text-primary-500">●</span> Profile Picture
@@ -344,20 +412,65 @@ export default function Profile() {
             </div>
           )}
 
-          {/* ── Certificates (mechanic read-only) ── */}
+          {/* ── Certificates (mechanic management block) ── */}
           {isMechanic && (
             <div className="bg-dark-800 rounded-xl p-6">
-              <h2 className="text-lg font-semibold mb-1 flex items-center gap-2">
-                <span className="text-primary-500">●</span> My Certificates
-              </h2>
+              <div className="flex items-center justify-between mb-1">
+                <h2 className="text-lg font-semibold flex items-center gap-2">
+                  <span className="text-primary-500">●</span> My Certificates
+                </h2>
+              </div>
               <p className="text-xs text-gray-500 mb-4">
-                Certificates are uploaded and managed by an administrator.
+                Upload your certifications and credentials.
               </p>
 
+              {/* Upload form */}
+              {certError && (
+                <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg p-3 mb-3">
+                  {certError}
+                </div>
+              )}
+              {certSuccess && (
+                <div className="bg-green-500/10 border border-green-500/30 text-green-400 text-sm rounded-lg p-3 mb-3">
+                  {certSuccess}
+                </div>
+              )}
+
+              <div className="bg-dark-900 rounded-lg p-4 flex flex-wrap items-end gap-3 mb-5 border border-gray-800">
+                <div className="flex-1 min-w-[160px]">
+                  <label className="block text-xs text-gray-500 mb-1">Certificate Name</label>
+                  <input
+                    type="text"
+                    value={certName}
+                    onChange={(e) => setCertName(e.target.value)}
+                    placeholder="e.g. TESDA NC II"
+                    className="w-full px-3 py-1.5 rounded-md bg-dark-800 border border-gray-700 text-sm text-white focus:outline-none focus:border-primary-500"
+                  />
+                </div>
+                <div className="flex-1 min-w-[180px]">
+                  <label className="block text-xs text-gray-500 mb-1">File (image or PDF)</label>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    onChange={handleCertFileChange}
+                    className="w-full text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-primary-600 file:text-white file:cursor-pointer file:hover:bg-primary-700 file:text-xs"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleUploadCertificate}
+                  disabled={uploadingCert}
+                  className="bg-primary-600 hover:bg-primary-700 disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-medium transition text-white"
+                >
+                  {uploadingCert ? 'Uploading...' : '+ Upload'}
+                </button>
+              </div>
+
+              {/* Certificates list */}
               {loadingCerts ? (
                 <p className="text-gray-400 text-sm">Loading...</p>
               ) : certificates.length === 0 ? (
-                <p className="text-gray-500 text-sm">No certificates on file yet.</p>
+                <p className="text-gray-500 text-sm">No certificates uploaded yet.</p>
               ) : (
                 <div className="space-y-2">
                   {certificates.map((c) => (
@@ -371,14 +484,24 @@ export default function Profile() {
                           </p>
                         </div>
                       </div>
-                      <a
-                        href={c.file_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs text-primary-400 border border-primary-500/30 px-2.5 py-1 rounded-md hover:bg-primary-500/10 transition flex-shrink-0"
-                      >
-                        View
-                      </a>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <a
+                          href={c.file_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs text-primary-400 border border-primary-500/30 px-2.5 py-1 rounded-md hover:bg-primary-500/10 transition"
+                        >
+                          View
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCertificate(c)}
+                          disabled={deletingCertId === c.id}
+                          className="text-xs text-red-400 border border-red-500/30 px-2.5 py-1 rounded-md hover:bg-red-500/10 transition disabled:opacity-50"
+                        >
+                          {deletingCertId === c.id ? '...' : 'Delete'}
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

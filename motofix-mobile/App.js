@@ -11,6 +11,9 @@ import RoleGuard from './lib/RoleGuard';
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
 
+// --- SHARED SCREENS ---
+import StaffChatScreen from './screens/shared/StaffChatScreen';
+
 // --- CUSTOMER MODULE SCREENS ---
 import HomeScreen from './screens/customer/HomeScreen';
 import BookingScreen from './screens/customer/BookingScreen';
@@ -60,6 +63,7 @@ export function MechanicTabs() {
   return (
     <Tab.Navigator screenOptions={getTabOptions(theme)}>
       <Tab.Screen name="My Jobs" component={JobsScreen} options={{ tabBarIcon: makeIcon('build') }} />
+      <Tab.Screen name="Chat" component={StaffChatScreen} options={{ tabBarIcon: makeIcon('chatbubbles') }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarIcon: makeIcon('person') }} />
     </Tab.Navigator>
   );
@@ -72,6 +76,7 @@ export function StaffTabs() {
       <Tab.Screen name="Walk-ins" component={WalkInsScreen} options={{ tabBarIcon: makeIcon('walk') }} />
       <Tab.Screen name="Payments" component={PaymentsScreen} options={{ tabBarIcon: makeIcon('card') }} />
       <Tab.Screen name="Inventory" component={InventoryScreen} options={{ tabBarIcon: makeIcon('cube') }} />
+      <Tab.Screen name="Chat" component={StaffChatScreen} options={{ tabBarIcon: makeIcon('chatbubbles') }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarIcon: makeIcon('person') }} />
     </Tab.Navigator>
   );
@@ -85,7 +90,8 @@ export function AdminTabs() {
       <Tab.Screen name="Bookings" component={AdminBookingsScreen} options={{ tabBarIcon: makeIcon('list') }} />
       <Tab.Screen name="Orders" component={AdminOrdersScreen} options={{ tabBarIcon: makeIcon('cart') }} />
       <Tab.Screen name="Inventory" component={InventoryScreen} options={{ tabBarIcon: makeIcon('cube') }} />
-<Tab.Screen name="Users" component={AdminUsersScreen} options={{ tabBarIcon: makeIcon('people') }} />
+      <Tab.Screen name="Users" component={AdminUsersScreen} options={{ tabBarIcon: makeIcon('people') }} />
+      <Tab.Screen name="Chat" component={StaffChatScreen} options={{ tabBarIcon: makeIcon('chatbubbles') }} />
       <Tab.Screen name="Reports" component={ReportsScreen} options={{ tabBarIcon: makeIcon('analytics') }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarIcon: makeIcon('person') }} />
     </Tab.Navigator>
@@ -144,16 +150,16 @@ export function RootNav() {
           }} 
         />
         <Stack.Screen
-  name="AppointmentDetail"
-  component={AppointmentDetailScreen}
-  options={{
-    headerShown: true,
-    title: 'Appointment Details',
-    headerStyle: { backgroundColor: theme.bg, borderBottomWidth: 1, borderBottomColor: theme.border },
-    headerTitleStyle: { color: theme.text, fontWeight: 'bold' },
-    headerTintColor: theme.primaryLight
-  }}
-/>
+          name="AppointmentDetail"
+          component={AppointmentDetailScreen}
+          options={{
+            headerShown: true,
+            title: 'Appointment Details',
+            headerStyle: { backgroundColor: theme.bg, borderBottomWidth: 1, borderBottomColor: theme.border },
+            headerTitleStyle: { color: theme.text, fontWeight: 'bold' },
+            headerTintColor: theme.primaryLight
+          }}
+        />
 
         <Stack.Screen 
           name="JobDetail" 

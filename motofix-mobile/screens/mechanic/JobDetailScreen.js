@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
@@ -10,6 +10,13 @@ export default function JobDetailScreen({ route, navigation }) {
   const { theme } = useTheme();
   const booking = route?.params?.booking;
   const [updating, setUpdating] = useState(false);
+
+  useEffect(() => {
+    navigation.setOptions({
+      headerBackTitle: 'My Jobs',
+      title: 'Job Details',
+    });
+  }, []);
 
   const s = styles(theme);
 

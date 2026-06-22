@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, Switch, Alert, Image,
+  ActivityIndicator, Switch, Alert, Image, TextInput,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../lib/ThemeContext';
 import { supabase } from '../../lib/supabase';
@@ -29,6 +30,13 @@ export default function ProfileScreen({ navigation }) {
   // Photo state
   const [photoUri, setPhotoUri] = useState(null);
   const [savedPhotoUrl, setSavedPhotoUrl] = useState(null);
+
+  // Certificate State variables
+  const [certName, setCertName] = useState('');
+  const [certFile, setCertFile] = useState(null);
+  const [uploadingCert, setUploadingCert] = useState(false);
+  const [certError, setCertError] = useState('');
+  const [deletingCertId, setDeletingCertId] = useState(null);
 
   useEffect(() => { fetchProfile(); }, []);
 
@@ -99,14 +107,12 @@ export default function ProfileScreen({ navigation }) {
     if (!localUri) throw new Error('No local image path available');
 
     const { data: { user } } = await supabase.auth.getUser();
-    // Defensive extraction fallback for content:// paths missing explicit extensions
     const ext = localUri.match(/\.(\w+)$/)?.[1]?.toLowerCase() || 'jpg';
     const prefix = profile?.role === 'mechanic' ? 'mechanic' : 'profile';
     const filePath = `${user.id}/${prefix}_${Date.now()}.${ext}`;
 
     setUploadingPhoto(true);
     try {
-      // Direct stream conversions supporting content:// and file:// natively
       const response = await fetch(localUri);
       const arrayBuffer = await response.arrayBuffer();
 
@@ -177,6 +183,73 @@ export default function ProfileScreen({ navigation }) {
     navigation.replace('Login');
   }
 
+  async function pickCertFile() {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['image/*', 'application/pdf'],
+        copyToCacheDirectory: true,
+      });
+      if (!result.canceled && result.assets?.[0]) {
+        const asset = result.assets[0];
+        setCertFile({ uri: asset.uri, name: asset.name, mimeType: asset.mimeType });
+        if (!certName) setCertName(asset.name.replace(/\.[^/.]+$/, ''));
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Could not pick file: ' + err.message);
+    }
+  }
+
+  async function handleUploadCertificate() {
+    setCertError('');
+    if (!certName.trim()) { setCertError('Please enter a certificate name.'); return; }
+    if (!certFile) { setCertError('Please pick a file.'); return; }
+    setUploadingCert(true);
+    try {
+      const ext = certFile.name.split('.').pop() || 'pdf';
+      const filePath = `${profile.id}/${Date.now()}.${ext}`;
+      const response = await fetch(certFile.uri);
+      const blob = await response.blob();
+      const { error: uploadError } = await supabase.storage
+        .from('mechanic-certificates')
+        .upload(filePath, blob, { contentType: certFile.mimeType || 'application/octet-stream' });
+      if (uploadError) throw uploadError;
+      const { data: urlData } = supabase.storage
+        .from('mechanic-certificates')
+        .getPublicUrl(filePath);
+      const { error: insertError } = await supabase
+        .from('mechanic_certificates')
+        .insert({
+          mechanic_id: profile.id,
+          name: certName.trim(),
+          file_url: urlData.publicUrl,
+          uploaded_by: profile.id,
+        });
+      if (insertError) throw insertError;
+      setCertName('');
+      setCertFile(null);
+      Alert.alert('✅ Success', 'Certificate uploaded!');
+      fetchCertificates(profile.id);
+    } catch (err) {
+      setCertError(err.message);
+    } finally {
+      setUploadingCert(false);
+    }
+  }
+
+  async function handleDeleteCertificate(cert) {
+    Alert.alert('Delete Certificate', `Delete "${cert.name}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive', onPress: async () => {
+          setDeletingCertId(cert.id);
+          await supabase.from('mechanic_certificates').delete().eq('id', cert.id);
+          setDeletingCertId(null);
+          fetchCertificates(profile.id);
+        }
+      }
+    ]);
+  }
+
   const s = styles(theme);
   const isMechanic = profile?.role === 'mechanic';
   const displayPhoto = photoUri || savedPhotoUrl;
@@ -239,7 +312,7 @@ export default function ProfileScreen({ navigation }) {
           icon="person-outline"
           label="First Name"
           value={firstName}
-          onChange={setFirstName}
+          onChange={firstName}
           placeholder="First name"
         />
         <FieldRow
@@ -247,7 +320,7 @@ export default function ProfileScreen({ navigation }) {
           icon="person-outline"
           label="Last Name"
           value={lastName}
-          onChange={setLastName}
+          onChange={lastName}
           placeholder="Last name"
         />
         <FieldRow
@@ -255,7 +328,7 @@ export default function ProfileScreen({ navigation }) {
           icon="call-outline"
           label="Phone"
           value={phone}
-          onChange={setPhone}
+          onChange={phone}
           placeholder="09XX XXX XXXX"
           keyboardType="phone-pad"
           last
@@ -272,7 +345,7 @@ export default function ProfileScreen({ navigation }) {
               icon="construct-outline"
               label="Specialization"
               value={specialization}
-              onChange={setSpecialization}
+              onChange={specialization}
               placeholder="e.g. Engine Repair, Electrical"
               last
             />
@@ -290,7 +363,7 @@ export default function ProfileScreen({ navigation }) {
               icon="bicycle-outline"
               label="Make"
               value={motoMake}
-              onChange={setMotoMake}
+              onChange={motoMake}
               placeholder="e.g. Yamaha"
             />
             <FieldRow
@@ -298,7 +371,7 @@ export default function ProfileScreen({ navigation }) {
               icon="bicycle-outline"
               label="Model"
               value={motoModel}
-              onChange={setMotoModel}
+              onChange={motoModel}
               placeholder="e.g. Aerox 155"
             />
             <FieldRow
@@ -306,7 +379,7 @@ export default function ProfileScreen({ navigation }) {
               icon="calendar-outline"
               label="Year"
               value={motoYear}
-              onChange={setMotoYear}
+              onChange={motoYear}
               placeholder="e.g. 2023"
               keyboardType="number-pad"
               last
@@ -340,23 +413,68 @@ export default function ProfileScreen({ navigation }) {
         </View>
       </View>
 
-      {/* ── Certificates (mechanic read-only) ── */}
+      {/* ── Certificates Management Section ── */}
       {isMechanic && (
         <>
           <Text style={s.sectionLabel}>My Certificates</Text>
           <View style={s.card}>
+            {/* Error */}
+            {certError ? (
+              <View style={{ backgroundColor: '#ef444418', borderRadius: 8, padding: 10, margin: 14, marginBottom: 0 }}>
+                <Text style={{ color: '#ef4444', fontSize: 13 }}>{certError}</Text>
+              </View>
+            ) : null}
+            {/* Upload form */}
+            <View style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: theme.border }}>
+              <Text style={{ fontSize: 12, fontWeight: 'bold', color: theme.textMuted, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Upload New Certificate
+              </Text>
+              <TextInput
+                style={{
+                  borderWidth: 1, borderColor: theme.border, borderRadius: 10,
+                  padding: 12, fontSize: 14, color: theme.text,
+                  backgroundColor: theme.bg2, marginBottom: 10,
+                }}
+                placeholder="Certificate name (e.g. TESDA NC II)"
+                placeholderTextColor={theme.textMuted}
+                value={certName}
+                onChangeText={setCertName}
+              />
+              <TouchableOpacity
+                style={{
+                  borderWidth: 1, borderColor: theme.border, borderRadius: 10,
+                  padding: 12, marginBottom: 10, backgroundColor: theme.bg2,
+                  alignItems: 'center',
+                }}
+                onPress={pickCertFile}
+              >
+                <Text style={{ fontSize: 13, color: certFile ? theme.primaryLight : theme.textSub }}>
+                  {certFile ? `📄 ${certFile.name}` : '📁 Pick file (image or PDF)'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  backgroundColor: theme.primary, borderRadius: 10,
+                  padding: 12, alignItems: 'center',
+                  opacity: uploadingCert ? 0.6 : 1,
+                }}
+                onPress={handleUploadCertificate}
+                disabled={uploadingCert}
+              >
+                {uploadingCert
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 14 }}>+ Upload Certificate</Text>
+                }
+              </TouchableOpacity>
+            </View>
+            {/* Certificates list */}
             {loadingCerts ? (
               <View style={{ padding: 16, alignItems: 'center' }}>
                 <ActivityIndicator size="small" color={theme.primaryLight} />
               </View>
             ) : certificates.length === 0 ? (
               <View style={{ padding: 16 }}>
-                <Text style={{ fontSize: 13, color: theme.textMuted }}>
-                  No certificates on file yet.
-                </Text>
-                <Text style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>
-                  Ask your administrator to upload your certificates.
-                </Text>
+                <Text style={{ fontSize: 13, color: theme.textMuted }}>No certificates uploaded yet.</Text>
               </View>
             ) : (
               certificates.map((c, index) => (
@@ -374,15 +492,34 @@ export default function ProfileScreen({ navigation }) {
                       Uploaded {new Date(c.created_at).toLocaleDateString()}
                     </Text>
                   </View>
-                  <TouchableOpacity
-                    onPress={() => {
-                      const { Linking } = require('react-native');
-                      Linking.openURL(c.file_url);
-                    }}
-                    style={s.viewCertBtn}
-                  >
-                    <Text style={s.viewCertBtnText}>View</Text>
-                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const { Linking } = require('react-native');
+                        Linking.openURL(c.file_url);
+                      }}
+                      style={s.viewCertBtn}
+                    >
+                      <Text style={s.viewCertBtnText}>View</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleDeleteCertificate(c)}
+                      disabled={deletingCertId === c.id}
+                      style={{
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: '#ef444444',
+                        backgroundColor: '#ef444418',
+                        opacity: deletingCertId === c.id ? 0.5 : 1,
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, color: '#ef4444', fontWeight: '600' }}>
+                        {deletingCertId === c.id ? '...' : 'Delete'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               ))
             )}

@@ -59,12 +59,13 @@ export default function Mechanics() {
     }
 
     try {
-      const { data, error } = await supabase
-        .from('mechanic_certificates')
-        .select('*')
-        .eq('mechanic_id', mechanic.id)
-        .order('issued_date', { ascending: false });
+const { data, error } = await supabase
+  .from('mechanic_certificates')
+  .select('*')
+  .eq('mechanic_id', mechanic.id)
+  .order('created_at', { ascending: false });
 
+  
       if (error) throw error;
       if (data) setCertificates(data);
     } catch (err) {
@@ -242,7 +243,7 @@ export default function Mechanics() {
                         <span className="text-lg">📄</span>
                       )}
                     </div>
-                    <p className="text-[11px] font-medium leading-tight line-clamp-2">{cert.title}</p>
+                    <p className="text-[11px] font-medium leading-tight line-clamp-2">{cert.name}</p>
                     {cert.verified && (
                       <span className="text-[9px] bg-green-500/15 text-green-700 dark:text-green-400 ring-1 ring-green-500/20 rounded-full px-1.5 py-0.5 font-medium inline-block mt-1">
                         ✓ Verified
