@@ -28,12 +28,10 @@ import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminBookings from './pages/admin/AdminBookings';
 import AdminParts from './pages/admin/AdminParts';
 import AdminServices from './pages/admin/AdminServices';
-import AdminMechanics from './pages/admin/AdminMechanics';
 import AdminChat from './pages/admin/AdminChat';
 import AdminOrders from './pages/admin/AdminOrders';
 import AdminReports from './pages/admin/AdminReports';
 import AdminAssessments from './pages/admin/AdminAssessments';
-import AdminStaff from './pages/admin/AdminStaff';
 import AdminSettings from './pages/admin/AdminSettings';
 import AdminUsers from './pages/admin/AdminUsers'; // <-- Added Import
 

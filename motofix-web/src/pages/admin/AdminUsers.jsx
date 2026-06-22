@@ -41,6 +41,15 @@ export default function AdminUsers() {
   const [selectedMechanicId, setSelectedMechanicId] = useState(null);
   const [schedules, setSchedules] = useState([]);
 
+  // Certificates State
+  const [certificates, setCertificates] = useState({}); // userId -> []
+  const [certName, setCertName] = useState('');
+  const [certFile, setCertFile] = useState(null);
+  const [uploadingCert, setUploadingCert] = useState(false);
+  const [certError, setCertError] = useState('');
+  const [deletingCertId, setDeletingCertId] = useState(null);
+  const [loadingCerts, setLoadingCerts] = useState(false);
+
   useEffect(() => { fetchUsers(); }, []);
 
   async function fetchUsers() {
@@ -70,6 +79,87 @@ export default function AdminUsers() {
     if (!confirm('Unassign this mechanic from the booking?')) return;
     await supabase.from('bookings').update({ mechanic_id: null }).eq('id', bookingId);
     fetchMechanicSchedule(selectedMechanicId);
+  }
+
+  async function fetchCertificates(mechanicId) {
+    setLoadingCerts(true);
+    const { data } = await supabase
+      .from('mechanic_certificates')
+      .select('*')
+      .eq('mechanic_id', mechanicId)
+      .order('created_at', { ascending: false });
+    if (data) setCertificates(prev => ({ ...prev, [mechanicId]: data }));
+    setLoadingCerts(false);
+  }
+
+  function handleCertFileChange(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setCertFile(file);
+    if (!certName) {
+      const base = file.name.replace(/\.[^/.]+$/, '');
+      setCertName(base);
+    }
+  }
+
+  async function handleUploadCertificate(e, mechanicId) {
+    e.preventDefault();
+    setCertError('');
+    if (!certName.trim()) { setCertError('Please enter a certificate name.'); return; }
+    if (!certFile) { setCertError('Please choose a file to upload.'); return; }
+    setUploadingCert(true);
+    try {
+      const fileExt = certFile.name.split('.').pop();
+      const filePath = `${mechanicId}/${Date.now()}.${fileExt}`;
+      const { error: uploadError } = await supabase.storage
+        .from('mechanic-certificates')
+        .upload(filePath, certFile);
+      if (uploadError) throw uploadError;
+      const { data: urlData } = supabase.storage
+        .from('mechanic-certificates')
+        .getPublicUrl(filePath);
+      const { error: insertError } = await supabase
+        .from('mechanic_certificates')
+        .insert({
+          mechanic_id: mechanicId,
+          name: certName.trim(),
+          file_url: urlData.publicUrl,
+          uploaded_by: user?.id,
+        });
+      if (insertError) throw insertError;
+      await supabase.from('audit_logs').insert({
+        action: 'UPLOAD_MECHANIC_CERTIFICATE',
+        entity: 'mechanic_certificates',
+        entity_id: mechanicId,
+        performed_by: user?.id,
+        details: { name: certName.trim() },
+      });
+      setCertName('');
+      setCertFile(null);
+      fetchCertificates(mechanicId);
+    } catch (err) {
+      setCertError(err.message);
+    } finally {
+      setUploadingCert(false);
+    }
+  }
+
+  async function deleteCertificate(cert) {
+    if (!confirm(`Delete certificate "${cert.name}"?`)) return;
+    setDeletingCertId(cert.id);
+    try {
+      await supabase.from('mechanic_certificates').delete().eq('id', cert.id);
+      await supabase.from('audit_logs').insert({
+        action: 'DELETE_MECHANIC_CERTIFICATE',
+        entity: 'mechanic_certificates',
+        entity_id: cert.id,
+        performed_by: user?.id,
+        details: { name: cert.name, mechanic_id: cert.mechanic_id },
+      });
+      fetchCertificates(cert.mechanic_id);
+    } finally {
+      setDeletingCertId(null);
+    }
   }
 
   function openEdit(u) {
@@ -360,9 +450,17 @@ export default function AdminUsers() {
                               if (selectedMechanicId === u.id) {
                                 setSelectedMechanicId(null);
                                 setSchedules([]);
+                                setCertificates({});
+                                setCertName('');
+                                setCertFile(null);
+                                setCertError('');
                               } else {
                                 setSelectedMechanicId(u.id);
                                 fetchMechanicSchedule(u.id);
+                                fetchCertificates(u.id);
+                                setCertName('');
+                                setCertFile(null);
+                                setCertError('');
                               }
                             }}
                             className="text-xs px-3 py-1.5 rounded-md bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition"
@@ -450,6 +548,80 @@ export default function AdminUsers() {
                           To assign new bookings, go to{' '}
                           <a href="/admin/bookings" className="text-primary-400 hover:underline">Manage Bookings</a>.
                         </p>
+
+                        {/* Certificates */}
+                        <div className="mt-6 border-t border-gray-800 pt-5">
+                          <h3 className="text-sm font-semibold mb-3 text-gray-300">
+                            🎓 Certificates for {u.first_name} {u.last_name}
+                          </h3>
+                          {loadingCerts ? (
+                            <p className="text-sm text-gray-500 mb-4">Loading...</p>
+                          ) : (certificates[u.id] || []).length === 0 ? (
+                            <p className="text-sm text-gray-500 mb-4">No certificates uploaded yet.</p>
+                          ) : (
+                            <div className="space-y-2 mb-4">
+                              {(certificates[u.id] || []).map((c) => (
+                                <div key={c.id} className="bg-dark-800 rounded-lg p-3 flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <span className="text-base flex-shrink-0">📄</span>
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-medium text-white truncate">{c.name}</p>
+                                      <p className="text-xs text-gray-500">
+                                        Uploaded {new Date(c.created_at).toLocaleDateString()}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-shrink-0">
+                                    <a href={c.file_url} target="_blank" rel="noreferrer"
+                                      className="text-xs text-primary-400 border border-primary-500/30 px-2.5 py-1 rounded-md hover:bg-primary-500/10 transition">
+                                      View
+                                    </a>
+                                    <button
+                                      type="button"
+                                      onClick={() => deleteCertificate(c)}
+                                      disabled={deletingCertId === c.id}
+                                      className="text-xs text-red-400 border border-red-500/30 px-2.5 py-1 rounded-md hover:bg-red-500/10 transition disabled:opacity-50">
+                                      {deletingCertId === c.id ? '...' : 'Delete'}
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {certError && (
+                            <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg p-3 mb-3">
+                              {certError}
+                            </div>
+                          )}
+                          <form onSubmit={(e) => handleUploadCertificate(e, u.id)}
+                            className="bg-dark-900 rounded-lg p-4 flex flex-wrap items-end gap-3">
+                            <div className="flex-1 min-w-[160px]">
+                              <label className="block text-xs text-gray-500 mb-1">Certificate Name</label>
+                              <input
+                                type="text"
+                                value={certName}
+                                onChange={(e) => setCertName(e.target.value)}
+                                placeholder="e.g. TESDA NC II"
+                                className="w-full px-3 py-1.5 rounded-md bg-dark-800 border border-gray-700 text-sm text-white focus:outline-none focus:border-primary-500"
+                              />
+                            </div>
+                            <div className="flex-1 min-w-[180px]">
+                              <label className="block text-xs text-gray-500 mb-1">File</label>
+                              <input
+                                type="file"
+                                accept="image/*,application/pdf"
+                                onChange={handleCertFileChange}
+                                className="w-full text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-primary-600 file:text-white file:cursor-pointer file:hover:bg-primary-700 file:text-xs"
+                              />
+                            </div>
+                            <button
+                              type="submit"
+                              disabled={uploadingCert}
+                              className="bg-primary-600 hover:bg-primary-700 disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-medium transition text-white">
+                              {uploadingCert ? 'Uploading...' : '+ Upload Certificate'}
+                            </button>
+                          </form>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -531,64 +703,52 @@ export default function AdminUsers() {
 
               {/* Customer-specific fields */}
               {editForm.role === 'customer' && (
-                <div className="space-y-3">
-                  <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Motorcycle Info</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs text-gray-400 mb-1">Make</label>
-                      <input value={editForm.moto_make} onChange={e => setEditForm(f => ({ ...f, moto_make: e.target.value }))}
-                        placeholder="e.g. Yamaha"
-                        className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                <div className="border-t border-gray-800 pt-3 space-y-3">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Motorcycle Info</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="col-span-2">
+                      <label className="block text-[10px] uppercase text-gray-500 mb-0.5">Make</label>
+                      <input value={editForm.moto_make || ''} onChange={e => setEditForm(f => ({ ...f, moto_make: e.target.value }))}
+                        placeholder="Honda, Yamaha..."
+                        className="w-full px-2 py-1.5 rounded-md bg-dark-900 border border-gray-700 text-white text-xs focus:outline-none focus:border-primary-500" />
                     </div>
                     <div>
-                      <label className="block text-xs text-gray-400 mb-1">Model</label>
-                      <input value={editForm.moto_model} onChange={e => setEditForm(f => ({ ...f, moto_model: e.target.value }))}
-                        placeholder="e.g. Aerox 155"
-                        className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                      <label className="block text-[10px] uppercase text-gray-500 mb-0.5">Year</label>
+                      <input value={editForm.moto_year || ''} onChange={e => setEditForm(f => ({ ...f, moto_year: e.target.value }))}
+                        placeholder="2022" type="number"
+                        className="w-full px-2 py-1.5 rounded-md bg-dark-900 border border-gray-700 text-white text-xs focus:outline-none focus:border-primary-500" />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1">Year</label>
-                    <input type="number" value={editForm.moto_year} onChange={e => setEditForm(f => ({ ...f, moto_year: e.target.value }))}
-                      placeholder="e.g. 2023"
-                      className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                    <label className="block text-[10px] uppercase text-gray-500 mb-0.5">Model</label>
+                    <input value={editForm.moto_model || ''} onChange={e => setEditForm(f => ({ ...f, moto_model: e.target.value }))}
+                      placeholder="Click 125i, NMAX..."
+                      className="w-full px-2 py-1.5 rounded-md bg-dark-900 border border-gray-700 text-white text-xs focus:outline-none focus:border-primary-500" />
                   </div>
                 </div>
               )}
 
-              <div className="flex gap-3 pt-2 sticky bottom-0 bg-dark-800 pb-2">
-                <button type="button" onClick={closeEdit}
-                  className="flex-1 border border-gray-700 hover:border-gray-500 py-2.5 rounded-lg text-sm transition">
-                  Cancel
-                </button>
+              <div className="pt-4 flex gap-2">
                 <button type="submit" disabled={saving}
-                  className="flex-1 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 py-2.5 rounded-lg font-medium transition text-sm">
+                  className="flex-1 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 py-2 rounded-lg text-sm font-medium transition text-center">
                   {saving ? 'Saving...' : 'Save Changes'}
                 </button>
+                <button type="button" onClick={closeEdit} className="px-4 py-2 bg-dark-900 hover:bg-dark-950 border border-gray-700 rounded-lg text-sm transition">
+                  Cancel
+                </button>
               </div>
-
-              {/* Demote button for mechanic/staff — retains original logic */}
-              {(editForm.role === 'mechanic' || editForm.role === 'staff') && (
-                <div className="pt-2 border-t border-gray-800">
-                  <button type="button"
-                    onClick={() => handleDemote(editingUser.id, editForm.role)}
-                    className="w-full text-xs text-red-400 border border-red-500/30 px-3 py-2 rounded-lg hover:bg-red-500/10 transition">
-                    Remove {editForm.role} access (demote to customer)
-                  </button>
-                </div>
-              )}
             </form>
           </div>
         </div>
       )}
 
-      {/* ── Create Account slide-over panel ── */}
+      {/* ── Create account modal ── */}
       {showCreate && (
-        <div className="fixed inset-0 z-[100] flex justify-end" role="dialog" aria-modal="true">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/60" onClick={() => setShowCreate(false)} />
-          <div className="relative w-full sm:max-w-md h-full bg-dark-800 shadow-2xl overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 sticky top-0 bg-dark-800 z-10">
-              <h2 className="text-lg font-semibold">Create New Account</h2>
+          <div className="relative w-full max-w-md bg-dark-800 rounded-xl shadow-2xl overflow-hidden border border-gray-800">
+            <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Create Staff/Mechanic Account</h2>
               <button onClick={() => setShowCreate(false)} className="text-gray-400 hover:text-white text-xl leading-none">✕</button>
             </div>
 
@@ -600,63 +760,58 @@ export default function AdminUsers() {
                 <div className="bg-green-500/10 border border-green-500/30 text-green-400 text-sm rounded-lg p-3">{createSuccess}</div>
               )}
 
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">First Name</label>
+                  <input value={newAccount.firstName} onChange={e => setNewAccount(f => ({ ...f, firstName: e.target.value }))} required
+                    className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Last Name</label>
+                  <input value={newAccount.lastName} onChange={e => setNewAccount(f => ({ ...f, lastName: e.target.value }))} required
+                    className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+                </div>
+              </div>
+
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Role</label>
-                <select value={newAccount.role} onChange={e => setNewAccount(a => ({ ...a, role: e.target.value }))}
+                <label className="block text-xs text-gray-400 mb-1">Email Address</label>
+                <input type="email" value={newAccount.email} onChange={e => setNewAccount(f => ({ ...f, email: e.target.value }))} required
+                  className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Phone Number</label>
+                <input value={newAccount.phone} onChange={e => setNewAccount(f => ({ ...f, phone: e.target.value }))} placeholder="09XXXXXXXXX"
+                  className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Role Type</label>
+                <select value={newAccount.role} onChange={e => setNewAccount(f => ({ ...f, role: e.target.value }))}
                   className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500">
                   <option value="mechanic">Mechanic</option>
-                  <option value="staff">Staff / Cashier</option>
-                  <option value="customer">Customer</option>
+                  <option value="staff">Operational Staff</option>
+                  <option value="admin">System Administrator</option>
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3 pt-2">
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">First Name *</label>
-                  <input required value={newAccount.firstName} onChange={e => setNewAccount(a => ({ ...a, firstName: e.target.value }))}
+                  <label className="block text-xs text-gray-400 mb-1">Password</label>
+                  <input type="password" value={newAccount.password} onChange={e => setNewAccount(f => ({ ...f, password: e.target.value }))} required
                     className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">Last Name *</label>
-                  <input required value={newAccount.lastName} onChange={e => setNewAccount(a => ({ ...a, lastName: e.target.value }))}
+                  <label className="block text-xs text-gray-400 mb-1">Confirm Password</label>
+                  <input type="password" value={newAccount.confirmPassword} onChange={e => setNewAccount(f => ({ ...f, confirmPassword: e.target.value }))} required
                     className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Email *</label>
-                <input required type="email" value={newAccount.email} onChange={e => setNewAccount(a => ({ ...a, email: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-              </div>
-
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Phone</label>
-                <input value={newAccount.phone} onChange={e => setNewAccount(a => ({ ...a, phone: e.target.value }))}
-                  placeholder="09XX XXX XXXX"
-                  className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-              </div>
-
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Password *</label>
-                <input required type="password" value={newAccount.password} onChange={e => setNewAccount(a => ({ ...a, password: e.target.value }))}
-                  placeholder="Min 6 characters"
-                  className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-              </div>
-
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Confirm Password *</label>
-                <input required type="password" value={newAccount.confirmPassword} onChange={e => setNewAccount(a => ({ ...a, confirmPassword: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-              </div>
-
-              <div className="flex gap-3 pt-2 sticky bottom-0 bg-dark-800 pb-2">
-                <button type="button" onClick={() => setShowCreate(false)}
-                  className="flex-1 border border-gray-700 hover:border-gray-500 py-2.5 rounded-lg text-sm transition">
-                  Cancel
-                </button>
+              <div className="pt-4 flex gap-2">
                 <button type="submit" disabled={creating}
-                  className="flex-1 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 py-2.5 rounded-lg font-medium transition text-sm">
-                  {creating ? 'Creating...' : '+ Create Account'}
+                  className="flex-1 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 py-2 rounded-lg text-sm font-medium transition text-center">
+                  {creating ? 'Creating Account...' : 'Create Account'}
                 </button>
               </div>
             </form>
@@ -664,33 +819,27 @@ export default function AdminUsers() {
         </div>
       )}
 
-      {/* Policy Modal */}
+      {/* ── Policy detailed modal ── */}
       {showPolicy && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center px-4"
-          style={{ backdropFilter: 'blur(8px)', backgroundColor: 'rgba(0,0,0,0.7)' }}
-          onClick={() => setShowPolicy(false)}>
-          <div className="bg-dark-800 border border-yellow-500/30 rounded-2xl p-6 max-w-lg w-full"
-            onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold text-white">⚠️ Administrator Access Policy</h2>
-              <button onClick={() => setShowPolicy(false)} className="text-gray-400 hover:text-white text-xl">✕</button>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShowPolicy(false)} />
+          <div className="relative w-full max-w-lg bg-dark-800 rounded-xl shadow-2xl overflow-hidden border border-gray-800 p-6 space-y-4">
+            <div className="flex items-start justify-between">
+              <h2 className="text-lg font-bold text-yellow-400">⚠️ Republic Act No. 10173 Compliance Policy</h2>
+              <button onClick={() => setShowPolicy(false)} className="text-gray-400 hover:text-white text-xl leading-none">✕</button>
             </div>
-            <div className="text-sm text-gray-400 space-y-3 leading-relaxed">
-              <p><strong className="text-white">1. View & Edit Access Only</strong><br />
-                Administrators may view and edit user profile details for operational and support purposes only.</p>
-              <p><strong className="text-white">2. No Impersonation</strong><br />
-                Logging into, impersonating, or accessing any user account is strictly prohibited regardless of role.</p>
-              <p><strong className="text-white">3. Data Privacy Compliance</strong><br />
-                All user data is protected under RA 10173 (Data Privacy Act of 2012). Unauthorized access is a criminal offense.</p>
-              <p><strong className="text-white">4. Audit Logging</strong><br />
-                All administrative edits, role changes, and account creations are recorded in the system audit log.</p>
-              <p><strong className="text-white">5. Violations</strong><br />
-                Any violation may result in immediate account suspension and legal action.</p>
+            <p className="text-sm text-gray-300 leading-relaxed">
+              In accordance with the <strong>Data Privacy Act of 2012 (RA 10173)</strong>, administrators and supervisors are strictly barred from accessing, altering, or logging into any accounts that contain protected personal or identifiable information unless explicitly authorized for standard operational updates.
+            </p>
+            <div className="bg-dark-900 p-3 rounded-lg border border-gray-700 space-y-2 text-xs text-gray-400">
+              <p>• <strong>Strict Auditing:</strong> Every adjustment made inside the administrative interface logs a permanent footprint attaching your session profile ID.</p>
+              <p>• <strong>Credentials Rules:</strong> Passwords are cryptographically salted and hashed. Impersonating user workflows or requesting credentials over support channels is prohibited.</p>
             </div>
-            <button onClick={() => setShowPolicy(false)}
-              className="mt-5 w-full bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 font-semibold py-2 rounded-lg transition text-sm">
-              I Understand
-            </button>
+            <div className="text-right">
+              <button onClick={() => setShowPolicy(false)} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-xs transition">
+                I Understand
+              </button>
+            </div>
           </div>
         </div>
       )}
