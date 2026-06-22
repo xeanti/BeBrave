@@ -72,10 +72,7 @@ export default function InventoryScreen() {
   }
 
   function openAddModal() {
-    setEditingId(null);
-    setForm(EMPTY_FORM);
-    setFormError('');
-    setModalOpen(true);
+    return;
   }
 
   function openEditModal(part) {
@@ -147,19 +144,9 @@ export default function InventoryScreen() {
         details: payload,
       });
     } else {
-      const { data, error } = await supabase.from('parts').insert(payload).select().single();
-      if (error) {
-        setFormError(error.message);
-        setSaving(false);
-        return;
-      }
-      await supabase.from('audit_logs').insert({
-        action: 'CREATE_PART',
-        entity: 'parts',
-        entity_id: data.id,
-        performed_by: userId,
-        details: { name: payload.name, price: payload.price, stock_quantity: payload.stock_quantity },
-      });
+      setFormError('Adding parts has been disabled.');
+      setSaving(false);
+      return;
     }
 
     setSaving(false);
@@ -288,9 +275,6 @@ export default function InventoryScreen() {
             <Text style={s.title}>Inventory</Text>
             <Text style={s.subtitle}>Manage parts and stock levels.</Text>
           </View>
-          <TouchableOpacity style={s.addBtn} onPress={openAddModal}>
-            <Text style={s.addBtnText}>+ Add Part</Text>
-          </TouchableOpacity>
         </View>
 
         {/* Stats */}
@@ -379,11 +363,6 @@ export default function InventoryScreen() {
             <Text style={s.emptyText}>
               {parts.length === 0 ? 'No parts in inventory yet.' : 'No parts match your filters.'}
             </Text>
-            {parts.length === 0 && (
-              <TouchableOpacity onPress={openAddModal}>
-                <Text style={s.emptyLink}>Add your first part →</Text>
-              </TouchableOpacity>
-            )}
           </View>
         ) : (
           filteredParts.map((p) => {
@@ -484,7 +463,7 @@ export default function InventoryScreen() {
         >
           <View style={s.modalSheet}>
             <View style={s.modalHeader}>
-              <Text style={s.modalTitle}>{editingId ? 'Edit Part' : 'Add New Part'}</Text>
+              <Text style={s.modalTitle}>Edit Part</Text>
               <TouchableOpacity onPress={closeModal}>
                 <Text style={s.modalClose}>✕</Text>
               </TouchableOpacity>
@@ -576,7 +555,7 @@ export default function InventoryScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity style={s.saveBtn} onPress={handleSubmit} disabled={saving}>
                   <Text style={s.saveBtnText}>
-                    {saving ? 'Saving...' : editingId ? 'Save Changes' : '+ Add Part'}
+                    {saving ? 'Saving...' : 'Save Changes'}
                   </Text>
                 </TouchableOpacity>
               </View>

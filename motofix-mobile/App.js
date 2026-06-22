@@ -33,6 +33,8 @@ import AdminDashboardScreen from './screens/admin/DashboardScreen';
 import AdminBookingsScreen from './screens/admin/BookingsScreen';
 import AdminOrdersScreen from './screens/admin/OrdersScreen';
 import ReportsScreen from './screens/admin/ReportsScreen';
+import AdminMechanicsScreen from './screens/admin/AdminMechanicsScreen';
+
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -82,6 +84,7 @@ export function AdminTabs() {
       <Tab.Screen name="Bookings" component={AdminBookingsScreen} options={{ tabBarIcon: makeIcon('list') }} />
       <Tab.Screen name="Orders" component={AdminOrdersScreen} options={{ tabBarIcon: makeIcon('cart') }} />
       <Tab.Screen name="Inventory" component={InventoryScreen} options={{ tabBarIcon: makeIcon('cube') }} />
+            <Tab.Screen name="Mechanics" component={AdminMechanicsScreen} options={{ tabBarIcon: makeIcon('construct') }} />
       <Tab.Screen name="Reports" component={ReportsScreen} options={{ tabBarIcon: makeIcon('analytics') }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarIcon: makeIcon('person') }} />
     </Tab.Navigator>

@@ -9,7 +9,9 @@ export default function ProfileScreen({ navigation }) {
   const { theme, isDark, toggleTheme } = useTheme();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
-
+  const [certificates, setCertificates] = useState([]);
+  const [loadingCerts, setLoadingCerts] = useState(false);
+  
   useEffect(() => { fetchProfile(); }, []);
 
   async function fetchProfile() {
@@ -22,8 +24,24 @@ export default function ProfileScreen({ navigation }) {
       .eq('id', user.id)
       .single();
 
-    if (!error) setProfile(data);
+    if (!error) {
+      setProfile(data);
+      if (data?.role === 'mechanic') {
+        fetchCertificates(user.id);
+      }
+    }
     setLoading(false);
+  }
+
+  async function fetchCertificates(mechanicId) {
+    setLoadingCerts(true);
+    const { data } = await supabase
+      .from('mechanic_certificates')
+      .select('*')
+      .eq('mechanic_id', mechanicId)
+      .order('created_at', { ascending: false });
+    if (data) setCertificates(data);
+    setLoadingCerts(false);
   }
 
   async function handleLogout() {
@@ -105,6 +123,62 @@ export default function ProfileScreen({ navigation }) {
           />
         </View>
       </View>
+
+      {/* Certificates — mechanic only */}
+      {role === 'mechanic' && (
+        <>
+          <Text style={s.sectionLabel}>My Certificates</Text>
+          <View style={s.card}>
+            {loadingCerts ? (
+              <View style={{ padding: 16, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color={theme.primaryLight} />
+              </View>
+            ) : certificates.length === 0 ? (
+              <View style={{ padding: 16 }}>
+                <Text style={{ fontSize: 13, color: theme.textMuted }}>
+                  No certificates on file yet.
+                </Text>
+                <Text style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>
+                  Ask your administrator to upload your certificates.
+                </Text>
+              </View>
+            ) : (
+              certificates.map((c, index) => (
+                <View
+                  key={c.id}
+                  style={[
+                    s.infoRow,
+                    index < certificates.length - 1 && { borderBottomWidth: 1, borderBottomColor: theme.border },
+                  ]}
+                >
+                  <Text style={{ fontSize: 18, marginRight: 12 }}>📄</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[s.infoLabel]}>Certificate</Text>
+                    <Text style={s.infoValue}>{c.name}</Text>
+                    <Text style={{ fontSize: 11, color: theme.textMuted, marginTop: 1 }}>
+                      Uploaded {new Date(c.created_at).toLocaleDateString()}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const { Linking } = require('react-native');
+                      Linking.openURL(c.file_url);
+                    }}
+                    style={{
+                      paddingHorizontal: 12, paddingVertical: 6,
+                      borderRadius: 8, borderWidth: 1,
+                      borderColor: theme.primary + '44',
+                      backgroundColor: theme.primary + '18',
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, color: theme.primaryLight, fontWeight: '600' }}>View</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+          </View>
+        </>
+      )}
 
       {/* Role-specific actions */}
       {(role === 'admin' || role === 'mechanic' || role === 'staff') && (
