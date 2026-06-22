@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, StatusBar, Alert,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
@@ -26,7 +27,7 @@ async function getDownPaymentPercent() {
 
 export default function WalkInsScreen() {
   const { theme, isDark } = useTheme();
-  const [tab, setTab] = useState('booking'); // 'booking' | 'pos'
+  const [tab, setTab] = useState('booking');
   const [staffId, setStaffId] = useState(null);
 
   useEffect(() => {
@@ -38,18 +39,22 @@ export default function WalkInsScreen() {
   return (
     <View style={s.container}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={theme.bg} />
-      <View style={s.tabRow}>
+
+      {/* Tab Bar */}
+      <View style={s.tabBar}>
         <TouchableOpacity
           style={[s.tabBtn, tab === 'booking' && s.tabBtnActive]}
           onPress={() => setTab('booking')}
         >
-          <Text style={[s.tabBtnText, tab === 'booking' && s.tabBtnTextActive]}>📅 Booking</Text>
+          <Text style={s.tabIcon}>📅</Text>
+          <Text style={[s.tabBtnText, tab === 'booking' && s.tabBtnTextActive]}>Walk-in Booking</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[s.tabBtn, tab === 'pos' && s.tabBtnActive]}
           onPress={() => setTab('pos')}
         >
-          <Text style={[s.tabBtnText, tab === 'pos' && s.tabBtnTextActive]}>🧾 Parts POS</Text>
+          <Text style={s.tabIcon}>🧾</Text>
+          <Text style={[s.tabBtnText, tab === 'pos' && s.tabBtnTextActive]}>Parts POS</Text>
         </TouchableOpacity>
       </View>
 
@@ -63,7 +68,7 @@ export default function WalkInsScreen() {
 }
 
 // ─────────────────────────────────────────
-// Shared: Customer picker (search or create)
+// Customer Picker
 // ─────────────────────────────────────────
 function CustomerPicker({ selected, onSelect, theme }) {
   const s = pickerStyles(theme);
@@ -71,7 +76,6 @@ function CustomerPicker({ selected, onSelect, theme }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
-
   const [newCustomer, setNewCustomer] = useState({ firstName: '', lastName: '', email: '', phone: '' });
   const [creating, setCreating] = useState(false);
 
@@ -100,7 +104,6 @@ function CustomerPicker({ selected, onSelect, theme }) {
       });
       if (error) throw error;
       if (data.error) throw new Error(data.error);
-
       onSelect({
         id: data.account.id,
         first_name: data.account.first_name,
@@ -120,6 +123,11 @@ function CustomerPicker({ selected, onSelect, theme }) {
   if (selected) {
     return (
       <View style={s.selectedCard}>
+        <View style={s.selectedAvatar}>
+          <Text style={s.selectedAvatarText}>
+            {(selected.first_name?.[0] || '') + (selected.last_name?.[0] || '')}
+          </Text>
+        </View>
         <View style={{ flex: 1 }}>
           <Text style={s.selectedName}>{selected.first_name} {selected.last_name}</Text>
           <Text style={s.selectedSub}>{selected.email}{selected.phone ? ` · ${selected.phone}` : ''}</Text>
@@ -127,8 +135,8 @@ function CustomerPicker({ selected, onSelect, theme }) {
             <Text style={s.tempPassword}>Temp password: {selected._tempPassword}</Text>
           )}
         </View>
-        <TouchableOpacity onPress={() => onSelect(null)}>
-          <Text style={s.changeLink}>Change</Text>
+        <TouchableOpacity style={s.changeBtn} onPress={() => onSelect(null)}>
+          <Text style={s.changeText}>Change</Text>
         </TouchableOpacity>
       </View>
     );
@@ -141,7 +149,7 @@ function CustomerPicker({ selected, onSelect, theme }) {
           style={[s.modeChip, mode === 'search' && s.modeChipActive]}
           onPress={() => setMode('search')}
         >
-          <Text style={[s.modeChipText, mode === 'search' && s.modeChipTextActive]}>Search Existing</Text>
+          <Text style={[s.modeChipText, mode === 'search' && s.modeChipTextActive]}>🔍 Search</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[s.modeChip, mode === 'create' && s.modeChipActive]}
@@ -155,12 +163,13 @@ function CustomerPicker({ selected, onSelect, theme }) {
         <View>
           <View style={s.searchRow}>
             <TextInput
-              style={s.input}
+              style={s.searchInput}
               placeholder="Search by name, email, or phone..."
               placeholderTextColor={theme.textMuted}
               value={query}
               onChangeText={setQuery}
               onSubmitEditing={handleSearch}
+              returnKeyType="search"
             />
             <TouchableOpacity style={s.searchBtn} onPress={handleSearch}>
               <Text style={s.searchBtnText}>{searching ? '...' : 'Go'}</Text>
@@ -168,23 +177,34 @@ function CustomerPicker({ selected, onSelect, theme }) {
           </View>
           {results.map((c) => (
             <TouchableOpacity key={c.id} style={s.resultRow} onPress={() => onSelect(c)}>
-              <Text style={s.selectedName}>{c.first_name} {c.last_name}</Text>
-              <Text style={s.selectedSub}>{c.email}{c.phone ? ` · ${c.phone}` : ''}</Text>
+              <View style={s.resultAvatar}>
+                <Text style={s.resultAvatarText}>
+                  {(c.first_name?.[0] || '') + (c.last_name?.[0] || '')}
+                </Text>
+              </View>
+              <View>
+                <Text style={s.selectedName}>{c.first_name} {c.last_name}</Text>
+                <Text style={s.selectedSub}>{c.email}{c.phone ? ` · ${c.phone}` : ''}</Text>
+              </View>
             </TouchableOpacity>
           ))}
         </View>
       ) : (
         <View>
-          <TextInput style={s.input} placeholder="First Name" placeholderTextColor={theme.textMuted}
-            value={newCustomer.firstName} onChangeText={(v) => setNewCustomer({ ...newCustomer, firstName: v })} />
-          <TextInput style={s.input} placeholder="Last Name" placeholderTextColor={theme.textMuted}
-            value={newCustomer.lastName} onChangeText={(v) => setNewCustomer({ ...newCustomer, lastName: v })} />
+          <View style={s.createGrid}>
+            <TextInput style={[s.input, { flex: 1, marginRight: 8 }]} placeholder="First Name"
+              placeholderTextColor={theme.textMuted} value={newCustomer.firstName}
+              onChangeText={(v) => setNewCustomer({ ...newCustomer, firstName: v })} />
+            <TextInput style={[s.input, { flex: 1 }]} placeholder="Last Name"
+              placeholderTextColor={theme.textMuted} value={newCustomer.lastName}
+              onChangeText={(v) => setNewCustomer({ ...newCustomer, lastName: v })} />
+          </View>
           <TextInput style={s.input} placeholder="Email" placeholderTextColor={theme.textMuted}
             keyboardType="email-address" autoCapitalize="none"
             value={newCustomer.email} onChangeText={(v) => setNewCustomer({ ...newCustomer, email: v })} />
           <TextInput style={s.input} placeholder="Phone" placeholderTextColor={theme.textMuted}
-            keyboardType="phone-pad"
-            value={newCustomer.phone} onChangeText={(v) => setNewCustomer({ ...newCustomer, phone: v })} />
+            keyboardType="phone-pad" value={newCustomer.phone}
+            onChangeText={(v) => setNewCustomer({ ...newCustomer, phone: v })} />
           <TouchableOpacity style={s.createBtn} onPress={handleCreate} disabled={creating}>
             {creating ? <ActivityIndicator color="#fff" /> : <Text style={s.createBtnText}>+ Create & Select</Text>}
           </TouchableOpacity>
@@ -195,7 +215,7 @@ function CustomerPicker({ selected, onSelect, theme }) {
 }
 
 // ─────────────────────────────────────────
-// Tab 1: Walk-in Booking
+// Walk-in Booking
 // ─────────────────────────────────────────
 function WalkInBooking({ staffId, theme }) {
   const s = formStyles(theme);
@@ -203,8 +223,11 @@ function WalkInBooking({ staffId, theme }) {
   const [services, setServices] = useState([]);
   const [mechanics, setMechanics] = useState([]);
   const [downPaymentRate, setDownPaymentRate] = useState(0.15);
-  const [form, setForm] = useState({ service_id: '', mechanic_id: '', booking_date: '', booking_time: '', notes: '' });
+  const [form, setForm] = useState({
+    service_id: '', mechanic_id: '', booking_date: '', booking_time: '', notes: '',
+  });
   const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess] = useState('');
 
   useEffect(() => {
     supabase.from('services').select('*').eq('is_active', true).then(({ data }) => data && setServices(data));
@@ -257,7 +280,7 @@ function WalkInBooking({ staffId, theme }) {
         details: { customer_id: customer.id, service_id: form.service_id },
       });
 
-      Alert.alert('Success', 'Walk-in booking created! Confirm payment in the Payments tab.');
+      setSuccess('Walk-in booking created! Confirm payment in the Payments tab.');
       setForm({ service_id: '', mechanic_id: '', booking_date: '', booking_time: '', notes: '' });
       setCustomer(null);
     } catch (err) {
@@ -268,99 +291,143 @@ function WalkInBooking({ staffId, theme }) {
   }
 
   return (
-    <ScrollView style={s.scroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-      <Text style={s.sectionLabel}>1. Customer</Text>
-      <CustomerPicker selected={customer} onSelect={setCustomer} theme={theme} />
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+      <ScrollView style={s.scroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
 
-      <Text style={s.sectionLabel}>2. Service Details</Text>
+        {success ? (
+          <View style={s.successBox}>
+            <Text style={s.successText}>✅ {success}</Text>
+            <TouchableOpacity onPress={() => setSuccess('')}>
+              <Text style={s.successDismiss}>Dismiss</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
-      <Text style={s.fieldLabel}>Service</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-        {services.map((sv) => (
-          <TouchableOpacity
-            key={sv.id}
-            style={[s.chip, form.service_id === sv.id && s.chipActive]}
-            onPress={() => setForm({ ...form, service_id: sv.id })}
-          >
-            <Text style={[s.chipText, form.service_id === sv.id && s.chipTextActive]}>
-              {sv.name} — ₱{sv.base_price}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      <Text style={s.fieldLabel}>Mechanic (optional)</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-        <TouchableOpacity
-          style={[s.chip, !form.mechanic_id && s.chipActive]}
-          onPress={() => setForm({ ...form, mechanic_id: '' })}
-        >
-          <Text style={[s.chipText, !form.mechanic_id && s.chipTextActive]}>Any available</Text>
-        </TouchableOpacity>
-        {mechanics.map((m) => (
-          <TouchableOpacity
-            key={m.id}
-            style={[s.chip, form.mechanic_id === m.id && s.chipActive]}
-            onPress={() => setForm({ ...form, mechanic_id: m.id })}
-          >
-            <Text style={[s.chipText, form.mechanic_id === m.id && s.chipTextActive]}>
-              {m.first_name} {m.last_name}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      <Text style={s.fieldLabel}>Date (YYYY-MM-DD)</Text>
-      <TextInput
-        style={s.input}
-        placeholder="2026-06-25"
-        placeholderTextColor={theme.textMuted}
-        value={form.booking_date}
-        onChangeText={(v) => setForm({ ...form, booking_date: v })}
-      />
-
-      <Text style={s.fieldLabel}>Time</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-        {TIME_SLOTS.map((t) => (
-          <TouchableOpacity
-            key={t}
-            style={[s.chip, form.booking_time === t && s.chipActive]}
-            onPress={() => setForm({ ...form, booking_time: t })}
-          >
-            <Text style={[s.chipText, form.booking_time === t && s.chipTextActive]}>{t}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      <Text style={s.fieldLabel}>Notes (optional)</Text>
-      <TextInput
-        style={[s.input, { height: 70, textAlignVertical: 'top' }]}
-        placeholder="Special instructions..."
-        placeholderTextColor={theme.textMuted}
-        value={form.notes}
-        onChangeText={(v) => setForm({ ...form, notes: v })}
-        multiline
-      />
-
-      {selectedService && (
-        <View style={s.summaryBox}>
-          <Text style={s.summaryRow}>Total: ₱{total.toFixed(2)}</Text>
-          <Text style={[s.summaryRow, { color: theme.accent, fontWeight: 'bold' }]}>
-            Down Payment Due ({Math.round(downPaymentRate * 100)}%): ₱{downpayment}
-          </Text>
+        {/* Step 1 */}
+        <View style={s.stepHeader}>
+          <View style={s.stepBadge}><Text style={s.stepBadgeText}>1</Text></View>
+          <Text style={s.stepTitle}>Customer</Text>
         </View>
-      )}
+        <CustomerPicker selected={customer} onSelect={setCustomer} theme={theme} />
 
-      <TouchableOpacity style={s.submitBtn} onPress={handleSubmit} disabled={submitting}>
-        {submitting ? <ActivityIndicator color="#fff" /> : <Text style={s.submitBtnText}>Create Walk-in Booking</Text>}
-      </TouchableOpacity>
-      <View style={{ height: 32 }} />
-    </ScrollView>
+        {/* Step 2 */}
+        <View style={s.stepHeader}>
+          <View style={s.stepBadge}><Text style={s.stepBadgeText}>2</Text></View>
+          <Text style={s.stepTitle}>Select Service</Text>
+        </View>
+        <View style={s.serviceGrid}>
+          {services.map((sv) => (
+            <TouchableOpacity
+              key={sv.id}
+              style={[s.serviceCard, form.service_id === sv.id && s.serviceCardActive]}
+              onPress={() => setForm({ ...form, service_id: sv.id })}
+            >
+              <Text style={[s.serviceName, form.service_id === sv.id && s.serviceNameActive]} numberOfLines={2}>
+                {sv.name}
+              </Text>
+              <Text style={s.servicePrice}>₱{sv.base_price}</Text>
+              {form.service_id === sv.id && <Text style={s.serviceCheck}>✓</Text>}
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Step 3 */}
+        <View style={s.stepHeader}>
+          <View style={s.stepBadge}><Text style={s.stepBadgeText}>3</Text></View>
+          <Text style={s.stepTitle}>Mechanic <Text style={s.optional}>(optional)</Text></Text>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+          <TouchableOpacity
+            style={[s.mechanicChip, !form.mechanic_id && s.mechanicChipActive]}
+            onPress={() => setForm({ ...form, mechanic_id: '' })}
+          >
+            <Text style={[s.mechanicChipText, !form.mechanic_id && s.mechanicChipTextActive]}>
+              🔧 Any Available
+            </Text>
+          </TouchableOpacity>
+          {mechanics.map((m) => (
+            <TouchableOpacity
+              key={m.id}
+              style={[s.mechanicChip, form.mechanic_id === m.id && s.mechanicChipActive]}
+              onPress={() => setForm({ ...form, mechanic_id: m.id })}
+            >
+              <View style={s.mechanicInitials}>
+                <Text style={s.mechanicInitialsText}>
+                  {(m.first_name?.[0] || '') + (m.last_name?.[0] || '')}
+                </Text>
+              </View>
+              <Text style={[s.mechanicChipText, form.mechanic_id === m.id && s.mechanicChipTextActive]}>
+                {m.first_name} {m.last_name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        {/* Step 4 */}
+        <View style={s.stepHeader}>
+          <View style={s.stepBadge}><Text style={s.stepBadgeText}>4</Text></View>
+          <Text style={s.stepTitle}>Date & Time</Text>
+        </View>
+        <TextInput
+          style={s.input}
+          placeholder="Date (YYYY-MM-DD)"
+          placeholderTextColor={theme.textMuted}
+          value={form.booking_date}
+          onChangeText={(v) => setForm({ ...form, booking_date: v })}
+        />
+        <View style={s.timeGrid}>
+          {TIME_SLOTS.map((t) => (
+            <TouchableOpacity
+              key={t}
+              style={[s.timeChip, form.booking_time === t && s.timeChipActive]}
+              onPress={() => setForm({ ...form, booking_time: t })}
+            >
+              <Text style={[s.timeChipText, form.booking_time === t && s.timeChipTextActive]}>{t}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Step 5 */}
+        <View style={s.stepHeader}>
+          <View style={s.stepBadge}><Text style={s.stepBadgeText}>5</Text></View>
+          <Text style={s.stepTitle}>Notes <Text style={s.optional}>(optional)</Text></Text>
+        </View>
+        <TextInput
+          style={[s.input, { height: 80, textAlignVertical: 'top' }]}
+          placeholder="Special instructions..."
+          placeholderTextColor={theme.textMuted}
+          value={form.notes}
+          onChangeText={(v) => setForm({ ...form, notes: v })}
+          multiline
+        />
+
+        {selectedService && (
+          <View style={s.summaryBox}>
+            <View style={s.summaryRow}>
+              <Text style={s.summaryLabel}>Service Total</Text>
+              <Text style={s.summaryValue}>₱{total.toFixed(2)}</Text>
+            </View>
+            <View style={[s.summaryRow, { marginTop: 4 }]}>
+              <Text style={s.summaryLabel}>Down Payment ({Math.round(downPaymentRate * 100)}%)</Text>
+              <Text style={[s.summaryValue, { color: theme.accent, fontSize: 18 }]}>₱{downpayment}</Text>
+            </View>
+          </View>
+        )}
+
+        <TouchableOpacity style={s.submitBtn} onPress={handleSubmit} disabled={submitting}>
+          {submitting
+            ? <ActivityIndicator color="#fff" />
+            : <Text style={s.submitBtnText}>Create Walk-in Booking</Text>}
+        </TouchableOpacity>
+
+        <View style={{ height: 32 }} />
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 // ─────────────────────────────────────────
-// Tab 2: Walk-in Parts POS
+// Walk-in POS
 // ─────────────────────────────────────────
 function WalkInPOS({ staffId, theme }) {
   const s = formStyles(theme);
@@ -369,6 +436,7 @@ function WalkInPOS({ staffId, theme }) {
   const [parts, setParts] = useState([]);
   const [cart, setCart] = useState([]);
   const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess] = useState('');
 
   useEffect(() => {
     if (!search.trim()) { setParts([]); return; }
@@ -426,14 +494,11 @@ function WalkInPOS({ staffId, theme }) {
       }
 
       await supabase.from('audit_logs').insert({
-        action: 'CREATE_WALKIN_ORDER',
-        entity: 'orders',
-        entity_id: order.id,
-        performed_by: staffId,
-        details: { customer_id: customer.id, total },
+        action: 'CREATE_WALKIN_ORDER', entity: 'orders', entity_id: order.id,
+        performed_by: staffId, details: { customer_id: customer.id, total },
       });
 
-      Alert.alert('Success', 'Order created! Confirm payment in the Payments tab.');
+      setSuccess('Order created! Confirm payment in the Payments tab.');
       setCart([]);
       setCustomer(null);
       setSearch('');
@@ -445,60 +510,118 @@ function WalkInPOS({ staffId, theme }) {
   }
 
   return (
-    <ScrollView style={s.scroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-      <Text style={s.sectionLabel}>1. Customer</Text>
-      <CustomerPicker selected={customer} onSelect={setCustomer} theme={theme} />
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+      <ScrollView style={s.scroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
 
-      <Text style={s.sectionLabel}>2. Add Parts</Text>
-      <TextInput
-        style={s.input}
-        placeholder="Search parts by name..."
-        placeholderTextColor={theme.textMuted}
-        value={search}
-        onChangeText={setSearch}
-      />
-      {parts.map((p) => (
-        <TouchableOpacity key={p.id} style={s.partResultRow} onPress={() => addToCart(p)}>
-          <Text style={s.fieldLabel}>{p.name}</Text>
-          <Text style={{ color: theme.accent, fontSize: 12 }}>₱{p.price} · {p.stock_quantity} available</Text>
-        </TouchableOpacity>
-      ))}
+        {success ? (
+          <View style={s.successBox}>
+            <Text style={s.successText}>✅ {success}</Text>
+            <TouchableOpacity onPress={() => setSuccess('')}>
+              <Text style={s.successDismiss}>Dismiss</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
-      {cart.length > 0 && (
-        <View style={s.summaryBox}>
-          <Text style={s.sectionLabel}>Cart</Text>
-          {cart.map((item) => (
-            <View key={item.id} style={s.cartRow}>
-              <Text style={{ color: theme.text, flex: 1 }}>{item.name}</Text>
-              <TouchableOpacity onPress={() => updateQty(item.id, item.quantity - 1)} style={s.qtyBtn}>
-                <Text style={s.qtyBtnText}>−</Text>
-              </TouchableOpacity>
-              <Text style={{ color: theme.text, marginHorizontal: 8 }}>{item.quantity}</Text>
-              <TouchableOpacity onPress={() => updateQty(item.id, item.quantity + 1)} style={s.qtyBtn}>
-                <Text style={s.qtyBtnText}>+</Text>
-              </TouchableOpacity>
-              <Text style={{ color: theme.accent, width: 70, textAlign: 'right' }}>
-                ₱{(parseFloat(item.price) * item.quantity).toFixed(2)}
-              </Text>
-            </View>
-          ))}
-          <Text style={[s.summaryRow, { fontWeight: 'bold', marginTop: 8 }]}>Total: ₱{total.toFixed(2)}</Text>
+        <View style={s.stepHeader}>
+          <View style={s.stepBadge}><Text style={s.stepBadgeText}>1</Text></View>
+          <Text style={s.stepTitle}>Customer</Text>
         </View>
-      )}
+        <CustomerPicker selected={customer} onSelect={setCustomer} theme={theme} />
 
-      <TouchableOpacity style={s.submitBtn} onPress={handleCheckout} disabled={submitting}>
-        {submitting ? <ActivityIndicator color="#fff" /> : <Text style={s.submitBtnText}>Create Order</Text>}
-      </TouchableOpacity>
-      <View style={{ height: 32 }} />
-    </ScrollView>
+        <View style={s.stepHeader}>
+          <View style={s.stepBadge}><Text style={s.stepBadgeText}>2</Text></View>
+          <Text style={s.stepTitle}>Search Parts</Text>
+        </View>
+        <TextInput
+          style={s.input}
+          placeholder="Type to search parts..."
+          placeholderTextColor={theme.textMuted}
+          value={search}
+          onChangeText={setSearch}
+        />
+        {parts.map((p) => (
+          <TouchableOpacity key={p.id} style={s.partResultRow} onPress={() => addToCart(p)}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.partResultName}>{p.name}</Text>
+              <Text style={s.partResultSub}>{p.stock_quantity} in stock</Text>
+            </View>
+            <Text style={s.partResultPrice}>₱{p.price}</Text>
+            <View style={s.addBtn}>
+              <Text style={s.addBtnText}>+</Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+
+        {cart.length > 0 && (
+          <>
+            <View style={s.stepHeader}>
+              <View style={s.stepBadge}><Text style={s.stepBadgeText}>3</Text></View>
+              <Text style={s.stepTitle}>Cart ({cart.length} items)</Text>
+            </View>
+            <View style={s.cartBox}>
+              {cart.map((item) => (
+                <View key={item.id} style={s.cartRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.cartItemName}>{item.name}</Text>
+                    <Text style={s.cartItemPrice}>₱{parseFloat(item.price).toFixed(2)} each</Text>
+                  </View>
+                  <View style={s.qtyRow}>
+                    <TouchableOpacity style={s.qtyBtn} onPress={() => updateQty(item.id, item.quantity - 1)}>
+                      <Text style={s.qtyBtnText}>−</Text>
+                    </TouchableOpacity>
+                    <Text style={s.qtyValue}>{item.quantity}</Text>
+                    <TouchableOpacity style={s.qtyBtn} onPress={() => updateQty(item.id, item.quantity + 1)}>
+                      <Text style={s.qtyBtnText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={s.cartItemTotal}>₱{(parseFloat(item.price) * item.quantity).toFixed(2)}</Text>
+                </View>
+              ))}
+              <View style={s.cartTotalRow}>
+                <Text style={s.cartTotalLabel}>Total</Text>
+                <Text style={s.cartTotalValue}>₱{total.toFixed(2)}</Text>
+              </View>
+            </View>
+          </>
+        )}
+
+        <TouchableOpacity style={s.submitBtn} onPress={handleCheckout} disabled={submitting}>
+          {submitting
+            ? <ActivityIndicator color="#fff" />
+            : <Text style={s.submitBtnText}>Create Order</Text>}
+        </TouchableOpacity>
+
+        <View style={{ height: 32 }} />
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
+// ─────────────────────────────────────────
+// Styles
+// ─────────────────────────────────────────
 const styles = (theme) => StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.bg },
-  tabRow: { flexDirection: 'row', gap: 8, padding: 12, backgroundColor: theme.bg2, borderBottomWidth: 1, borderBottomColor: theme.border },
-  tabBtn: { flex: 1, paddingVertical: 10, borderRadius: 10, backgroundColor: theme.bg3, alignItems: 'center' },
+  tabBar: {
+    flexDirection: 'row',
+    gap: 10,
+    padding: 14,
+    backgroundColor: theme.bg2,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
+  },
+  tabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: theme.bg3,
+  },
   tabBtnActive: { backgroundColor: theme.primary },
+  tabIcon: { fontSize: 16 },
   tabBtnText: { color: theme.textSub, fontWeight: '600', fontSize: 13 },
   tabBtnTextActive: { color: '#fff' },
 });
@@ -506,39 +629,201 @@ const styles = (theme) => StyleSheet.create({
 const formStyles = (theme) => StyleSheet.create({
   scroll: { flex: 1 },
   content: { padding: 16 },
-  sectionLabel: { fontSize: 12, fontWeight: 'bold', color: theme.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 16, marginBottom: 8 },
-  fieldLabel: { fontSize: 13, color: theme.textSub, marginBottom: 6 },
-  input: { borderWidth: 1, borderColor: theme.border, borderRadius: 10, padding: 12, fontSize: 14, color: theme.text, backgroundColor: theme.bg2, marginBottom: 12 },
-  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, marginRight: 8 },
-  chipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
-  chipText: { color: theme.textSub, fontSize: 13 },
-  chipTextActive: { color: '#fff', fontWeight: 'bold' },
-  summaryBox: { backgroundColor: theme.bg2, borderRadius: 10, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: theme.border },
-  summaryRow: { color: theme.textSub, fontSize: 13, marginBottom: 4 },
-  submitBtn: { backgroundColor: theme.primary, borderRadius: 12, padding: 16, alignItems: 'center' },
-  submitBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
-  partResultRow: { padding: 12, borderRadius: 8, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, marginBottom: 6 },
-  cartRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
-  qtyBtn: { width: 26, height: 26, borderRadius: 6, backgroundColor: theme.bg3, justifyContent: 'center', alignItems: 'center' },
-  qtyBtnText: { color: theme.text, fontWeight: 'bold' },
+
+  successBox: {
+    backgroundColor: theme.success + '18',
+    borderWidth: 1,
+    borderColor: theme.success + '44',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  successText: { color: theme.success, fontSize: 13, fontWeight: '600', flex: 1 },
+  successDismiss: { color: theme.success, fontWeight: 'bold', marginLeft: 8 },
+
+  stepHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 20, marginBottom: 12 },
+  stepBadge: {
+    width: 26, height: 26, borderRadius: 13,
+    backgroundColor: theme.primary,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  stepBadgeText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
+  stepTitle: { fontSize: 15, fontWeight: 'bold', color: theme.text },
+  optional: { fontSize: 13, fontWeight: 'normal', color: theme.textMuted },
+
+  input: {
+    borderWidth: 1, borderColor: theme.border, borderRadius: 12,
+    padding: 14, marginBottom: 12, fontSize: 14,
+    color: theme.text, backgroundColor: theme.bg2,
+  },
+
+  serviceGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 4 },
+  serviceCard: {
+    width: '47%', backgroundColor: theme.bg2,
+    borderRadius: 12, padding: 14,
+    borderWidth: 2, borderColor: theme.border,
+  },
+  serviceCardActive: { borderColor: theme.primary, backgroundColor: theme.primary + '15' },
+  serviceName: { fontSize: 13, fontWeight: '600', color: theme.text, marginBottom: 6 },
+  serviceNameActive: { color: theme.primaryLight },
+  servicePrice: { fontSize: 13, fontWeight: 'bold', color: theme.accent },
+  serviceCheck: { position: 'absolute', top: 8, right: 10, color: theme.primary, fontWeight: 'bold', fontSize: 16 },
+
+  mechanicChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderRadius: 20, backgroundColor: theme.bg2,
+    borderWidth: 1, borderColor: theme.border, marginRight: 8,
+  },
+  mechanicChipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
+  mechanicInitials: {
+    width: 26, height: 26, borderRadius: 13,
+    backgroundColor: theme.bg3, justifyContent: 'center', alignItems: 'center',
+  },
+  mechanicInitialsText: { fontSize: 10, fontWeight: 'bold', color: theme.text },
+  mechanicChipText: { color: theme.textSub, fontSize: 13 },
+  mechanicChipTextActive: { color: '#fff', fontWeight: 'bold' },
+
+  timeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+  timeChip: {
+    width: '22%', paddingVertical: 10,
+    borderRadius: 10, backgroundColor: theme.bg2,
+    borderWidth: 1, borderColor: theme.border,
+    alignItems: 'center',
+  },
+  timeChipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
+  timeChipText: { color: theme.textSub, fontSize: 12 },
+  timeChipTextActive: { color: '#fff', fontWeight: 'bold' },
+
+  summaryBox: {
+    backgroundColor: theme.bg2, borderRadius: 14,
+    padding: 16, marginBottom: 20,
+    borderLeftWidth: 4, borderLeftColor: theme.accent,
+  },
+  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  summaryLabel: { fontSize: 13, color: theme.textSub },
+  summaryValue: { fontSize: 15, fontWeight: 'bold', color: theme.text },
+
+  submitBtn: {
+    backgroundColor: theme.primary, borderRadius: 14,
+    padding: 18, alignItems: 'center', marginTop: 8,
+  },
+  submitBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+
+  partResultRow: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: theme.bg2, borderRadius: 12,
+    padding: 12, marginBottom: 8,
+    borderWidth: 1, borderColor: theme.border,
+    borderLeftWidth: 3, borderLeftColor: theme.primary,
+  },
+  partResultName: { fontSize: 14, fontWeight: '600', color: theme.text },
+  partResultSub: { fontSize: 11, color: theme.textMuted, marginTop: 2 },
+  partResultPrice: { fontSize: 14, fontWeight: 'bold', color: theme.accent, marginRight: 10 },
+  addBtn: {
+    width: 30, height: 30, borderRadius: 15,
+    backgroundColor: theme.primary,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  addBtnText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+
+  cartBox: {
+    backgroundColor: theme.bg2, borderRadius: 14,
+    padding: 14, marginBottom: 16,
+    borderWidth: 1, borderColor: theme.border,
+  },
+  cartRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: theme.border,
+  },
+  cartItemName: { fontSize: 13, fontWeight: '600', color: theme.text },
+  cartItemPrice: { fontSize: 11, color: theme.textMuted, marginTop: 2 },
+  qtyRow: { flexDirection: 'row', alignItems: 'center', marginRight: 12 },
+  qtyBtn: {
+    width: 28, height: 28, borderRadius: 8,
+    backgroundColor: theme.bg3, justifyContent: 'center', alignItems: 'center',
+  },
+  qtyBtnText: { color: theme.text, fontWeight: 'bold', fontSize: 16 },
+  qtyValue: { color: theme.text, fontWeight: 'bold', marginHorizontal: 10, fontSize: 14 },
+  cartItemTotal: { fontSize: 13, fontWeight: 'bold', color: theme.accent, width: 70, textAlign: 'right' },
+  cartTotalRow: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center', paddingTop: 12, marginTop: 4,
+  },
+  cartTotalLabel: { fontSize: 14, fontWeight: 'bold', color: theme.text },
+  cartTotalValue: { fontSize: 18, fontWeight: 'bold', color: theme.primaryLight },
 });
 
 const pickerStyles = (theme) => StyleSheet.create({
-  selectedCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.bg2, borderRadius: 10, padding: 12, borderWidth: 1, borderColor: theme.border },
+  selectedCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: theme.bg2, borderRadius: 14,
+    padding: 14, borderWidth: 1, borderColor: theme.primary + '44',
+    borderLeftWidth: 3, borderLeftColor: theme.primary,
+  },
+  selectedAvatar: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: theme.primary,
+    justifyContent: 'center', alignItems: 'center', marginRight: 12,
+  },
+  selectedAvatarText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
   selectedName: { color: theme.text, fontWeight: '600', fontSize: 14 },
   selectedSub: { color: theme.textMuted, fontSize: 12, marginTop: 2 },
   tempPassword: { color: theme.warning, fontSize: 11, marginTop: 4 },
-  changeLink: { color: theme.primaryLight, fontSize: 13, fontWeight: '600' },
-  modeRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
-  modeChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border },
+  changeBtn: {
+    backgroundColor: theme.bg3, borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 6,
+  },
+  changeText: { color: theme.primaryLight, fontWeight: '600', fontSize: 12 },
+
+  modeRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  modeChip: {
+    flex: 1, paddingVertical: 10, borderRadius: 12,
+    backgroundColor: theme.bg2, borderWidth: 1,
+    borderColor: theme.border, alignItems: 'center',
+  },
   modeChipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
-  modeChipText: { color: theme.textSub, fontSize: 12 },
-  modeChipTextActive: { color: '#fff', fontWeight: 'bold' },
-  searchRow: { flexDirection: 'row', gap: 8 },
-  input: { flex: 1, borderWidth: 1, borderColor: theme.border, borderRadius: 10, padding: 12, fontSize: 14, color: theme.text, backgroundColor: theme.bg2, marginBottom: 10 },
-  searchBtn: { paddingHorizontal: 16, justifyContent: 'center', backgroundColor: theme.bg3, borderRadius: 10, borderWidth: 1, borderColor: theme.border, height: 46 },
-  searchBtnText: { color: theme.text, fontSize: 13 },
-  resultRow: { padding: 12, borderRadius: 8, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, marginBottom: 6 },
-  createBtn: { backgroundColor: theme.primary, borderRadius: 10, padding: 12, alignItems: 'center', marginTop: 4 },
-  createBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
+  modeChipText: { color: theme.textSub, fontSize: 13, fontWeight: '600' },
+  modeChipTextActive: { color: '#fff' },
+
+  searchRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  searchInput: {
+    flex: 1, borderWidth: 1, borderColor: theme.border,
+    borderRadius: 12, padding: 14, fontSize: 14,
+    color: theme.text, backgroundColor: theme.bg2,
+  },
+  searchBtn: {
+    paddingHorizontal: 18, justifyContent: 'center',
+    backgroundColor: theme.primary, borderRadius: 12,
+  },
+  searchBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
+
+  resultRow: {
+    flexDirection: 'row', alignItems: 'center',
+    padding: 12, borderRadius: 12,
+    backgroundColor: theme.bg2, borderWidth: 1,
+    borderColor: theme.border, marginBottom: 8,
+  },
+  resultAvatar: {
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: theme.bg3,
+    justifyContent: 'center', alignItems: 'center', marginRight: 12,
+  },
+  resultAvatarText: { fontSize: 12, fontWeight: 'bold', color: theme.primaryLight },
+
+  createGrid: { flexDirection: 'row', marginBottom: 0 },
+  input: {
+    borderWidth: 1, borderColor: theme.border,
+    borderRadius: 12, padding: 14, marginBottom: 10,
+    fontSize: 14, color: theme.text, backgroundColor: theme.bg2,
+  },
+  createBtn: {
+    backgroundColor: theme.primary, borderRadius: 12,
+    padding: 14, alignItems: 'center', marginTop: 4,
+  },
+  createBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
 });

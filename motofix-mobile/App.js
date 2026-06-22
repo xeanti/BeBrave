@@ -1,4 +1,5 @@
 import React from 'react';
+import { Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { NavigationContainer } from '@react-navigation/native';
@@ -111,14 +112,6 @@ function StaffMainGuarded({ navigation }) {
   );
 }
 
-function CustomerMainGuarded({ navigation }) {
-  return (
-    <RoleGuard allowedRoles={['customer']} navigation={navigation}>
-      <CustomerTabs />
-    </RoleGuard>
-  );
-}
-
 // --- MAIN NAVIGATION ROOT ---
 export function RootNav() {
   const { theme } = useTheme();
@@ -129,7 +122,7 @@ export function RootNav() {
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="Register" component={RegisterScreen} />
 
-        <Stack.Screen name="Main" component={CustomerMainGuarded} />
+        <Stack.Screen name="Main" component={CustomerTabs} />
         <Stack.Screen name="AdminMain" component={AdminMainGuarded} />
         <Stack.Screen name="MechanicMain" component={MechanicMainGuarded} />
         <Stack.Screen name="StaffMain" component={StaffMainGuarded} />
@@ -176,7 +169,14 @@ function getTabOptions(theme) {
   return {
     headerStyle: { backgroundColor: theme.bg, borderBottomWidth: 1, borderBottomColor: theme.border },
     headerTitleStyle: { color: theme.text, fontWeight: 'bold' },
-    tabBarStyle: { backgroundColor: theme.bg, borderTopWidth: 1, borderTopColor: theme.border, height: 60, paddingBottom: 8 },
+    tabBarStyle: {
+      backgroundColor: theme.bg,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+      height: Platform.OS === 'ios' ? 80 : 65,
+      paddingBottom: Platform.OS === 'ios' ? 24 : 10,
+      paddingTop: 8,
+    },
     tabBarActiveTintColor: theme.primaryLight,
     tabBarInactiveTintColor: theme.textMuted,
   };
