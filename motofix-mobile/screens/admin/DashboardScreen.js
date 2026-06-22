@@ -235,7 +235,7 @@ export default function AdminDashboardScreen({ navigation }) {
       <View style={s.section}>
         <View style={s.sectionHeader}>
           <Text style={s.sectionTitle}>Recent Orders</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Bookings')}>
+          <TouchableOpacity onPress={() => navigation.navigate('Orders')}>
             <Text style={s.sectionLink}>View all →</Text>
           </TouchableOpacity>
         </View>

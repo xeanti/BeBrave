@@ -3,6 +3,15 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
 
+function formatTimeSlot(time) {
+  if (!time) return '—';
+  const [h, m] = time.split(':');
+  const hour = parseInt(h, 10);
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+  const displayHour = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour;
+  return `${displayHour}:${m} ${ampm}`;
+}
+
 export default function BookingsScreen() {
   const { theme, isDark } = useTheme();
   const [bookings, setBookings] = useState([]);
@@ -106,7 +115,7 @@ export default function BookingsScreen() {
               </View>
               <View style={s.detailRow}>
                 <Text style={s.detailLabel}>🕐 Time</Text>
-                <Text style={s.detailValue}>{b.booking_time || '—'}</Text>
+                <Text style={s.detailValue}>{formatTimeSlot(b.booking_time)}</Text>
               </View>
               <View style={s.detailRow}>
                 <Text style={s.detailLabel}>💰 Total</Text>

@@ -31,6 +31,7 @@ import InventoryScreen from './screens/staff/InventoryScreen';
 // --- ADMIN MODULE SCREENS ---
 import AdminDashboardScreen from './screens/admin/DashboardScreen';
 import AdminBookingsScreen from './screens/admin/BookingsScreen';
+import AdminOrdersScreen from './screens/admin/OrdersScreen';
 import ReportsScreen from './screens/admin/ReportsScreen';
 
 const Tab = createBottomTabNavigator();
@@ -79,6 +80,7 @@ export function AdminTabs() {
     <Tab.Navigator screenOptions={getTabOptions(theme)}>
       <Tab.Screen name="Dashboard" component={AdminDashboardScreen} options={{ tabBarIcon: makeIcon('pie-chart') }} />
       <Tab.Screen name="Bookings" component={AdminBookingsScreen} options={{ tabBarIcon: makeIcon('list') }} />
+      <Tab.Screen name="Orders" component={AdminOrdersScreen} options={{ tabBarIcon: makeIcon('cart') }} />
       <Tab.Screen name="Inventory" component={InventoryScreen} options={{ tabBarIcon: makeIcon('cube') }} />
       <Tab.Screen name="Reports" component={ReportsScreen} options={{ tabBarIcon: makeIcon('analytics') }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarIcon: makeIcon('person') }} />

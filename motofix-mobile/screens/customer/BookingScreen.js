@@ -7,6 +7,20 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
 
+// Align slot coverage with web implementation (8am–5pm, 18 half-hour slots)
+const SHOP_OPEN = 8;
+const SHOP_CLOSE = 17;
+
+function generateTimeSlots() {
+  const slots = [];
+  for (let hour = SHOP_OPEN; hour < SHOP_CLOSE; hour++) {
+    slots.push(`${String(hour).padStart(2, '0')}:00`);
+    slots.push(`${String(hour).padStart(2, '0')}:30`);
+  }
+  return slots;
+}
+
+const timeSlots = generateTimeSlots();
 const TOTAL_STEPS = 5;
 
 export default function BookingScreen({ navigation }) {
@@ -32,12 +46,32 @@ export default function BookingScreen({ navigation }) {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedMechanic, setSelectedMechanic] = useState(null); // null = no preference
 
-  const timeSlots = [
-    '08:00 AM', '09:00 AM', '10:00 AM', '11:00 AM',
-    '01:00 PM', '02:00 PM', '03:00 PM', '04:00 PM',
-  ];
+  const [bookedMechanicIds, setBookedMechanicIds] = useState([]);
+  const [checkingAvailability, setCheckingAvailability] = useState(false);
 
   useEffect(() => { fetchData(); }, []);
+
+  useEffect(() => {
+    if (step === 4 && bookingDate && bookingTime) {
+      fetchMechanicAvailability();
+    }
+  }, [step]);
+
+  async function fetchMechanicAvailability() {
+    setCheckingAvailability(true);
+    const dateStr = toISODateString(bookingDate);
+    const { data, error } = await supabase
+      .from('bookings')
+      .select('mechanic_id')
+      .eq('booking_date', dateStr)
+      .eq('booking_time', bookingTime)
+      .in('status', ['pending', 'confirmed', 'in_progress'])
+      .not('mechanic_id', 'is', null);
+    if (!error && data) {
+      setBookedMechanicIds(data.map((b) => b.mechanic_id));
+    }
+    setCheckingAvailability(false);
+  }
 
   async function fetchData() {
     setLoading(true);
@@ -59,7 +93,6 @@ export default function BookingScreen({ navigation }) {
       console.log("MODELS:", m);
       console.log("MODEL ERROR:", modelError);
 
-      // Streamlined selection pulling all columns for mechanics
       const { data: mech, error: mechError } = await supabase
         .from('profiles')
         .select('*')
@@ -91,6 +124,15 @@ export default function BookingScreen({ navigation }) {
     });
   }
 
+  function formatTimeSlot(slot) {
+    if (!slot) return '—';
+    const [h, m] = slot.split(':');
+    const hour = parseInt(h, 10);
+    const ampm = hour >= 12 ? 'PM' : 'AM';
+    const displayHour = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour;
+    return `${displayHour}:${m} ${ampm}`;
+  }
+
   function onChangeDate(event, selectedDate) {
     if (Platform.OS === 'android') {
       setShowDatePicker(false);
@@ -107,6 +149,27 @@ export default function BookingScreen({ navigation }) {
     setSubmitting(true);
     const { data: { user } } = await supabase.auth.getUser();
     const bookingDateStr = toISODateString(bookingDate);
+
+    if (selectedMechanic) {
+      const { data: conflict } = await supabase
+        .from('bookings')
+        .select('id')
+        .eq('mechanic_id', selectedMechanic.id)
+        .eq('booking_date', bookingDateStr)
+        .eq('booking_time', bookingTime)
+        .in('status', ['pending', 'confirmed', 'in_progress'])
+        .limit(1);
+      if (conflict && conflict.length > 0) {
+        Alert.alert(
+          'Mechanic Unavailable',
+          'This mechanic was just booked for this time slot. Please choose another mechanic or time.'
+        );
+        setSubmitting(false);
+        setStep(4);
+        fetchMechanicAvailability();
+        return;
+      }
+    }
 
     const { data: assessment, error: assessmentError } = await supabase
       .from('pre_assessments')
@@ -136,7 +199,7 @@ export default function BookingScreen({ navigation }) {
       .insert({
         customer_id: user.id,
         service_id: selectedService.id,
-        mechanic_id: selectedMechanic?.id || null, // null = no preference / auto-assign
+        mechanic_id: selectedMechanic?.id || null, 
         booking_date: bookingDateStr,
         booking_time: bookingTime,
         status: 'pending',
@@ -315,7 +378,9 @@ export default function BookingScreen({ navigation }) {
                   style={[s.timeChip, bookingTime === t && s.timeChipActive]}
                   onPress={() => setBookingTime(t)}
                 >
-                  <Text style={[s.timeChipText, bookingTime === t && s.timeChipTextActive]}>{t}</Text>
+                  <Text style={[s.timeChipText, bookingTime === t && s.timeChipTextActive]}>
+                    {formatTimeSlot(t)}
+                  </Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -347,43 +412,59 @@ export default function BookingScreen({ navigation }) {
               {selectedMechanic === null && <Text style={s.checkmark}>✓</Text>}
             </TouchableOpacity>
 
+            {checkingAvailability && (
+              <Text style={s.checkingText}>Checking mechanic availability for this slot...</Text>
+            )}
             {mechanics.length === 0 ? (
               <View style={s.emptyMechanics}>
                 <Text style={s.emptyMechanicsText}>No mechanics listed yet.</Text>
               </View>
             ) : (
-              mechanics.map((mech) => (
-                <TouchableOpacity
-                  key={mech.id}
-                  style={[s.mechanicCard, selectedMechanic?.id === mech.id && s.mechanicCardActive]}
-                  onPress={() => setSelectedMechanic(mech)}
-                >
-                  {mech.mechanic_photo_url ? (
-                    <Image source={{ uri: mech.mechanic_photo_url }} style={s.mechanicAvatar} />
-                  ) : (
-                    <View style={s.mechanicAvatarPlaceholder}>
-                      <Text style={s.mechanicAvatarInitials}>
-                        {mech.first_name?.[0]}{mech.last_name?.[0]}
+              mechanics.map((mech) => {
+                const isBooked = bookedMechanicIds.includes(mech.id);
+                return (
+                  <TouchableOpacity
+                    key={mech.id}
+                    style={[
+                      s.mechanicCard,
+                      selectedMechanic?.id === mech.id && s.mechanicCardActive,
+                      isBooked && s.mechanicCardDisabled,
+                    ]}
+                    onPress={() => !isBooked && setSelectedMechanic(mech)}
+                    disabled={isBooked}
+                  >
+                    {mech.mechanic_photo_url ? (
+                      <Image source={{ uri: mech.mechanic_photo_url }} style={s.mechanicAvatar} />
+                    ) : (
+                      <View style={s.mechanicAvatarPlaceholder}>
+                        <Text style={s.mechanicAvatarInitials}>
+                          {mech.first_name?.[0]}{mech.last_name?.[0]}
+                        </Text>
+                      </View>
+                    )}
+                    <View style={s.mechanicInfo}>
+                      <Text style={[s.mechanicName, isBooked && { opacity: 0.5 }]}>
+                        {mech.first_name} {mech.last_name}
                       </Text>
+                      {mech.specialization ? (
+                        <Text style={s.mechanicSpec}>{mech.specialization}</Text>
+                      ) : null}
+                      {mech.rating_avg != null ? (
+                        <Text style={s.mechanicRating}>⭐ {Number(mech.rating_avg).toFixed(1)}</Text>
+                      ) : null}
+                      {isBooked && (
+                        <Text style={s.mechanicBookedText}>🚫 Already booked at this time</Text>
+                      )}
                     </View>
-                  )}
-                  <View style={s.mechanicInfo}>
-                    <Text style={s.mechanicName}>{mech.first_name} {mech.last_name}</Text>
-                    {mech.specialization ? (
-                      <Text style={s.mechanicSpec}>{mech.specialization}</Text>
-                    ) : null}
-                    {mech.rating_avg != null ? (
-                      <Text style={s.mechanicRating}>⭐ {Number(mech.rating_avg).toFixed(1)}</Text>
-                    ) : null}
-                  </View>
-                  {selectedMechanic?.id === mech.id && <Text style={s.checkmark}>✓</Text>}
-                </TouchableOpacity>
-              ))
+                    {selectedMechanic?.id === mech.id && !isBooked && <Text style={s.checkmark}>✓</Text>}
+                  </TouchableOpacity>
+                );
+              })
             )}
 
             <View style={s.optionalNote}>
               <Text style={s.optionalNoteText}>
-                💡 Selecting a mechanic is optional. Availability is subject to scheduling.
+                💡 Selecting a mechanic is optional. Mechanics already booked for your chosen date/time are shown as unavailable.
               </Text>
             </View>
           </View>
@@ -410,7 +491,7 @@ export default function BookingScreen({ navigation }) {
 
               <Text style={s.summaryTitle}>📅 Date & Time</Text>
               <Text style={s.summaryValue}>
-                {bookingDate ? formatDisplayDate(bookingDate) : 'None Specified'} at {bookingTime}
+                {bookingDate ? formatDisplayDate(bookingDate) : 'None Specified'} at {bookingTime ? formatTimeSlot(bookingTime) : '—'}
               </Text>
               <View style={s.divider} />
 
@@ -536,4 +617,7 @@ const styles = (theme) => StyleSheet.create({
   nextBtn: { flex: 2, backgroundColor: theme.primary, borderRadius: 12, padding: 16, alignItems: 'center', justifyContent: 'center' },
   nextBtnDisabled: { backgroundColor: theme.bg3 },
   nextBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
+  mechanicCardDisabled: { opacity: 0.5, borderColor: theme.border },
+  mechanicBookedText: { fontSize: 11, color: theme.danger, marginTop: 2, fontWeight: '600' },
+  checkingText: { fontSize: 12, color: theme.textMuted, marginBottom: 10, fontStyle: 'italic' },
 });
