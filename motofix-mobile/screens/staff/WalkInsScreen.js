@@ -4,6 +4,7 @@ import {
   TextInput, ActivityIndicator, StatusBar, Alert,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
 
@@ -59,7 +60,7 @@ export default function WalkInsScreen() {
       </View>
 
       {tab === 'booking' ? (
-        <WalkInBooking staffId={staffId} theme={theme} />
+        <WalkInBooking staffId={staffId} theme={theme} isDark={isDark} />
       ) : (
         <WalkInPOS staffId={staffId} theme={theme} />
       )}
@@ -217,15 +218,16 @@ function CustomerPicker({ selected, onSelect, theme }) {
 // ─────────────────────────────────────────
 // Walk-in Booking
 // ─────────────────────────────────────────
-function WalkInBooking({ staffId, theme }) {
+function WalkInBooking({ staffId, theme, isDark }) {
   const s = formStyles(theme);
   const [customer, setCustomer] = useState(null);
   const [services, setServices] = useState([]);
   const [mechanics, setMechanics] = useState([]);
   const [downPaymentRate, setDownPaymentRate] = useState(0.15);
   const [form, setForm] = useState({
-    service_id: '', mechanic_id: '', booking_date: '', booking_time: '', notes: '',
+    service_id: '', mechanic_id: '', booking_date: null, booking_time: '', notes: '',
   });
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState('');
 
@@ -239,18 +241,52 @@ function WalkInBooking({ staffId, theme }) {
   const total = selectedService ? (selectedService.base_price || 0) + (selectedService.labor_cost || 0) : 0;
   const downpayment = selectedService ? (total * downPaymentRate).toFixed(2) : null;
 
+  function toISODateString(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  function formatDisplayDate(date) {
+    return date.toLocaleDateString('en-US', {
+      weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    });
+  }
+
+  function formatTimeSlot(slot) {
+    if (!slot) return '—';
+    const [h, m] = slot.split(':');
+    const hour = parseInt(h, 10);
+    const ampm = hour >= 12 ? 'PM' : 'AM';
+    const displayHour = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour;
+    return `${displayHour}:${m} ${ampm}`;
+  }
+
+  function onChangeDate(event, selectedDate) {
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+      if (event.type === 'set' && selectedDate) setForm({ ...form, booking_date: selectedDate });
+    } else {
+      if (selectedDate) setForm({ ...form, booking_date: selectedDate });
+    }
+  }
+
   async function handleSubmit() {
     if (!customer) { Alert.alert('Error', 'Select or create a customer first.'); return; }
     if (!form.service_id) { Alert.alert('Error', 'Please select a service.'); return; }
-    if (!form.booking_date || !form.booking_time) { Alert.alert('Error', 'Please select a date and time.'); return; }
+    if (!form.booking_date) { Alert.alert('Error', 'Please select a date.'); return; }
+    if (!form.booking_time) { Alert.alert('Error', 'Please select a time slot.'); return; }
 
     setSubmitting(true);
     try {
+      const bookingDateStr = toISODateString(form.booking_date);
+
       const { data, error } = await supabase.from('bookings').insert({
         customer_id: customer.id,
         service_id: form.service_id,
         mechanic_id: form.mechanic_id || null,
-        booking_date: form.booking_date,
+        booking_date: bookingDateStr,
         booking_time: form.booking_time,
         notes: form.notes,
         status: 'confirmed',
@@ -281,7 +317,7 @@ function WalkInBooking({ staffId, theme }) {
       });
 
       setSuccess('Walk-in booking created! Confirm payment in the Payments tab.');
-      setForm({ service_id: '', mechanic_id: '', booking_date: '', booking_time: '', notes: '' });
+      setForm({ service_id: '', mechanic_id: '', booking_date: null, booking_time: '', notes: '' });
       setCustomer(null);
     } catch (err) {
       Alert.alert('Error', err.message);
@@ -363,18 +399,45 @@ function WalkInBooking({ staffId, theme }) {
           ))}
         </ScrollView>
 
-        {/* Step 4 */}
+        {/* Step 4 — Date & Time (now with DateTimePicker like BookingScreen) */}
         <View style={s.stepHeader}>
           <View style={s.stepBadge}><Text style={s.stepBadgeText}>4</Text></View>
           <Text style={s.stepTitle}>Date & Time</Text>
         </View>
-        <TextInput
-          style={s.input}
-          placeholder="Date (YYYY-MM-DD)"
-          placeholderTextColor={theme.textMuted}
-          value={form.booking_date}
-          onChangeText={(v) => setForm({ ...form, booking_date: v })}
-        />
+
+        {/* Date card — tap to open picker */}
+        <TouchableOpacity
+          style={s.dateCard}
+          onPress={() => setShowDatePicker(true)}
+          activeOpacity={0.7}
+        >
+          <Text style={s.dateCardIcon}>📅</Text>
+          <Text style={form.booking_date ? s.dateCardText : s.dateCardPlaceholder}>
+            {form.booking_date ? formatDisplayDate(form.booking_date) : 'Tap to choose a date'}
+          </Text>
+          <Text style={s.dateCardChevron}>›</Text>
+        </TouchableOpacity>
+
+        {showDatePicker && (
+          <DateTimePicker
+            value={form.booking_date || new Date()}
+            mode="date"
+            display={Platform.OS === 'ios' ? 'inline' : 'default'}
+            minimumDate={new Date()}
+            onChange={onChangeDate}
+            themeVariant={isDark ? 'dark' : 'light'}
+            accentColor={theme.primary}
+            style={s.nativePicker}
+          />
+        )}
+
+        {Platform.OS === 'ios' && showDatePicker && (
+          <TouchableOpacity style={s.dateDoneBtn} onPress={() => setShowDatePicker(false)}>
+            <Text style={s.dateDoneBtnText}>Done</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Time slots */}
         <View style={s.timeGrid}>
           {TIME_SLOTS.map((t) => (
             <TouchableOpacity
@@ -382,7 +445,9 @@ function WalkInBooking({ staffId, theme }) {
               style={[s.timeChip, form.booking_time === t && s.timeChipActive]}
               onPress={() => setForm({ ...form, booking_time: t })}
             >
-              <Text style={[s.timeChipText, form.booking_time === t && s.timeChipTextActive]}>{t}</Text>
+              <Text style={[s.timeChipText, form.booking_time === t && s.timeChipTextActive]}>
+                {formatTimeSlot(t)}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -659,6 +724,28 @@ const formStyles = (theme) => StyleSheet.create({
     padding: 14, marginBottom: 12, fontSize: 14,
     color: theme.text, backgroundColor: theme.bg2,
   },
+
+  // ── Date picker styles (matching BookingScreen) ──
+  dateCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: theme.bg2,
+    borderWidth: 1, borderColor: theme.border,
+    borderRadius: 12, padding: 14, marginBottom: 16,
+  },
+  dateCardIcon: { fontSize: 18, marginRight: 10 },
+  dateCardText: { flex: 1, color: theme.text, fontSize: 15, fontWeight: '600' },
+  dateCardPlaceholder: { flex: 1, color: theme.textMuted, fontSize: 15 },
+  dateCardChevron: { color: theme.textMuted, fontSize: 20 },
+  nativePicker: { alignSelf: 'stretch', marginBottom: 8 },
+  dateDoneBtn: {
+    alignSelf: 'flex-end',
+    backgroundColor: theme.primary,
+    borderRadius: 8,
+    paddingHorizontal: 16, paddingVertical: 8,
+    marginBottom: 16,
+  },
+  dateDoneBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
+  // ────────────────────────────────────────────────
 
   serviceGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 4 },
   serviceCard: {

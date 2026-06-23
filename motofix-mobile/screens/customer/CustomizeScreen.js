@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Image, ActivityIndicator, Alert, TextInput, StatusBar
+  Image, ActivityIndicator, Alert, TextInput, StatusBar, FlatList
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../lib/supabase';
@@ -11,26 +11,21 @@ export default function CustomizeScreen() {
   const { theme, isDark } = useTheme();
   const [step, setStep] = useState(1);
 
-  // Step 1: source
-  const [imageSource, setImageSource] = useState(''); // 'own' | 'reference'
+  const [imageSource, setImageSource] = useState('');
 
-  // Reference flow
   const [models, setModels] = useState([]);
   const [selectedModelId, setSelectedModelId] = useState('');
 
-  // Own photo flow
   const [ownPhotoUri, setOwnPhotoUri] = useState(null);
   const [ownPhotoBase64, setOwnPhotoBase64] = useState(null);
   const [ownMake, setOwnMake] = useState('');
   const [ownModel, setOwnModel] = useState('');
 
-  // Parts
   const [parts, setParts] = useState([]);
   const [selectedParts, setSelectedParts] = useState([]);
   const [partSearch, setPartSearch] = useState('');
   const [partCategory, setPartCategory] = useState('all');
 
-  // Result
   const [resultImage, setResultImage] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -103,15 +98,12 @@ export default function CustomizeScreen() {
       );
 
       if (categoryAlreadySelected) {
-        Alert.alert(
-          'Category conflict',
-          `You have already selected a part from the "${targetPart.category}" category.`
-        );
+        Alert.alert('Category conflict', `You already have a "${targetPart.category}" part selected.`);
         return prev;
       }
 
       if (prev.length >= 3) {
-        Alert.alert('Limit reached', 'You can only select up to 3 parts for AI preview.');
+        Alert.alert('Limit reached', 'You can select up to 3 parts.');
         return prev;
       }
 
@@ -214,7 +206,7 @@ export default function CustomizeScreen() {
     <View style={s.container}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={theme.bg} />
 
-      {/* Progress Wizard */}
+      {/* Progress Bar */}
       <View style={s.progressBar}>
         {[1, 2, 3, 4].map((i) => (
           <View key={i} style={s.progressStep}>
@@ -226,105 +218,175 @@ export default function CustomizeScreen() {
         ))}
       </View>
 
-      {/* Primary Scroll View Content Container */}
       <ScrollView style={s.scrollContainer} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
-        
+
         {/* Step 1: Source */}
         {step === 1 && (
           <View>
             <Text style={s.title}>Choose Photo Source</Text>
-            <Text style={s.subtitle}>Select how you want to provide your base motorcycle photo.</Text>
-            
-            <View style={s.row}>
-              <TouchableOpacity
-                style={[s.sourceCard, imageSource === 'own' && s.sourceCardActive]}
-                onPress={() => chooseSource('own')}
-              >
-                <Text style={s.sourceIcon}>📤</Text>
-                <Text style={[s.sourceTitle, imageSource === 'own' && s.sourceTextActive]}>My Photo</Text>
-                <Text style={s.sourceDesc}>Upload your own motorcycle photo</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[s.sourceCard, imageSource === 'reference' && s.sourceCardActive]}
-                onPress={() => chooseSource('reference')}
-              >
-                <Text style={s.sourceIcon}>🏍️</Text>
-                <Text style={[s.sourceTitle, imageSource === 'reference' && s.sourceTextActive]}>Our Models</Text>
-                <Text style={s.sourceDesc}>Choose from our reference photos</Text>
-              </TouchableOpacity>
-            </View>
+            <Text style={s.subtitle}>How do you want to provide your base motorcycle photo?</Text>
+
+            <TouchableOpacity
+              style={[s.sourceCard, imageSource === 'own' && s.sourceCardActive]}
+              onPress={() => chooseSource('own')}
+              activeOpacity={0.8}
+            >
+              <Text style={s.sourceIcon}>📤</Text>
+              <Text style={[s.sourceTitle, imageSource === 'own' && s.sourceTextActive]}>My Photo</Text>
+              <Text style={s.sourceDesc}>Upload a side-profile photo of your own motorcycle for a personalized preview.</Text>
+              {imageSource === 'own' && (
+                <View style={s.sourceCheck}><Text style={s.sourceCheckText}>✓ Selected</Text></View>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[s.sourceCard, imageSource === 'reference' && s.sourceCardActive]}
+              onPress={() => chooseSource('reference')}
+              activeOpacity={0.8}
+            >
+              <Text style={s.sourceIcon}>🏍️</Text>
+              <Text style={[s.sourceTitle, imageSource === 'reference' && s.sourceTextActive]}>Our Models</Text>
+              <Text style={s.sourceDesc}>Browse our verified catalog of motorcycle reference photos and pick your model.</Text>
+              {imageSource === 'reference' && (
+                <View style={s.sourceCheck}><Text style={s.sourceCheckText}>✓ Selected</Text></View>
+              )}
+            </TouchableOpacity>
           </View>
         )}
 
-        {/* Step 2: Source Verification & Image Prep */}
+        {/* Step 2 */}
         {step === 2 && (
           <View>
             {imageSource === 'own' ? (
               <View>
                 <Text style={s.title}>Upload Your Photo</Text>
-                <Text style={s.subtitle}>Take a crisp side profile image of your ride.</Text>
-                
-                <TouchableOpacity style={s.uploadBtn} onPress={pickImage}>
-                  <Text style={s.uploadBtnText}>
-                    {ownPhotoUri ? '📷 Change Photo' : '📷 Pick from Library'}
-                  </Text>
+                <Text style={s.subtitle}>Best results with a clear side-profile shot in good lighting.</Text>
+
+                {/* Photo area — big tap target whether empty or filled */}
+                <TouchableOpacity
+                  style={[s.photoPicker, ownPhotoUri && s.photoPickerFilled]}
+                  onPress={pickImage}
+                  activeOpacity={0.8}
+                >
+                  {ownPhotoUri ? (
+                    <>
+                      <Image source={{ uri: ownPhotoUri }} style={s.photoPickerImage} resizeMode="cover" />
+                      <View style={s.photoPickerOverlay}>
+                        <Text style={s.photoPickerOverlayText}>📷  Change Photo</Text>
+                      </View>
+                    </>
+                  ) : (
+                    <View style={s.photoPickerEmpty}>
+                      <Text style={s.photoPickerEmptyIcon}>📷</Text>
+                      <Text style={s.photoPickerEmptyTitle}>Tap to pick a photo</Text>
+                      <Text style={s.photoPickerEmptyHint}>JPG or PNG · side profile works best</Text>
+                    </View>
+                  )}
                 </TouchableOpacity>
-                {ownPhotoUri && (
-                  <Image source={{ uri: ownPhotoUri }} style={s.previewImage} resizeMode="cover" />
+
+                {/* Tips when no photo yet */}
+                {!ownPhotoUri && (
+                  <View style={s.tipsCard}>
+                    <Text style={s.tipsTitle}>📸  Photo tips</Text>
+                    {[
+                      'Shoot from the left or right side, straight on',
+                      'Good natural light — avoid harsh shadows',
+                      'Keep the full bike in frame with a clean background',
+                    ].map((tip, i) => (
+                      <View key={i} style={s.tipRow}>
+                        <Text style={s.tipDot}>·</Text>
+                        <Text style={s.tipText}>{tip}</Text>
+                      </View>
+                    ))}
+                  </View>
                 )}
-                <Text style={s.sectionLabel}>Brand details</Text>
-                <TextInput
-                  style={s.input}
-                  placeholder="Make (optional, e.g. Honda)"
-                  placeholderTextColor={theme.textMuted}
-                  value={ownMake}
-                  onChangeText={setOwnMake}
-                />
-                <TextInput
-                  style={s.input}
-                  placeholder="Model (optional, e.g. Click 125i)"
-                  placeholderTextColor={theme.textMuted}
-                  value={ownModel}
-                  onChangeText={setOwnModel}
-                />
+
+                <Text style={s.sectionLabel}>Brand details <Text style={s.optionalLabel}>(optional)</Text></Text>
+                <View style={s.inputRow}>
+                  <TextInput
+                    style={[s.input, { flex: 1, marginRight: 8, marginBottom: 0 }]}
+                    placeholder="Make  e.g. Honda"
+                    placeholderTextColor={theme.textMuted}
+                    value={ownMake}
+                    onChangeText={setOwnMake}
+                  />
+                  <TextInput
+                    style={[s.input, { flex: 1, marginBottom: 0 }]}
+                    placeholder="Model  e.g. Click 125i"
+                    placeholderTextColor={theme.textMuted}
+                    value={ownModel}
+                    onChangeText={setOwnModel}
+                  />
+                </View>
               </View>
             ) : (
+              /* ── Reference model picker: GRID instead of horizontal scroll ── */
               <View>
-                <Text style={s.title}>Select Motorcycle Model</Text>
-                <Text style={s.subtitle}>Select from our verified structural baselines.</Text>
-                
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
-                  {models.map((m) => (
-                    <TouchableOpacity
-                      key={m.id}
-                      style={[s.modelChip, selectedModelId === m.id && s.modelChipActive]}
-                      onPress={() => { setSelectedModelId(m.id); resetDownstream(); }}
-                    >
-                      <Text style={[s.modelChipText, selectedModelId === m.id && s.modelChipTextActive]}>
-                        {m.make} {m.model}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-                {selectedModel?.reference_photo_url && (
-                  <Image
-                    source={{ uri: selectedModel.reference_photo_url }}
-                    style={s.previewImage}
-                    resizeMode="cover"
-                  />
+                <Text style={s.title}>Select a Model</Text>
+                <Text style={s.subtitle}>Pick from our verified motorcycle catalog.</Text>
+
+                {models.length === 0 ? (
+                  <View style={s.emptyState}>
+                    <Text style={s.emptyStateIcon}>🏍️</Text>
+                    <Text style={s.emptyStateText}>No models available yet.</Text>
+                  </View>
+                ) : (
+                  <View style={s.modelGrid}>
+                    {models.map((m) => {
+                      const isSelected = selectedModelId === m.id;
+                      return (
+                        <TouchableOpacity
+                          key={m.id}
+                          style={[s.modelCard, isSelected && s.modelCardActive]}
+                          onPress={() => { setSelectedModelId(m.id); resetDownstream(); }}
+                          activeOpacity={0.75}
+                        >
+                          {/* Photo or placeholder */}
+                          {m.reference_photo_url ? (
+                            <Image
+                              source={{ uri: m.reference_photo_url }}
+                              style={s.modelCardImage}
+                              resizeMode="cover"
+                            />
+                          ) : (
+                            <View style={[s.modelCardImage, s.modelCardImagePlaceholder]}>
+                              <Text style={s.modelCardPlaceholderIcon}>🏍️</Text>
+                            </View>
+                          )}
+
+                          {/* Info row */}
+                          <View style={s.modelCardBody}>
+                            <Text style={[s.modelCardMake, isSelected && s.modelCardMakeActive]} numberOfLines={1}>
+                              {m.make}
+                            </Text>
+                            <Text style={[s.modelCardModel, isSelected && s.modelCardModelActive]} numberOfLines={1}>
+                              {m.model}
+                            </Text>
+                          </View>
+
+                          {/* Selected tick */}
+                          {isSelected && (
+                            <View style={s.modelCardCheck}>
+                              <Text style={s.modelCardCheckText}>✓</Text>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
                 )}
               </View>
             )}
           </View>
         )}
 
-        {/* Step 3: Accessory/Parts Selection */}
+        {/* Step 3: Parts */}
         {step === 3 && (
           <View>
             <View style={s.rowBetween}>
               <View>
                 <Text style={s.title}>Select Parts</Text>
-                <Text style={s.subtitle}>Choose elements you want the rendering engine to mount.</Text>
+                <Text style={s.subtitle}>Up to 3 parts, one per category.</Text>
               </View>
               <Text style={[s.badge, selectedParts.length >= 3 && s.badgeActive]}>
                 {selectedParts.length}/3
@@ -361,7 +423,6 @@ export default function CustomizeScreen() {
                 const selectedCategories = parts
                   .filter((p) => selectedParts.includes(p.id) && p.id !== part.id)
                   .map((p) => p.category);
-
                 const isCategoryDisabled = part.category && selectedCategories.includes(part.category);
                 const isLimitDisabled = !isSelected && selectedParts.length >= 3;
                 const isDisabled = !isSelected && (isLimitDisabled || isCategoryDisabled);
@@ -377,7 +438,7 @@ export default function CustomizeScreen() {
                       <Image source={{ uri: part.image_url }} style={s.partImage} />
                     ) : (
                       <View style={[s.partImage, s.partImagePlaceholder]}>
-                        <Text>⚙️</Text>
+                        <Text style={s.partImagePlaceholderText}>⚙️</Text>
                       </View>
                     )}
                     <View style={{ flex: 1 }}>
@@ -393,20 +454,24 @@ export default function CustomizeScreen() {
           </View>
         )}
 
-        {/* Step 4: Final Generation Trigger and Preview Screen */}
+        {/* Step 4 */}
         {step === 4 && (
           <View>
-            <Text style={s.title}>Preview & Generation</Text>
-            <Text style={s.subtitle}>Review your baseline assembly profile before calling AI models.</Text>
+            <Text style={s.title}>Preview & Generate</Text>
+            <Text style={s.subtitle}>Review your build before generating the AI preview.</Text>
 
             {!!error && <View style={s.errorBox}><Text style={s.errorText}>{error}</Text></View>}
 
             {!resultImage && !loading && (
               <View style={s.card}>
                 <Text style={s.sectionLabel}>Configuration Summary</Text>
-                <Text style={[s.partName, { marginBottom: 4 }]}>Target Profile: {motorcycleLabel || 'Custom Build'}</Text>
-                <Text style={[s.partCat, { marginBottom: 12 }]}>Source Method: {imageSource === 'own' ? 'User Uploaded' : 'Catalog Reference'}</Text>
-                
+                <Text style={[s.partName, { marginBottom: 4 }]}>
+                  {motorcycleLabel || 'Custom Build'}
+                </Text>
+                <Text style={[s.partCat, { marginBottom: 12 }]}>
+                  Source: {imageSource === 'own' ? 'User Uploaded' : 'Catalog Reference'}
+                </Text>
+
                 <Text style={s.sectionLabel}>Selected Components</Text>
                 {parts.filter((p) => selectedParts.includes(p.id)).map((p) => (
                   <View key={p.id} style={s.rowBetween}>
@@ -414,9 +479,9 @@ export default function CustomizeScreen() {
                     <Text style={{ color: theme.accent }}>₱{p.price}</Text>
                   </View>
                 ))}
-                
+
                 <View style={[s.rowBetween, { borderTopWidth: 1, borderTopColor: theme.border, marginTop: 12, paddingTop: 12 }]}>
-                  <Text style={{ color: theme.text, fontWeight: 'bold' }}>Total Structural Estimate</Text>
+                  <Text style={{ color: theme.text, fontWeight: 'bold' }}>Total Estimate</Text>
                   <Text style={{ color: theme.accent, fontWeight: 'bold' }}>
                     ₱{parts.filter((p) => selectedParts.includes(p.id)).reduce((sum, p) => sum + parseFloat(p.price), 0).toFixed(2)}
                   </Text>
@@ -427,7 +492,7 @@ export default function CustomizeScreen() {
             {loading && (
               <View style={s.resultBox}>
                 <ActivityIndicator size="large" color={theme.primaryLight} />
-                <Text style={[s.emptyText, { marginTop: 16 }]}>Generating preview… this may take 1 to 3 minutes</Text>
+                <Text style={[s.emptyText, { marginTop: 16 }]}>Generating… this may take 1–3 minutes</Text>
               </View>
             )}
 
@@ -435,7 +500,6 @@ export default function CustomizeScreen() {
               <View style={s.card}>
                 <Text style={s.sectionLabel}>✨ Render Finished</Text>
                 <Image source={{ uri: resultImage }} style={s.resultImage} resizeMode="contain" />
-                
                 <TouchableOpacity
                   style={[s.generateBtn, { marginTop: 16, backgroundColor: theme.bg3 }]}
                   onPress={() => { setResultImage(null); setSelectedParts([]); setStep(1); }}
@@ -449,32 +513,32 @@ export default function CustomizeScreen() {
 
       </ScrollView>
 
-      {/* Fixed Layout Action Control Footer */}
+      {/* Footer */}
       <View style={s.footer}>
         {step > 1 && (
           <TouchableOpacity style={s.backBtn} onPress={() => setStep(step - 1)} disabled={loading}>
             <Text style={s.backBtnText}>← Back</Text>
           </TouchableOpacity>
         )}
-        
+
         {step < 4 ? (
           <TouchableOpacity
             style={[s.nextBtn, step === 1 && !imageSource && s.nextBtnDisabled]}
             onPress={() => {
               if (step === 1 && !imageSource) {
-                Alert.alert('Selection Required', 'Please pick a file entry source route.');
+                Alert.alert('Selection Required', 'Please pick a photo source.');
                 return;
               }
               if (step === 2 && imageSource === 'own' && !ownPhotoUri) {
-                Alert.alert('Image Required', 'Please pick a snapshot variant from your device gallery.');
+                Alert.alert('Image Required', 'Please pick a photo from your gallery.');
                 return;
               }
               if (step === 2 && imageSource === 'reference' && !selectedModelId) {
-                Alert.alert('Selection Required', 'Please select a production motorcycle asset.');
+                Alert.alert('Selection Required', 'Please select a motorcycle model.');
                 return;
               }
               if (step === 3 && selectedParts.length === 0) {
-                Alert.alert('Configuration Empty', 'Please bundle at least 1 hardware component variant.');
+                Alert.alert('Nothing selected', 'Please select at least 1 part.');
                 return;
               }
               setStep(step + 1);
@@ -484,16 +548,15 @@ export default function CustomizeScreen() {
           </TouchableOpacity>
         ) : (
           !resultImage && (
-            <TouchableOpacity 
-              style={[s.nextBtn, loading && s.nextBtnDisabled]} 
-              onPress={handleGenerate} 
+            <TouchableOpacity
+              style={[s.nextBtn, loading && s.nextBtnDisabled]}
+              onPress={handleGenerate}
               disabled={loading}
             >
-              {loading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={s.nextBtnText}>✨ Generate Preview</Text>
-              )}
+              {loading
+                ? <ActivityIndicator color="#fff" />
+                : <Text style={s.nextBtnText}>✨ Generate Preview</Text>
+              }
             </TouchableOpacity>
           )
         )}
@@ -504,61 +567,206 @@ export default function CustomizeScreen() {
 
 const styles = (theme) => StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.bg },
-  progressBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 20, backgroundColor: theme.bg2, borderBottomWidth: 1, borderBottomColor: theme.border },
+
+  progressBar: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    padding: 20, backgroundColor: theme.bg2,
+    borderBottomWidth: 1, borderBottomColor: theme.border,
+  },
   progressStep: { flexDirection: 'row', alignItems: 'center' },
-  progressDot: { width: 32, height: 32, borderRadius: 16, backgroundColor: theme.bg3, borderWidth: 2, borderColor: theme.border, justifyContent: 'center', alignItems: 'center' },
+  progressDot: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: theme.bg3, borderWidth: 2, borderColor: theme.border,
+    justifyContent: 'center', alignItems: 'center',
+  },
   progressDotActive: { backgroundColor: theme.primary, borderColor: theme.primary },
   progressNum: { color: theme.textMuted, fontWeight: 'bold', fontSize: 13 },
   progressNumActive: { color: '#fff' },
   progressLine: { width: 40, height: 2, backgroundColor: theme.border },
   progressLineActive: { backgroundColor: theme.primary },
+
   scrollContainer: { flex: 1 },
   content: { padding: 16, paddingBottom: 30 },
+
   title: { fontSize: 22, fontWeight: 'bold', color: theme.text, marginBottom: 4 },
   subtitle: { fontSize: 13, color: theme.textSub, marginBottom: 20 },
-  sectionLabel: { fontSize: 11, fontWeight: 'bold', color: theme.textSub, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10, marginTop: 4 },
-  errorBox: { backgroundColor: '#7f1d1d22', borderWidth: 1, borderColor: '#ef4444', borderRadius: 10, padding: 12, marginBottom: 16 },
+  sectionLabel: {
+    fontSize: 11, fontWeight: 'bold', color: theme.textSub,
+    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10, marginTop: 4,
+  },
+
+  errorBox: {
+    backgroundColor: '#7f1d1d22', borderWidth: 1, borderColor: '#ef4444',
+    borderRadius: 10, padding: 12, marginBottom: 16,
+  },
   errorText: { color: '#ef4444', fontSize: 13 },
+
   row: { flexDirection: 'row', gap: 10, marginBottom: 16 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  sourceCard: { flex: 1, backgroundColor: theme.card, borderRadius: 12, padding: 14, borderWidth: 2, borderColor: theme.border, alignItems: 'center' },
-  sourceCardActive: { borderColor: theme.primary, backgroundColor: theme.primary + '15' },
-  sourceIcon: { fontSize: 28, marginBottom: 6 },
-  sourceTitle: { fontSize: 14, fontWeight: 'bold', color: theme.text, marginBottom: 4 },
+
+  sourceCard: {
+    backgroundColor: theme.card, borderRadius: 16, padding: 24,
+    borderWidth: 2, borderColor: theme.border, alignItems: 'center',
+    marginBottom: 14,
+  },
+  sourceCardActive: { borderColor: theme.primary, backgroundColor: theme.primary + '12' },
+  sourceIcon: { fontSize: 48, marginBottom: 12 },
+  sourceTitle: { fontSize: 18, fontWeight: 'bold', color: theme.text, marginBottom: 8 },
   sourceTextActive: { color: theme.primaryLight },
-  sourceDesc: { fontSize: 11, color: theme.textMuted, textAlign: 'center' },
-  card: { backgroundColor: theme.card, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: theme.border, marginBottom: 16 },
-  uploadBtn: { backgroundColor: theme.primary, borderRadius: 10, padding: 12, alignItems: 'center', marginBottom: 12 },
-  uploadBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
-  previewImage: { width: '100%', height: 180, borderRadius: 10, marginBottom: 16 },
-  input: { borderWidth: 1, borderColor: theme.border, borderRadius: 10, padding: 12, marginBottom: 12, fontSize: 14, color: theme.text, backgroundColor: theme.bg2 },
-  modelChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, marginRight: 8 },
-  modelChipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
-  modelChipText: { color: theme.textSub, fontSize: 13 },
-  modelChipTextActive: { color: '#fff', fontWeight: 'bold' },
-  badge: { fontSize: 12, color: theme.textMuted, backgroundColor: theme.bg2, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, overflow: 'hidden' },
+  sourceDesc: { fontSize: 13, color: theme.textMuted, textAlign: 'center', lineHeight: 19 },
+  sourceCheck: {
+    marginTop: 16, paddingHorizontal: 16, paddingVertical: 6,
+    backgroundColor: theme.primary, borderRadius: 20,
+  },
+  sourceCheckText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
+
+  card: {
+    backgroundColor: theme.card, borderRadius: 12, padding: 14,
+    borderWidth: 1, borderColor: theme.border, marginBottom: 16,
+  },
+
+  // Photo picker
+  photoPicker: {
+    width: '100%', height: 220, borderRadius: 16,
+    borderWidth: 2, borderColor: theme.border, borderStyle: 'dashed',
+    backgroundColor: theme.bg2, overflow: 'hidden',
+    marginBottom: 16, justifyContent: 'center', alignItems: 'center',
+  },
+  photoPickerFilled: {
+    borderStyle: 'solid', borderColor: theme.primary + '66',
+  },
+  photoPickerImage: { width: '100%', height: '100%' },
+  photoPickerOverlay: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: 'rgba(0,0,0,0.45)', paddingVertical: 10, alignItems: 'center',
+  },
+  photoPickerOverlayText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
+  photoPickerEmpty: { alignItems: 'center', padding: 24 },
+  photoPickerEmptyIcon: { fontSize: 52, marginBottom: 12 },
+  photoPickerEmptyTitle: { fontSize: 16, fontWeight: 'bold', color: theme.text, marginBottom: 6 },
+  photoPickerEmptyHint: { fontSize: 12, color: theme.textMuted },
+
+  // Tips card
+  tipsCard: {
+    backgroundColor: theme.bg2, borderRadius: 12,
+    borderWidth: 1, borderColor: theme.border,
+    padding: 14, marginBottom: 20,
+  },
+  tipsTitle: { fontSize: 13, fontWeight: '700', color: theme.text, marginBottom: 10 },
+  tipRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6 },
+  tipDot: { color: theme.primary, fontWeight: 'bold', fontSize: 16, marginRight: 8, lineHeight: 18 },
+  tipText: { flex: 1, fontSize: 13, color: theme.textSub, lineHeight: 18 },
+
+  optionalLabel: { fontSize: 11, fontWeight: 'normal', color: theme.textMuted, textTransform: 'none' },
+  inputRow: { flexDirection: 'row', marginBottom: 12 },
+
+  input: {
+    borderWidth: 1, borderColor: theme.border, borderRadius: 10,
+    padding: 12, marginBottom: 12, fontSize: 14,
+    color: theme.text, backgroundColor: theme.bg2,
+  },
+
+  // ── Model grid (replaces horizontal scroll) ──
+  modelGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  modelCard: {
+    width: '47%',
+    backgroundColor: theme.bg2,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: theme.border,
+    overflow: 'hidden',
+  },
+  modelCardActive: {
+    borderColor: theme.primary,
+    backgroundColor: theme.primary + '0D',
+  },
+  modelCardImage: {
+    width: '100%',
+    height: 110,
+    backgroundColor: theme.bg3,
+  },
+  modelCardImagePlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modelCardPlaceholderIcon: { fontSize: 36 },
+  modelCardBody: {
+    padding: 10,
+  },
+  modelCardMake: {
+    fontSize: 11, fontWeight: '700', color: theme.textMuted,
+    textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 2,
+  },
+  modelCardMakeActive: { color: theme.primaryLight },
+  modelCardModel: {
+    fontSize: 14, fontWeight: '700', color: theme.text,
+  },
+  modelCardModelActive: { color: theme.primaryLight },
+  modelCardCheck: {
+    position: 'absolute', top: 8, right: 8,
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: theme.primary,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  modelCardCheckText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
+
+  // Empty state
+  emptyState: { alignItems: 'center', paddingVertical: 48 },
+  emptyStateIcon: { fontSize: 48, marginBottom: 12 },
+  emptyStateText: { color: theme.textMuted, fontSize: 14 },
+
+  badge: {
+    fontSize: 12, color: theme.textMuted, backgroundColor: theme.bg2,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, overflow: 'hidden',
+  },
   badgeActive: { color: theme.primaryLight, backgroundColor: theme.primary + '22' },
-  catChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, marginRight: 8 },
+
+  catChip: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
+    backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, marginRight: 8,
+  },
   catChipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
   catChipText: { color: theme.textSub, fontSize: 12, textTransform: 'capitalize' },
   catChipTextActive: { color: '#fff', fontWeight: 'bold' },
-  partRow: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 10, borderWidth: 1, borderColor: theme.border, marginBottom: 8, backgroundColor: theme.bg2 },
+
+  partRow: {
+    flexDirection: 'row', alignItems: 'center', padding: 12,
+    borderRadius: 10, borderWidth: 1, borderColor: theme.border,
+    marginBottom: 8, backgroundColor: theme.bg2,
+  },
   partRowSelected: { borderColor: theme.primary, backgroundColor: theme.primary + '08' },
   partRowDisabled: { opacity: 0.3 },
   partImage: { width: 46, height: 46, borderRadius: 8, marginRight: 12 },
   partImagePlaceholder: { backgroundColor: theme.bg3, justifyContent: 'center', alignItems: 'center' },
+  partImagePlaceholderText: { fontSize: 20 },
   partName: { fontSize: 14, fontWeight: '600', color: theme.text },
   partCat: { fontSize: 12, color: theme.textMuted, textTransform: 'capitalize' },
   partPrice: { color: theme.accent, fontWeight: 'bold', fontSize: 14 },
+
   generateBtn: { backgroundColor: theme.primary, borderRadius: 12, padding: 16, alignItems: 'center' },
   generateBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
   resultBox: { alignItems: 'center', padding: 32 },
   resultImage: { width: '100%', height: 260, borderRadius: 12 },
   emptyText: { color: theme.textMuted, fontSize: 13, textAlign: 'center', marginVertical: 20 },
-  footer: { flexDirection: 'row', padding: 16, gap: 12, backgroundColor: theme.bg2, borderTopWidth: 1, borderTopColor: theme.border, alignItems: 'center' },
-  backBtn: { flex: 1, borderWidth: 1, borderColor: theme.border, borderRadius: 12, padding: 16, alignItems: 'center', justifyContent: 'center' },
+
+  footer: {
+    flexDirection: 'row', padding: 16, gap: 12,
+    backgroundColor: theme.bg2, borderTopWidth: 1, borderTopColor: theme.border,
+    alignItems: 'center',
+  },
+  backBtn: {
+    flex: 1, borderWidth: 1, borderColor: theme.border, borderRadius: 12,
+    padding: 16, alignItems: 'center', justifyContent: 'center',
+  },
   backBtnText: { color: theme.text, fontWeight: '600', fontSize: 15 },
-  nextBtn: { flex: 2, backgroundColor: theme.primary, borderRadius: 12, padding: 16, alignItems: 'center', justifyContent: 'center' },
+  nextBtn: {
+    flex: 2, backgroundColor: theme.primary, borderRadius: 12,
+    padding: 16, alignItems: 'center', justifyContent: 'center',
+  },
   nextBtnDisabled: { backgroundColor: theme.bg3, opacity: 0.5 },
   nextBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
 });

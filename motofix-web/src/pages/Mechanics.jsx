@@ -19,7 +19,7 @@ export default function Mechanics() {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, first_name, last_name, phone, mechanic_photo_url, specialization, rating_avg, rating_count')
+        .select('id, first_name, last_name, phone, profile_photo_url, specialization, rating_avg, rating_count')
         .eq('role', 'mechanic');
 
       if (error) throw error;
@@ -59,13 +59,12 @@ export default function Mechanics() {
     }
 
     try {
-const { data, error } = await supabase
-  .from('mechanic_certificates')
-  .select('*')
-  .eq('mechanic_id', mechanic.id)
-  .order('created_at', { ascending: false });
+      const { data, error } = await supabase
+        .from('mechanic_certificates')
+        .select('*')
+        .eq('mechanic_id', mechanic.id)
+        .order('created_at', { ascending: false });
 
-  
       if (error) throw error;
       if (data) setCertificates(data);
     } catch (err) {
@@ -79,6 +78,23 @@ const { data, error } = await supabase
     setSelected(null);
     setReviews([]);
     setCertificates([]);
+  }
+
+  // ── Shared avatar component ───────────────────────────────────────────────
+  function Avatar({ url, firstName, lastName, size = 'md' }) {
+    const initials = (firstName?.[0] || '') + (lastName?.[0] || '');
+    const dims = size === 'lg' ? 'w-16 h-16 text-xl' : 'w-12 h-12 text-lg';
+    return url ? (
+      <img
+        src={url}
+        alt={`${firstName} ${lastName}`}
+        className={`${dims} rounded-full object-cover border-2 border-primary-200 dark:border-primary-500/30 flex-shrink-0 shadow-sm`}
+      />
+    ) : (
+      <div className={`${dims} rounded-full bg-primary-600 flex items-center justify-center font-bold text-white flex-shrink-0 shadow-sm`}>
+        {initials}
+      </div>
+    );
   }
 
   return (
@@ -105,17 +121,9 @@ const { data, error } = await supabase
                 onClick={() => openProfile(m)}
                 className="bg-white dark:bg-dark-800 rounded-xl p-5 text-center hover:bg-gray-50 dark:hover:bg-dark-800/70 hover:-translate-y-0.5 hover:border-primary-500/30 border border-gray-200 dark:border-white/5 shadow-sm dark:shadow-none transition w-full"
               >
-                {m.mechanic_photo_url ? (
-                  <img
-                    src={m.mechanic_photo_url}
-                    alt={`${m.first_name} ${m.last_name}`}
-                    className="w-16 h-16 rounded-full object-cover mx-auto mb-3 ring-2 ring-primary-500/30"
-                  />
-                ) : (
-                  <div className="w-16 h-16 rounded-full bg-primary-600 flex items-center justify-center text-xl font-bold mx-auto mb-3 text-white">
-                    {(m.first_name?.[0] || '') + (m.last_name?.[0] || '')}
-                  </div>
-                )}
+                <div className="flex justify-center mb-3">
+                  <Avatar url={m.profile_photo_url} firstName={m.first_name} lastName={m.last_name} size="lg" />
+                </div>
 
                 <p className="font-semibold">
                   {m.first_name} {m.last_name}
@@ -153,17 +161,7 @@ const { data, error } = await supabase
             {/* Header */}
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-3">
-                {selected.mechanic_photo_url ? (
-                  <img
-                    src={selected.mechanic_photo_url}
-                    alt={`${selected.first_name} ${selected.last_name}`}
-                    className="w-12 h-12 rounded-full object-cover ring-2 ring-primary-500/30"
-                  />
-                ) : (
-                  <div className="w-12 h-12 rounded-full bg-primary-600 flex items-center justify-center text-lg font-bold text-white">
-                    {(selected.first_name?.[0] || '') + (selected.last_name?.[0] || '')}
-                  </div>
-                )}
+                <Avatar url={selected.profile_photo_url} firstName={selected.first_name} lastName={selected.last_name} size="md" />
                 <div>
                   <p className="font-semibold">{selected.first_name} {selected.last_name}</p>
                   <p className="text-sm text-gray-500 dark:text-gray-400">

@@ -39,9 +39,18 @@ export default function Dashboard() {
 
           <div className="flex items-center justify-between flex-wrap gap-6 pl-3">
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-full bg-primary-500 flex items-center justify-center text-lg font-bold text-white shrink-0 shadow-md shadow-primary-500/30">
-                {profile?.first_name ? profile.first_name[0].toUpperCase() : '🏍️'}
-              </div>
+              {/* Avatar — photo if available, else initial */}
+              {profile?.profile_photo_url ? (
+                <img
+                  src={profile.profile_photo_url}
+                  alt={profile.first_name}
+                  className="w-12 h-12 rounded-full object-cover shrink-0 shadow-md border-2 border-primary-300 dark:border-primary-500/40"
+                />
+              ) : (
+                <div className="w-12 h-12 rounded-full bg-primary-500 flex items-center justify-center text-lg font-bold text-white shrink-0 shadow-md shadow-primary-500/30">
+                  {profile?.first_name ? profile.first_name[0].toUpperCase() : '🏍️'}
+                </div>
+              )}
               <div>
                 <p className="text-[11px] uppercase tracking-wide font-semibold text-accent-600 dark:text-accent-400">
                   {greeting()}

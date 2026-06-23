@@ -56,7 +56,7 @@ export default function AdminChat() {
   async function fetchConversations() {
     const { data } = await supabase
       .from('chat_conversations')
-      .select('*, profiles!chat_conversations_customer_id_fkey(first_name, last_name, email)')
+      .select('*, profiles!chat_conversations_customer_id_fkey(first_name, last_name, email, profile_photo_url)')
       .order('updated_at', { ascending: false });
 
     if (data) {
@@ -207,9 +207,17 @@ export default function AdminChat() {
                   }`}
                 >
                   {/* Avatar */}
-                  <div className="w-9 h-9 rounded-full bg-primary-100 dark:bg-primary-600/20 flex items-center justify-center text-xs font-semibold text-primary-600 dark:text-primary-400 shrink-0 mt-0.5">
-                    {getInitials(c.profiles)}
-                  </div>
+{c.profiles?.profile_photo_url ? (
+  <img src={c.profiles.profile_photo_url} alt=""
+    className="w-9 h-9 rounded-full object-cover shrink-0 mt-0.5" />
+) : (
+  <div className="w-9 h-9 rounded-full bg-primary-100 dark:bg-primary-600/20 flex items-center justify-center text-xs font-semibold text-primary-600 dark:text-primary-400 shrink-0 mt-0.5">
+    {getInitials(c.profiles)}
+  </div>
+)}
+
+
+
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1 mb-0.5">
@@ -264,9 +272,14 @@ export default function AdminChat() {
             {/* Chat header */}
             <div className="border-b border-gray-200 dark:border-dark-700 bg-white dark:bg-dark-800 px-6 py-3.5 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-primary-100 dark:bg-primary-600/20 flex items-center justify-center text-xs font-semibold text-primary-600 dark:text-primary-400 shrink-0">
-                  {getInitials(selected.profiles)}
-                </div>
+{selected.profiles?.profile_photo_url ? (
+  <img src={selected.profiles.profile_photo_url} alt=""
+    className="w-9 h-9 rounded-full object-cover shrink-0" />
+) : (
+  <div className="w-9 h-9 rounded-full bg-primary-100 dark:bg-primary-600/20 flex items-center justify-center text-xs font-semibold text-primary-600 dark:text-primary-400 shrink-0">
+    {getInitials(selected.profiles)}
+  </div>
+)}
                 <div>
                   <p className="font-semibold text-sm text-gray-900 dark:text-white leading-tight">
                     {selected.profiles?.first_name} {selected.profiles?.last_name}
