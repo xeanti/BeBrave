@@ -38,6 +38,7 @@ import AdminBookingsScreen from './screens/admin/BookingsScreen';
 import AdminOrdersScreen from './screens/admin/OrdersScreen';
 import ReportsScreen from './screens/admin/ReportsScreen';
 import AdminUsersScreen from './screens/admin/AdminUsersScreen';
+import AdminMotorcycleModelsScreen from './screens/admin/AdminMotorcycleModelsScreen';
 
 
 const Tab = createBottomTabNavigator();
@@ -90,6 +91,7 @@ export function AdminTabs() {
       <Tab.Screen name="Bookings" component={AdminBookingsScreen} options={{ tabBarIcon: makeIcon('list') }} />
       <Tab.Screen name="Orders" component={AdminOrdersScreen} options={{ tabBarIcon: makeIcon('cart') }} />
       <Tab.Screen name="Inventory" component={InventoryScreen} options={{ tabBarIcon: makeIcon('cube') }} />
+      <Tab.Screen name="Models" component={AdminMotorcycleModelsScreen} options={{ tabBarIcon: makeIcon('bicycle') }} />
       <Tab.Screen name="Users" component={AdminUsersScreen} options={{ tabBarIcon: makeIcon('people') }} />
       <Tab.Screen name="Chat" component={StaffChatScreen} options={{ tabBarIcon: makeIcon('chatbubbles') }} />
       <Tab.Screen name="Reports" component={ReportsScreen} options={{ tabBarIcon: makeIcon('analytics') }} />

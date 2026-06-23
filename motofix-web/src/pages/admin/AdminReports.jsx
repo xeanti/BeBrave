@@ -132,18 +132,47 @@ export default function AdminReports() {
     return { totalPaid, balance, isFullyPaid, lastProcessedBy };
   }
 
-  function downloadCSV(data, filename) {
+  function escapeCSVValue(val) {
+    if (val == null) return '';
+    if (typeof val === 'object') val = JSON.stringify(val);
+    const str = String(val);
+    // Quote any value containing commas, quotes, or newlines
+    if (/[",\n\r]/.test(str)) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  }
+
+  function getReportFilename(reportType) {
+    const from = dateFrom || 'All';
+    const to = dateTo || 'Present';
+    return `MotoFix ${reportType} Report ${from} - ${to}.csv`;
+  }
+
+  function downloadCSV(data, filename, reportTitle) {
     if (!data.length) return;
+
     const headers = Object.keys(data[0]);
-    const rows = data.map((row) =>
-      headers.map((h) => {
-        const val = row[h];
-        if (typeof val === 'object') return JSON.stringify(val);
-        return `"${String(val ?? '').replace(/"/g, '""')}"`;
-      }).join(',')
+    const headerLabels = headers.map((h) =>
+      h.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
     );
-    const csv = [headers.join(','), ...rows].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
+
+    const lines = [];
+
+    // Metadata block at the top of the file
+    lines.push(escapeCSVValue(reportTitle));
+    lines.push(escapeCSVValue(`Date Range: ${dateFrom || 'All'} to ${dateTo || 'Present'}`));
+    lines.push(escapeCSVValue(`Generated: ${new Date().toLocaleString()}`));
+    lines.push(''); // blank separator row
+
+    lines.push(headerLabels.map(escapeCSVValue).join(','));
+    data.forEach((row) => {
+      lines.push(headers.map((h) => escapeCSVValue(row[h])).join(','));
+    });
+
+    // BOM so Excel renders ₱ and other UTF-8 chars correctly; CRLF for Excel compatibility
+    const csv = '\uFEFF' + lines.join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -236,51 +265,63 @@ export default function AdminReports() {
             <button
               onClick={() => {
                 if (activeTab === 'bookings') {
-                  downloadCSV(filteredBookings.map(b => {
-                    const total = (b.services?.base_price || 0) + (b.services?.labor_cost || 0);
-                    const info = getPaymentInfo(bookingPayments, b.id, total);
-                    return {
-                      id: b.id.slice(0,8),
-                      customer: `${b.profiles?.first_name} ${b.profiles?.last_name}`,
-                      email: b.profiles?.email,
-                      service: b.services?.name,
-                      date: b.booking_date,
-                      time: b.booking_time,
-                      status: b.status,
-                      mechanic: b.mechanic ? `${b.mechanic.first_name} ${b.mechanic.last_name}` : 'Unassigned',
-                      service_total: total.toFixed(2),
-                      total_paid: info.totalPaid.toFixed(2),
-                      balance: info.balance.toFixed(2),
-                      payment_status: info.isFullyPaid ? 'Fully Paid' : 'Partial/Unpaid',
-                      processed_by: info.lastProcessedBy,
-                    };
-                  }), 'bookings-report.csv');
+                  downloadCSV(
+                    filteredBookings.map((b) => {
+                      const total = (b.services?.base_price || 0) + (b.services?.labor_cost || 0);
+                      const info = getPaymentInfo(bookingPayments, b.id, total);
+                      return {
+                        id: b.id.slice(0, 8),
+                        customer: `${b.profiles?.first_name} ${b.profiles?.last_name}`,
+                        email: b.profiles?.email,
+                        service: b.services?.name,
+                        date: b.booking_date,
+                        time: b.booking_time,
+                        status: b.status,
+                        mechanic: b.mechanic ? `${b.mechanic.first_name} ${b.mechanic.last_name}` : 'Unassigned',
+                        service_total: total.toFixed(2),
+                        total_paid: info.totalPaid.toFixed(2),
+                        balance: info.balance.toFixed(2),
+                        payment_status: info.isFullyPaid ? 'Fully Paid' : 'Partial/Unpaid',
+                        processed_by: info.lastProcessedBy,
+                      };
+                    }),
+                    getReportFilename('Bookings'),
+                    'MotoFix Bookings Report'
+                  );
                 } else if (activeTab === 'orders') {
-                  downloadCSV(filteredOrders.map(o => {
-                    const info = getPaymentInfo(orderPayments, o.id, o.total_amount || 0);
-                    return {
-                      id: o.id.slice(0,8),
-                      customer: `${o.profiles?.first_name} ${o.profiles?.last_name}`,
-                      email: o.profiles?.email,
-                      total: o.total_amount,
-                      status: o.status,
-                      total_paid: info.totalPaid.toFixed(2),
-                      balance: info.balance.toFixed(2),
-                      payment_status: info.isFullyPaid ? 'Fully Paid' : 'Partial/Unpaid',
-                      processed_by: info.lastProcessedBy,
-                      date: new Date(o.created_at).toLocaleDateString(),
-                    };
-                  }), 'orders-report.csv');
+                  downloadCSV(
+                    filteredOrders.map((o) => {
+                      const info = getPaymentInfo(orderPayments, o.id, o.total_amount || 0);
+                      return {
+                        id: o.id.slice(0, 8),
+                        customer: `${o.profiles?.first_name} ${o.profiles?.last_name}`,
+                        email: o.profiles?.email,
+                        total: o.total_amount,
+                        status: o.status,
+                        total_paid: info.totalPaid.toFixed(2),
+                        balance: info.balance.toFixed(2),
+                        payment_status: info.isFullyPaid ? 'Fully Paid' : 'Partial/Unpaid',
+                        processed_by: info.lastProcessedBy,
+                        date: new Date(o.created_at).toLocaleDateString(),
+                      };
+                    }),
+                    getReportFilename('Orders'),
+                    'MotoFix Orders Report'
+                  );
                 } else {
-                  downloadCSV(filteredAuditLogs.map(l => ({
-                    id: l.id.slice(0,8),
-                    action: l.action,
-                    entity: l.entity,
-                    performed_by: l.profiles ? `${l.profiles.first_name} ${l.profiles.last_name}` : 'System',
-                    role: l.profiles?.role,
-                    date: new Date(l.created_at).toLocaleString(),
-                    details: JSON.stringify(l.details),
-                  })), 'audit-logs.csv');
+                  downloadCSV(
+                    filteredAuditLogs.map((l) => ({
+                      id: l.id.slice(0, 8),
+                      action: l.action,
+                      entity: l.entity,
+                      performed_by: l.profiles ? `${l.profiles.first_name} ${l.profiles.last_name}` : 'System',
+                      role: l.profiles?.role,
+                      date: new Date(l.created_at).toLocaleString(),
+                      details: JSON.stringify(l.details),
+                    })),
+                    getReportFilename('Audit Log'),
+                    'MotoFix Audit Log'
+                  );
                 }
               }}
               className="bg-primary-600 hover:bg-primary-700 px-4 py-2 rounded-lg text-sm transition"
@@ -363,7 +404,8 @@ export default function AdminReports() {
                         const total = (b.services?.base_price || 0) + (b.services?.labor_cost || 0);
                         const info = getPaymentInfo(bookingPayments, b.id, total);
                         return (
-<tr key={b.id} className="border-b border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-dark-900/50 transition-colors">                            <td className="px-4 py-3 text-xs text-gray-500">{b.id.slice(0,8)}</td>
+                          <tr key={b.id} className="border-b border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-dark-900/50 transition-colors">
+                            <td className="px-4 py-3 text-xs text-gray-500">{b.id.slice(0,8)}</td>
                             <td className="px-4 py-3">
                               <p className="font-medium">{b.profiles?.first_name} {b.profiles?.last_name}</p>
                               <p className="text-xs text-gray-500">{b.profiles?.email}</p>
@@ -424,7 +466,8 @@ export default function AdminReports() {
                       {filteredOrders.map((o) => {
                         const info = getPaymentInfo(orderPayments, o.id, o.total_amount || 0);
                         return (
-<tr key={o.id} className="border-b border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-dark-900/50 transition-colors">                            <td className="px-4 py-3 text-xs text-gray-500">{o.id.slice(0,8)}</td>
+                          <tr key={o.id} className="border-b border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-dark-900/50 transition-colors">
+                            <td className="px-4 py-3 text-xs text-gray-500">{o.id.slice(0,8)}</td>
                             <td className="px-4 py-3">
                               <p className="font-medium">{o.profiles?.first_name} {o.profiles?.last_name}</p>
                               <p className="text-xs text-gray-500">{o.profiles?.email}</p>
@@ -484,7 +527,8 @@ export default function AdminReports() {
                     </thead>
                     <tbody>
                       {filteredAuditLogs.map((log) => (
-<tr key={log.id} className="border-b border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-dark-900/50 transition-colors">                          <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
+                        <tr key={log.id} className="border-b border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-dark-900/50 transition-colors">
+                          <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
                             {new Date(log.created_at).toLocaleString()}
                           </td>
                           <td className="px-4 py-3">
