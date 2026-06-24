@@ -3,57 +3,167 @@ import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../lib/supabaseClient';
 
+const MAX_PREVIEW_PARTS = 3;
+
+function formatPeso(value) {
+  const amount = Number(value) || 0;
+
+  return `₱${amount.toLocaleString('en-PH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function normalizeText(value) {
+  return String(value || '').toLowerCase().trim();
+}
+
+function formatPartList(parts) {
+  return parts.map((part) => part.name).join(', ');
+}
+
+function SourceCard({ active, icon, title, description, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`group rounded-3xl border p-5 text-left transition hover:-translate-y-0.5 ${
+        active
+          ? 'border-primary-500 bg-primary-50 shadow-lg shadow-primary-600/10 dark:bg-primary-900/20'
+          : 'border-gray-200 bg-white hover:border-primary-200 hover:bg-gray-50 dark:border-dark-700 dark:bg-dark-900/50 dark:hover:border-primary-500/30 dark:hover:bg-dark-900'
+      }`}
+    >
+      <div
+        className={`mb-4 grid h-12 w-12 place-items-center rounded-2xl text-2xl transition ${
+          active
+            ? 'bg-primary-600 text-white'
+            : 'bg-gray-100 text-gray-700 group-hover:bg-primary-50 group-hover:text-primary-700 dark:bg-dark-800 dark:text-gray-300 dark:group-hover:bg-primary-900/25 dark:group-hover:text-primary-300'
+        }`}
+      >
+        {icon}
+      </div>
+      <p className="text-sm font-black text-gray-950 dark:text-white">
+        {title}
+      </p>
+      <p className="mt-2 text-xs leading-5 text-gray-600 dark:text-gray-400">
+        {description}
+      </p>
+    </button>
+  );
+}
+
+function StepHeader({ number, title, description }) {
+  return (
+    <div className="mb-5 flex items-start gap-3">
+      <div className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-2xl bg-primary-50 text-sm font-black text-primary-700 ring-1 ring-primary-100 dark:bg-primary-900/25 dark:text-primary-300 dark:ring-primary-500/20">
+        {number}
+      </div>
+      <div>
+        <h2 className="text-sm font-black uppercase tracking-wider text-gray-950 dark:text-white">
+          {title}
+        </h2>
+        {description && (
+          <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
+            {description}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Notice({ type = 'info', children }) {
+  const styles = {
+    error:
+      'border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300',
+    success:
+      'border-green-200 bg-green-50 text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300',
+    info:
+      'border-primary-200 bg-primary-50 text-primary-700 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300',
+  };
+
+  return (
+    <div className={`mb-4 rounded-2xl border p-4 text-sm font-semibold ${styles[type]}`}>
+      {children}
+    </div>
+  );
+}
+
 export default function Customize() {
   const { user } = useAuth();
   const { addToCart } = useCart();
 
-  // Step 1: photo source
-  const [imageSource, setImageSource] = useState(''); // '' | 'own' | 'reference'
+  const [imageSource, setImageSource] = useState('');
 
-  // Reference flow
   const [models, setModels] = useState([]);
   const [selectedModelId, setSelectedModelId] = useState('');
 
-  // Own photo flow
   const [uploadedPhoto, setUploadedPhoto] = useState(null);
   const [uploadedPreview, setUploadedPreview] = useState(null);
   const [ownMake, setOwnMake] = useState('');
   const [ownModel, setOwnModel] = useState('');
 
-  // Parts
   const [parts, setParts] = useState([]);
   const [selectedParts, setSelectedParts] = useState([]);
   const [partSearch, setPartSearch] = useState('');
   const [partCategory, setPartCategory] = useState('all');
   const [partMessage, setPartMessage] = useState('');
 
-  // Result
   const [resultImage, setResultImage] = useState(null);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [pageLoading, setPageLoading] = useState(true);
   const [error, setError] = useState('');
   const [cartMessage, setCartMessage] = useState('');
 
   useEffect(() => {
     fetchModels();
     fetchAllParts();
+
+    const channel = supabase
+      .channel('customize-parts-refresh')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'parts' },
+        () => fetchAllParts(false)
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (uploadedPreview) URL.revokeObjectURL(uploadedPreview);
+    };
+  }, [uploadedPreview]);
 
   async function fetchModels() {
     const { data } = await supabase
       .from('motorcycle_models')
       .select('*')
-      .order('make', { ascending: true });
+      .order('make', { ascending: true })
+      .order('model', { ascending: true });
+
     if (data) setModels(data);
   }
 
-async function fetchAllParts() {
-  const { data } = await supabase
-    .from('parts')
-    .select('*')
-    .eq('is_active', true);
-  if (data) setParts(data);
-}
+  async function fetchAllParts(showLoader = true) {
+    if (showLoader) setPageLoading(true);
+
+    const { data } = await supabase
+      .from('parts')
+      .select('*')
+      .eq('is_active', true)
+      .gt('stock_quantity', 0)
+      .order('name', { ascending: true });
+
+    if (data) setParts(data);
+
+    setPageLoading(false);
+  }
 
   function resetDownstream() {
     setSelectedParts([]);
@@ -61,11 +171,18 @@ async function fetchAllParts() {
     setPartSearch('');
     setPartCategory('all');
     setError('');
+    setPartMessage('');
+    setLightboxOpen(false);
   }
 
   function chooseSource(source) {
     setImageSource(source);
     setSelectedModelId('');
+
+    if (uploadedPreview) {
+      URL.revokeObjectURL(uploadedPreview);
+    }
+
     setUploadedPhoto(null);
     setUploadedPreview(null);
     setOwnMake('');
@@ -73,91 +190,150 @@ async function fetchAllParts() {
     resetDownstream();
   }
 
-  function handlePhotoChange(e) {
-    const file = e.target.files[0];
+  function handlePhotoChange(event) {
+    const file = event.target.files?.[0];
     if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setError('Please upload a valid image file.');
+      return;
+    }
+
+    if (uploadedPreview) {
+      URL.revokeObjectURL(uploadedPreview);
+    }
+
     setUploadedPhoto(file);
     setUploadedPreview(URL.createObjectURL(file));
     setResultImage(null);
+    setError('');
   }
 
-  // One part per category — selecting a new part from an already-represented
-  // category swaps out the old one instead of blocking the click.
   function togglePart(partId) {
-    const part = parts.find((p) => p.id === partId);
+    const part = parts.find((item) => item.id === partId);
     if (!part) return;
 
-    setSelectedParts((prev) => {
-      // Deselecting
-      if (prev.includes(partId)) {
-        return prev.filter((id) => id !== partId);
+    setSelectedParts((previous) => {
+      if (previous.includes(partId)) {
+        return previous.filter((id) => id !== partId);
       }
 
-      // Find any existing selection in the same category
-      const existingInCategory = prev
-        .map((id) => parts.find((p) => p.id === id))
-        .find((p) => p?.category === part.category);
+      const selectedPartObjects = previous
+        .map((id) => parts.find((item) => item.id === id))
+        .filter(Boolean);
 
-      const prevWithoutSameCategory = prev.filter((id) => {
-        const p = parts.find((pp) => pp.id === id);
-        return p?.category !== part.category;
+      const existingInCategory = selectedPartObjects.find(
+        (item) => (item.category || 'General') === (part.category || 'General')
+      );
+
+      const previousWithoutSameCategory = previous.filter((id) => {
+        const item = parts.find((partItem) => partItem.id === id);
+        return (item?.category || 'General') !== (part.category || 'General');
       });
 
-      if (prevWithoutSameCategory.length >= 3) {
-        alert('You can only select up to 3 parts for the AI preview.');
-        return prev;
+      if (previousWithoutSameCategory.length >= MAX_PREVIEW_PARTS) {
+        setPartMessage(`You can only preview up to ${MAX_PREVIEW_PARTS} parts at a time.`);
+        setTimeout(() => setPartMessage(''), 2500);
+        return previous;
       }
 
       if (existingInCategory) {
-        setPartMessage(`Swapped "${existingInCategory.name}" for "${part.name}" — only 1 part per category.`);
+        setPartMessage(
+          `Swapped "${existingInCategory.name}" for "${part.name}" — only 1 part per category.`
+        );
         setTimeout(() => setPartMessage(''), 2500);
       }
 
-      return [...prevWithoutSameCategory, partId];
+      return [...previousWithoutSameCategory, partId];
     });
   }
 
   function handleAddToCart(part) {
     addToCart(part);
     setCartMessage(`${part.name} added to cart!`);
-    setTimeout(() => setCartMessage(''), 2000);
+    setTimeout(() => setCartMessage(''), 2500);
   }
 
-  const selectedModel = models.find((m) => m.id === selectedModelId);
+  const selectedModel = models.find((model) => model.id === selectedModelId);
 
-  // Motorcycle label used for the AI prompt + part filtering
   const motorcycleLabel =
     imageSource === 'reference' && selectedModel
-      ? `${selectedModel.make} ${selectedModel.model}`
+      ? `${selectedModel.make} ${selectedModel.model}`.trim()
       : imageSource === 'own'
       ? `${ownMake} ${ownModel}`.trim()
       : '';
 
-  // Compatible parts — filtered by model if known, otherwise show everything
   const compatibleParts = useMemo(() => {
-    const term = motorcycleLabel.trim().toLowerCase();
+    const term = normalizeText(motorcycleLabel);
+
     if (!term) return parts;
-    return parts.filter((p) =>
-      p.compatible_models?.some((cm) => cm.toLowerCase().includes(term))
-    );
+
+    return parts.filter((part) => {
+      const compatibleModels = part.compatible_models || [];
+
+      return compatibleModels.some((model) => {
+        const modelText = normalizeText(model);
+
+        return modelText.includes(term) || term.includes(modelText);
+      });
+    });
   }, [parts, motorcycleLabel]);
 
-  const categories = ['all', ...new Set(compatibleParts.map((p) => p.category).filter(Boolean))];
-  const filteredParts = compatibleParts.filter((p) => {
-    const matchSearch = p.name.toLowerCase().includes(partSearch.toLowerCase());
-    const matchCategory = partCategory === 'all' || p.category === partCategory;
-    return matchSearch && matchCategory;
-  });
+  const categories = useMemo(() => {
+    const counts = compatibleParts.reduce(
+      (acc, part) => {
+        const key = part.category || 'General';
+        acc[key] = (acc[key] || 0) + 1;
+        acc.all += 1;
+        return acc;
+      },
+      { all: 0 }
+    );
 
-  // Categories already represented in the current selection
-  const selectedCategories = useMemo(
-    () =>
-      new Set(
-        selectedParts
-          .map((id) => parts.find((p) => p.id === id)?.category)
-          .filter(Boolean)
-      ),
+    const categoryNames = Object.keys(counts)
+      .filter((name) => name !== 'all')
+      .sort((a, b) => a.localeCompare(b));
+
+    return [
+      { name: 'all', count: counts.all },
+      ...categoryNames.map((name) => ({ name, count: counts[name] })),
+    ];
+  }, [compatibleParts]);
+
+  const filteredParts = useMemo(() => {
+    const query = normalizeText(partSearch);
+
+    return compatibleParts.filter((part) => {
+      const searchable = [
+        part.name,
+        part.category,
+        part.description,
+        ...(part.compatible_models || []),
+      ]
+        .filter(Boolean)
+        .join(' ');
+
+      const matchSearch = !query || normalizeText(searchable).includes(query);
+      const matchCategory =
+        partCategory === 'all' || (part.category || 'General') === partCategory;
+
+      return matchSearch && matchCategory;
+    });
+  }, [compatibleParts, partSearch, partCategory]);
+
+  const selectedPartObjects = useMemo(
+    () => selectedParts.map((id) => parts.find((part) => part.id === id)).filter(Boolean),
     [selectedParts, parts]
+  );
+
+  const selectedCategories = useMemo(
+    () => new Set(selectedPartObjects.map((part) => part.category || 'General')),
+    [selectedPartObjects]
+  );
+
+  const totalEstimate = selectedPartObjects.reduce(
+    (sum, part) => sum + (Number(part.price) || 0),
+    0
   );
 
   const readyForParts =
@@ -166,11 +342,36 @@ async function fetchAllParts() {
 
   async function handleGenerate() {
     setError('');
-    if (!imageSource) { setError('Please choose how you want to preview your motorcycle.'); return; }
-    if (imageSource === 'reference' && !selectedModelId) { setError('Please select your motorcycle model.'); return; }
-    if (imageSource === 'own' && !uploadedPhoto) { setError('Please upload a photo of your motorcycle.'); return; }
-    if (selectedParts.length === 0) { setError('Please select at least one part to preview.'); return; }
-    if (selectedParts.length > 3) { setError('Please select a maximum of 3 parts.'); return; }
+
+    if (!user?.id) {
+      setError('Please log in before generating a preview.');
+      return;
+    }
+
+    if (!imageSource) {
+      setError('Please choose how you want to preview your motorcycle.');
+      return;
+    }
+
+    if (imageSource === 'reference' && !selectedModelId) {
+      setError('Please select your motorcycle model.');
+      return;
+    }
+
+    if (imageSource === 'own' && !uploadedPhoto) {
+      setError('Please upload a photo of your motorcycle.');
+      return;
+    }
+
+    if (selectedParts.length === 0) {
+      setError('Please select at least one part to preview.');
+      return;
+    }
+
+    if (selectedParts.length > MAX_PREVIEW_PARTS) {
+      setError(`Please select a maximum of ${MAX_PREVIEW_PARTS} parts.`);
+      return;
+    }
 
     setLoading(true);
     setResultImage(null);
@@ -180,21 +381,29 @@ async function fetchAllParts() {
 
       if (imageSource === 'reference') {
         photoUrl = selectedModel.reference_photo_url;
+
+        if (!photoUrl) {
+          throw new Error('This motorcycle model has no reference photo yet.');
+        }
       } else {
         const fileExt = uploadedPhoto.name.split('.').pop();
         const filePath = `${user.id}/${Date.now()}.${fileExt}`;
+
         const { error: uploadError } = await supabase.storage
           .from('motorcycle-photos')
           .upload(filePath, uploadedPhoto);
+
         if (uploadError) throw uploadError;
+
         const { data: urlData } = supabase.storage
           .from('motorcycle-photos')
           .getPublicUrl(filePath);
+
         photoUrl = urlData.publicUrl;
       }
 
-      const selectedPartDetails = parts.filter((p) => selectedParts.includes(p.id));
-      const partNames = selectedPartDetails.map((p) => p.name).join(', ');
+      const selectedPartDetails = parts.filter((part) => selectedParts.includes(part.id));
+      const partNames = formatPartList(selectedPartDetails);
 
       const { data: fnData, error: fnError } = await supabase.functions.invoke(
         'generate-preview',
@@ -210,14 +419,16 @@ async function fetchAllParts() {
       );
 
       if (fnError) throw fnError;
+      if (!fnData?.imageUrl) throw new Error('The preview generator did not return an image URL.');
+
       setResultImage(fnData.imageUrl);
 
       await supabase.from('customizations').insert({
         customer_id: user.id,
         part_ids: selectedParts,
         original_photo_url: photoUrl,
-        preview_image_url: null,
-        prompt_used: fnData.prompt,
+        preview_image_url: fnData.imageUrl,
+        prompt_used: fnData.prompt || null,
         status: 'generated',
       });
     } catch (err) {
@@ -229,380 +440,546 @@ async function fetchAllParts() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-65px)] bg-dark-900 text-white px-6 py-10">
-      <div className="max-w-5xl mx-auto">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-1">AI Motorcycle Appearance Preview</h1>
-          <p className="text-gray-400">
-            Use your own photo or one of ours, pick up to 3 parts, and generate a realistic AI preview.
-          </p>
-        </div>
+    <div className="min-h-[calc(100vh-65px)] bg-gray-50 px-4 py-8 text-gray-900 dark:bg-dark-900 dark:text-white sm:px-6 lg:py-10">
+      <div className="mx-auto max-w-7xl">
+        {/* Header */}
+        <div className="mb-8 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
+          <div className="relative p-6 sm:p-8">
+            <div className="absolute -right-8 -top-14 h-36 w-36 rounded-full bg-primary-500/10 blur-3xl" />
+            <div className="absolute -bottom-16 left-10 h-36 w-36 rounded-full bg-accent-500/10 blur-3xl" />
 
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg p-4 mb-6">
-            {error}
-          </div>
-        )}
+            <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <p className="mb-2 text-xs font-black uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
+                  MotoFix AI Preview
+                </p>
+                <h1 className="text-3xl font-black tracking-tight text-gray-950 dark:text-white md:text-4xl">
+                  AI Motorcycle Appearance Preview
+                </h1>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
+                  Upload your motorcycle or use a reference model, select up to {MAX_PREVIEW_PARTS} parts, and generate a visual preview before buying.
+                </p>
+              </div>
 
-        {cartMessage && (
-          <div className="bg-green-500/10 border border-green-500/30 text-green-400 text-sm rounded-lg p-3 mb-4">
-            🛒 {cartMessage}
-          </div>
-        )}
-
-        {partMessage && (
-          <div className="bg-primary-500/10 border border-primary-500/30 text-primary-400 text-sm rounded-lg p-3 mb-4">
-            🔁 {partMessage}
-          </div>
-        )}
-
-        <div className="grid md:grid-cols-2 gap-6">
-          <div className="space-y-5">
-
-            {/* Step 1: Photo source — now first */}
-            <div className="bg-dark-800 rounded-xl p-5">
-              <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-3">
-                1. How would you like to preview your motorcycle?
-              </h2>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => chooseSource('own')}
-                  className={`rounded-xl p-4 text-left border transition ${
-                    imageSource === 'own'
-                      ? 'border-primary-500 bg-primary-500/10'
-                      : 'border-gray-700 hover:border-gray-500'
-                  }`}
-                >
-                  <div className="text-2xl mb-2">📤</div>
-                  <p className="text-sm font-semibold">Use My Own Photo</p>
-                  <p className="text-xs text-gray-400 mt-1">
-                    Upload a picture of your actual motorcycle. No need to pick a model.
+              <div className="grid grid-cols-2 gap-3 sm:flex">
+                <div className="rounded-2xl bg-gray-50 px-4 py-3 text-center ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
+                  <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Selected
                   </p>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => chooseSource('reference')}
-                  className={`rounded-xl p-4 text-left border transition ${
-                    imageSource === 'reference'
-                      ? 'border-primary-500 bg-primary-500/10'
-                      : 'border-gray-700 hover:border-gray-500'
-                  }`}
-                >
-                  <div className="text-2xl mb-2">🏍️</div>
-                  <p className="text-sm font-semibold">Choose From Our Models</p>
-                  <p className="text-xs text-gray-400 mt-1">
-                    Don't have a photo handy? Pick your model and we'll use a reference photo.
+                  <p className="text-lg font-black text-primary-600 dark:text-primary-400">
+                    {selectedParts.length}/{MAX_PREVIEW_PARTS}
                   </p>
-                </button>
+                </div>
+                <div className="rounded-2xl bg-gray-50 px-4 py-3 text-center ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
+                  <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Estimate
+                  </p>
+                  <p className="text-lg font-black text-accent-600 dark:text-accent-400">
+                    {formatPeso(totalEstimate)}
+                  </p>
+                </div>
               </div>
             </div>
+          </div>
+        </div>
 
-            {/* Step 2a: Own photo upload */}
-            {imageSource === 'own' && (
-              <div className="bg-dark-800 rounded-xl p-5">
-                <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-3">
-                  2. Upload Your Photo
-                </h2>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handlePhotoChange}
-                  className="w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-primary-600 file:text-white file:cursor-pointer file:hover:bg-primary-700"
+        {error && <Notice type="error">⚠ {error}</Notice>}
+        {cartMessage && <Notice type="success">🛒 {cartMessage}</Notice>}
+        {partMessage && <Notice type="info">🔁 {partMessage}</Notice>}
+
+        <div className="grid gap-6 lg:grid-cols-[1fr_420px]">
+          <div className="space-y-6">
+            {/* Step 1 */}
+            <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+              <StepHeader
+                number={1}
+                title="Choose Photo Source"
+                description="Use your own motorcycle photo or choose a saved reference model."
+              />
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <SourceCard
+                  active={imageSource === 'own'}
+                  icon="📤"
+                  title="Use My Own Photo"
+                  description="Upload a picture of your actual motorcycle for a more personal preview."
+                  onClick={() => chooseSource('own')}
                 />
+                <SourceCard
+                  active={imageSource === 'reference'}
+                  icon="🏍️"
+                  title="Choose From Models"
+                  description="Pick a model from your database and use its saved reference image."
+                  onClick={() => chooseSource('reference')}
+                />
+              </div>
+            </section>
+
+            {/* Own photo */}
+            {imageSource === 'own' && (
+              <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+                <StepHeader
+                  number={2}
+                  title="Upload Your Photo"
+                  description="A clear side photo works best for part visualization."
+                />
+
+                <label className="block cursor-pointer rounded-3xl border border-dashed border-gray-300 bg-gray-50 p-6 text-center transition hover:border-primary-300 hover:bg-white dark:border-dark-700 dark:bg-dark-900/60 dark:hover:border-primary-500/40">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handlePhotoChange}
+                    className="hidden"
+                  />
+                  <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-primary-50 text-2xl text-primary-700 dark:bg-primary-900/25 dark:text-primary-300">
+                    📷
+                  </div>
+                  <p className="text-sm font-black text-gray-950 dark:text-white">
+                    Click to upload motorcycle photo
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    PNG, JPG, or WebP image
+                  </p>
+                </label>
+
                 {uploadedPreview && (
-                  <img src={uploadedPreview} alt="Your motorcycle"
-                    className="mt-4 rounded-lg w-full object-cover max-h-52" />
+                  <div className="mt-4 overflow-hidden rounded-3xl border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-900">
+                    <img
+                      src={uploadedPreview}
+                      alt="Your motorcycle"
+                      className="max-h-72 w-full object-contain"
+                    />
+                  </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-3 mt-4">
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1">Make (optional)</label>
+                    <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                      Make <span className="font-medium normal-case text-gray-400">(optional)</span>
+                    </label>
                     <input
                       type="text"
                       value={ownMake}
-                      onChange={(e) => setOwnMake(e.target.value)}
+                      onChange={(event) => {
+                        setOwnMake(event.target.value);
+                        resetDownstream();
+                      }}
                       placeholder="e.g. Honda"
-                      className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500"
+                      className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500 dark:focus:border-primary-500"
                     />
                   </div>
+
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1">Model (optional)</label>
+                    <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                      Model <span className="font-medium normal-case text-gray-400">(optional)</span>
+                    </label>
                     <input
                       type="text"
                       value={ownModel}
-                      onChange={(e) => setOwnModel(e.target.value)}
+                      onChange={(event) => {
+                        setOwnModel(event.target.value);
+                        resetDownstream();
+                      }}
                       placeholder="e.g. Click 125i"
-                      className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500"
+                      className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500 dark:focus:border-primary-500"
                     />
                   </div>
                 </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Telling us your make/model just helps us narrow down compatible parts — leave blank to browse everything.
+
+                <p className="mt-3 rounded-2xl bg-gray-50 px-4 py-3 text-xs leading-5 text-gray-600 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:text-gray-400 dark:ring-dark-700">
+                  Adding make/model helps narrow compatible parts. Leave it blank to browse all available parts.
                 </p>
-              </div>
+              </section>
             )}
 
-            {/* Step 2b: Reference model select */}
+            {/* Reference model */}
             {imageSource === 'reference' && (
-              <div className="bg-dark-800 rounded-xl p-5">
-                <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-3">
-                  2. Select Your Motorcycle Model
-                </h2>
+              <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+                <StepHeader
+                  number={2}
+                  title="Select Motorcycle Model"
+                  description="Choose a motorcycle reference image from your database."
+                />
+
                 <select
                   value={selectedModelId}
-                  onChange={(e) => { setSelectedModelId(e.target.value); resetDownstream(); }}
-                  className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white focus:outline-none focus:border-primary-500"
+                  onChange={(event) => {
+                    setSelectedModelId(event.target.value);
+                    resetDownstream();
+                  }}
+                  className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:focus:border-primary-500"
                 >
                   <option value="">Choose a model...</option>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.make} {m.model} {m.year_range ? `(${m.year_range})` : ''}
+                  {models.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.make} {model.model} {model.year_range ? `(${model.year_range})` : ''}
                     </option>
                   ))}
                 </select>
 
-                {selectedModel?.reference_photo_url && (
-                  <img src={selectedModel.reference_photo_url}
-                    alt={`${selectedModel.make} ${selectedModel.model}`}
-                    className="rounded-lg w-full object-cover max-h-52 mt-4" />
-                )}
-              </div>
+                {selectedModel?.reference_photo_url ? (
+                  <div className="mt-4 overflow-hidden rounded-3xl border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-900">
+                    <img
+                      src={selectedModel.reference_photo_url}
+                      alt={`${selectedModel.make} ${selectedModel.model}`}
+                      className="max-h-72 w-full object-contain"
+                    />
+                  </div>
+                ) : selectedModelId ? (
+                  <div className="mt-4 rounded-2xl border border-yellow-200 bg-yellow-50 p-4 text-sm font-semibold text-yellow-700 dark:border-yellow-500/25 dark:bg-yellow-500/10 dark:text-yellow-300">
+                    This model has no reference photo yet.
+                  </div>
+                ) : null}
+              </section>
             )}
 
-            {/* Step 3: Parts */}
+            {/* Parts */}
             {readyForParts && (
-              <div className="bg-dark-800 rounded-xl p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">
-                    3. Select Compatible Parts
-                  </h2>
-                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                    selectedParts.length >= 3
-                      ? 'bg-accent-500/20 text-accent-400'
-                      : 'bg-dark-900 text-gray-400'
-                  }`}>
-                    {selectedParts.length}/3 for AI preview
+              <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+                <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+                  <StepHeader
+                    number={3}
+                    title="Select Compatible Parts"
+                    description="Choose up to 3 parts. Selecting another part in the same category will swap the old one."
+                  />
+
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-black ${
+                      selectedParts.length >= MAX_PREVIEW_PARTS
+                        ? 'bg-accent-50 text-accent-700 ring-1 ring-accent-200 dark:bg-accent-500/10 dark:text-accent-300 dark:ring-accent-500/25'
+                        : 'bg-gray-100 text-gray-600 dark:bg-dark-900 dark:text-gray-400'
+                    }`}
+                  >
+                    {selectedParts.length}/{MAX_PREVIEW_PARTS} selected
                   </span>
                 </div>
 
-                <p className="text-xs text-gray-500 mb-3">
-                  Only 1 part per category — picking another from the same category swaps your current pick.
-                  {!motorcycleLabel && ' Showing all parts — add your make/model above to narrow this down.'}
-                </p>
-
-                {compatibleParts.length === 0 ? (
-                  <p className="text-gray-400 text-sm">
-                    No compatible parts found for {motorcycleLabel || 'your motorcycle'}.
-                  </p>
-                ) : (
-                  <>
-                    <input type="text" placeholder="Search parts..."
+                <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-sm text-gray-400">
+                      🔍
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="Search parts, categories, or models..."
                       value={partSearch}
-                      onChange={(e) => setPartSearch(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 mb-2" />
-
-                    <div className="flex gap-2 flex-wrap mb-3">
-                      {categories.map((cat) => (
-                        <button key={cat} type="button" onClick={() => setPartCategory(partCategory === cat ? 'all' : cat)}
-                          className={`px-3 py-1 rounded-full text-xs font-medium capitalize transition flex items-center gap-1 ${
-                            partCategory === cat
-                              ? 'bg-primary-600 text-white'
-                              : 'bg-dark-900 text-gray-400 hover:text-white'
-                          }`}>
-                          {cat}
-                          {cat !== 'all' && selectedCategories.has(cat) && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-accent-400" />
-                          )}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="space-y-2 max-h-64 overflow-y-auto">
-                      {filteredParts.length === 0 ? (
-                        <p className="text-gray-500 text-sm text-center py-4">No parts match your search.</p>
-                      ) : (
-                        filteredParts.map((part) => {
-                          const isSelected = selectedParts.includes(part.id);
-                          // Only disabled if we're at the 3-category cap AND this part's
-                          // category isn't already one of the picks (so swaps still work).
-                          const isDisabled =
-                            !isSelected &&
-                            selectedParts.length >= 3 &&
-                            !selectedCategories.has(part.category);
-                          const willSwap =
-                            !isSelected && !isDisabled && selectedCategories.has(part.category);
-
-                          return (
-                            <div key={part.id}
-                              className={`flex items-center justify-between bg-dark-900 rounded-lg p-3 transition ${
-                                isSelected ? 'ring-1 ring-primary-500' : ''
-                              }`}>
-                              <label className={`flex items-center gap-3 flex-1 ${
-                                isDisabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
-                              }`}>
-                                <input type="checkbox" checked={isSelected}
-                                  onChange={() => !isDisabled && togglePart(part.id)}
-                                  disabled={isDisabled}
-                                  className="accent-primary-500" />
-                                {part.image_url ? (
-                                  <img src={part.image_url} alt={part.name}
-                                    className="w-12 h-12 object-cover rounded-lg bg-dark-800" />
-                                ) : (
-                                  <div className="w-12 h-12 rounded-lg bg-dark-800 flex items-center justify-center text-gray-500 text-xs text-center">
-                                    No image
-                                  </div>
-                                )}
-                                <div>
-                                  <p className="text-sm font-medium">{part.name}</p>
-                                  <p className="text-xs text-gray-400 capitalize">
-                                    {part.category}
-                                    {willSwap && <span className="text-accent-400"> · will replace your current pick</span>}
-                                  </p>
-                                </div>
-                              </label>
-                              <div className="flex flex-col items-end gap-1 ml-2">
-                                <span className="text-sm text-accent-400 font-medium">₱{part.price}</span>
-                                <button type="button"
-                                  onClick={() => handleAddToCart(part)}
-                                  className="text-xs bg-dark-800 hover:bg-primary-600 border border-gray-700 hover:border-primary-500 px-2 py-1 rounded-md transition whitespace-nowrap">
-                                  + Cart
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-
-                    {selectedParts.length >= 3 && (
-                      <p className="text-xs text-accent-400 mt-2 text-center">
-                        Max 3 parts for AI preview. You can still add more to cart.
-                      </p>
+                      onChange={(event) => setPartSearch(event.target.value)}
+                      className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-10 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500 dark:focus:border-primary-500"
+                    />
+                    {partSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setPartSearch('')}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-gray-400 transition hover:text-gray-700 dark:hover:text-white"
+                      >
+                        ✕
+                      </button>
                     )}
-                  </>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPartSearch('');
+                      setPartCategory('all');
+                    }}
+                    className="rounded-2xl border border-gray-200 px-4 py-3 text-sm font-bold text-gray-700 transition hover:border-primary-300 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {categories.map((item) => {
+                    const active = partCategory === item.name;
+                    const label = item.name === 'all' ? 'All' : item.name;
+                    const hasSelection = item.name !== 'all' && selectedCategories.has(item.name);
+
+                    return (
+                      <button
+                        key={item.name}
+                        type="button"
+                        onClick={() => setPartCategory(active ? 'all' : item.name)}
+                        className={`rounded-full px-4 py-2 text-xs font-black capitalize transition ${
+                          active
+                            ? 'bg-primary-600 text-white shadow-lg shadow-primary-600/20'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-dark-900 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white'
+                        }`}
+                      >
+                        {label}
+                        <span className={active ? 'ml-1 opacity-80' : 'ml-1 opacity-60'}>
+                          ({item.count})
+                        </span>
+                        {hasSelection && (
+                          <span className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-accent-400 align-middle" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {pageLoading ? (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {[1, 2, 3, 4].map((item) => (
+                      <div
+                        key={item}
+                        className="h-28 animate-pulse rounded-3xl bg-gray-100 dark:bg-dark-900"
+                      />
+                    ))}
+                  </div>
+                ) : compatibleParts.length === 0 ? (
+                  <div className="rounded-3xl border border-dashed border-gray-300 bg-gray-50 p-8 text-center dark:border-dark-700 dark:bg-dark-900/60">
+                    <p className="text-sm font-bold text-gray-700 dark:text-gray-300">
+                      No compatible parts found for {motorcycleLabel || 'your motorcycle'}.
+                    </p>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Try clearing the make/model field to browse all parts.
+                    </p>
+                  </div>
+                ) : filteredParts.length === 0 ? (
+                  <div className="rounded-3xl border border-dashed border-gray-300 bg-gray-50 p-8 text-center dark:border-dark-700 dark:bg-dark-900/60">
+                    <p className="text-sm font-bold text-gray-700 dark:text-gray-300">
+                      No parts match your search.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid max-h-[560px] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+                    {filteredParts.map((part) => {
+                      const isSelected = selectedParts.includes(part.id);
+                      const partCategoryName = part.category || 'General';
+                      const isDisabled =
+                        !isSelected &&
+                        selectedParts.length >= MAX_PREVIEW_PARTS &&
+                        !selectedCategories.has(partCategoryName);
+                      const willSwap =
+                        !isSelected && !isDisabled && selectedCategories.has(partCategoryName);
+
+                      return (
+                        <article
+                          key={part.id}
+                          className={`group rounded-3xl border p-3 transition ${
+                            isSelected
+                              ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-500/10 dark:bg-primary-900/20'
+                              : isDisabled
+                              ? 'border-gray-200 bg-gray-50 opacity-50 dark:border-dark-700 dark:bg-dark-900/40'
+                              : 'border-gray-200 bg-gray-50 hover:border-primary-200 hover:bg-white dark:border-dark-700 dark:bg-dark-900/60 dark:hover:border-primary-500/30 dark:hover:bg-dark-900'
+                          }`}
+                        >
+                          <label
+                            className={`flex gap-3 ${
+                              isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => !isDisabled && togglePart(part.id)}
+                              disabled={isDisabled}
+                              className="mt-4 h-4 w-4 accent-primary-600"
+                            />
+
+                            <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded-2xl bg-white ring-1 ring-gray-200 dark:bg-dark-800 dark:ring-dark-700">
+                              {part.image_url ? (
+                                <img
+                                  src={part.image_url}
+                                  alt={part.name}
+                                  className="h-full w-full object-cover transition group-hover:scale-105"
+                                />
+                              ) : (
+                                <div className="grid h-full w-full place-items-center text-xs text-gray-400">
+                                  No image
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <p className="line-clamp-2 text-sm font-black leading-5 text-gray-950 dark:text-white">
+                                {part.name}
+                              </p>
+                              <p className="mt-1 text-xs font-semibold capitalize text-gray-500 dark:text-gray-400">
+                                {partCategoryName}
+                                {willSwap && (
+                                  <span className="text-accent-600 dark:text-accent-400">
+                                    {' '}· will replace current pick
+                                  </span>
+                                )}
+                              </p>
+                              <p className="mt-2 text-sm font-black text-accent-600 dark:text-accent-400">
+                                {formatPeso(part.price)}
+                              </p>
+                            </div>
+                          </label>
+
+                          <button
+                            type="button"
+                            onClick={() => handleAddToCart(part)}
+                            className="mt-3 w-full rounded-2xl border border-gray-200 bg-white px-3 py-2 text-xs font-black text-gray-700 transition hover:border-primary-300 hover:text-primary-700 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
+                          >
+                            + Add to Cart
+                          </button>
+                        </article>
+                      );
+                    })}
+                  </div>
                 )}
-              </div>
+              </section>
             )}
 
-            <button onClick={handleGenerate}
+            <button
+              type="button"
+              onClick={handleGenerate}
               disabled={loading || !readyForParts || selectedParts.length === 0}
-              className="w-full bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition">
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary-600 px-5 py-4 text-sm font-black text-white shadow-lg shadow-primary-600/25 transition hover:bg-primary-700 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+            >
               {loading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                  </svg>
-                  Generating preview...
-                </span>
-              ) : '✨ Generate AI Preview'}
+                <>
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                  Generating Preview...
+                </>
+              ) : (
+                <>
+                  ✨ Generate AI Preview
+                </>
+              )}
             </button>
           </div>
 
-          {/* Right: result */}
-          <div className="bg-dark-800 rounded-xl p-5 flex flex-col">
-            <h3 className="font-semibold mb-1">Preview Result</h3>
-            <p className="text-xs text-gray-500 mb-4">
-              AI-generated appearance of your motorcycle with selected parts applied. Click the image to enlarge.
-            </p>
-            <div className="flex-1 flex items-center justify-center bg-dark-900 rounded-lg min-h-72">
-              {loading ? (
-                <div className="text-center">
-                  <svg className="animate-spin h-8 w-8 text-primary-500 mx-auto mb-3" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                  </svg>
-                  <p className="text-gray-400 text-sm">Generating your preview...</p>
-                  <p className="text-gray-600 text-xs mt-1">This may take 1 - 3 minutes</p>
-                </div>
-              ) : resultImage ? (
-                <div className="w-full">
-                  <button
-                    type="button"
-                    onClick={() => setLightboxOpen(true)}
-                    className="w-full block cursor-zoom-in group relative"
-                  >
-                    <img
-                      src={resultImage}
-                      alt="AI Generated Preview"
-                      className="rounded-lg w-full object-contain max-h-96 transition group-hover:opacity-90"
-                    />
-                    <span className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded-md opacity-0 group-hover:opacity-100 transition">
-                      🔍 Click to enlarge
-                    </span>
-                  </button>
+          {/* Result */}
+          <aside className="space-y-6">
+            <section className="sticky top-24 rounded-3xl border border-gray-200 bg-white p-5 shadow-xl shadow-gray-200/60 dark:border-dark-700 dark:bg-dark-800 dark:shadow-black/20">
+              <div className="mb-4">
+                <h2 className="text-lg font-black tracking-tight text-gray-950 dark:text-white">
+                  Preview Result
+                </h2>
+                <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                  Your generated motorcycle preview will appear here. Click the image to enlarge it.
+                </p>
+              </div>
 
-                  {selectedParts.length > 0 && (
-                    <div className="mt-3 bg-dark-900 rounded-lg p-3 space-y-1.5">
-                      <p className="text-xs font-semibold text-gray-300 mb-2">Selected Parts Estimate</p>
-                      {parts
-                        .filter((p) => selectedParts.includes(p.id))
-                        .map((p) => (
-                          <div key={p.id} className="flex justify-between text-xs">
-                            <span className="text-gray-400">{p.name}</span>
-                            <span className="text-accent-400 font-medium">₱{p.price}</span>
-                          </div>
-                        ))}
-                      <div className="border-t border-gray-700 pt-1.5 flex justify-between text-xs font-semibold">
-                        <span className="text-gray-300">Total Parts Estimate</span>
-                        <span className="text-accent-400">
-                          ₱{parts
-                            .filter((p) => selectedParts.includes(p.id))
-                            .reduce((sum, p) => sum + parseFloat(p.price), 0)
-                            .toFixed(2)}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="mt-3 flex gap-2">
-                    <a href={resultImage} download="motofix-preview.png"
-                      target="_blank" rel="noreferrer"
-                      className="flex-1 text-center text-xs bg-dark-900 hover:bg-dark-900/70 border border-gray-700 rounded-lg py-2 transition">
-                      ⬇ Download
-                    </a>
+              <div className="flex min-h-[360px] items-center justify-center rounded-3xl border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/70">
+                {loading ? (
+                  <div className="text-center">
+                    <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-primary-500/20 border-t-primary-600" />
+                    <p className="text-sm font-bold text-gray-700 dark:text-gray-300">
+                      Generating your preview...
+                    </p>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Keep this page open while the image is being generated.
+                    </p>
+                  </div>
+                ) : resultImage ? (
+                  <div className="w-full">
                     <button
-                      onClick={() => { setResultImage(null); setSelectedParts([]); }}
-                      className="flex-1 text-xs bg-dark-900 hover:bg-dark-900/70 border border-gray-700 rounded-lg py-2 transition">
-                      🔄 Reset
+                      type="button"
+                      onClick={() => setLightboxOpen(true)}
+                      className="group relative block w-full cursor-zoom-in"
+                    >
+                      <img
+                        src={resultImage}
+                        alt="AI Generated Preview"
+                        className="max-h-[420px] w-full rounded-2xl object-contain transition group-hover:opacity-90"
+                      />
+                      <span className="absolute bottom-3 right-3 rounded-full bg-black/70 px-3 py-1.5 text-xs font-bold text-white opacity-0 transition group-hover:opacity-100">
+                        🔍 Enlarge
+                      </span>
                     </button>
                   </div>
-                </div>
-              ) : (
-                <div className="text-center px-6">
-                  <div className="text-4xl mb-3">✨</div>
-                  <p className="text-gray-500 text-sm">
-                    Your AI-generated motorcycle appearance preview will appear here.
-                  </p>
-                  <p className="text-gray-600 text-xs mt-2">
-                    Choose a photo source, and up to 3 parts to get started.
-                  </p>
+                ) : (
+                  <div className="px-6 text-center">
+                    <div className="mx-auto mb-4 grid h-20 w-20 place-items-center rounded-3xl bg-primary-50 text-4xl ring-1 ring-primary-100 dark:bg-primary-900/20 dark:ring-primary-500/20">
+                      ✨
+                    </div>
+                    <p className="text-sm font-bold text-gray-700 dark:text-gray-300">
+                      No preview generated yet
+                    </p>
+                    <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                      Choose a photo source and select parts to generate a preview.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {selectedPartObjects.length > 0 && (
+                <div className="mt-4 rounded-3xl border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/70">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <p className="text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                      Selected Parts Estimate
+                    </p>
+                    <span className="rounded-full bg-primary-50 px-3 py-1 text-xs font-black text-primary-700 dark:bg-primary-900/25 dark:text-primary-300">
+                      {selectedPartObjects.length}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    {selectedPartObjects.map((part) => (
+                      <div key={part.id} className="flex justify-between gap-3 text-xs">
+                        <span className="truncate font-semibold text-gray-600 dark:text-gray-400">
+                          {part.name}
+                        </span>
+                        <span className="shrink-0 font-black text-accent-600 dark:text-accent-400">
+                          {formatPeso(part.price)}
+                        </span>
+                      </div>
+                    ))}
+
+                    <div className="flex justify-between border-t border-gray-200 pt-3 text-sm dark:border-dark-700">
+                      <span className="font-black text-gray-950 dark:text-white">
+                        Total Parts Estimate
+                      </span>
+                      <span className="font-black text-accent-600 dark:text-accent-400">
+                        {formatPeso(totalEstimate)}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               )}
-            </div>
-          </div>
+
+              {resultImage && (
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <a
+                    href={resultImage}
+                    download="motofix-preview.png"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-2xl border border-gray-200 px-4 py-3 text-center text-xs font-black text-gray-700 transition hover:border-primary-300 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
+                  >
+                    ⬇ Download
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResultImage(null);
+                      setSelectedParts([]);
+                    }}
+                    className="rounded-2xl border border-gray-200 px-4 py-3 text-xs font-black text-gray-700 transition hover:border-primary-300 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
+                  >
+                    🔄 Reset
+                  </button>
+                </div>
+              )}
+            </section>
+          </aside>
         </div>
       </div>
 
       {/* Lightbox */}
       {lightboxOpen && resultImage && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center px-4"
-          style={{ backdropFilter: 'blur(8px)', backgroundColor: 'rgba(0,0,0,0.85)' }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 px-4 backdrop-blur-md"
           onClick={() => setLightboxOpen(false)}
         >
           <button
+            type="button"
             onClick={() => setLightboxOpen(false)}
-            className="absolute top-5 right-5 text-white text-3xl leading-none hover:text-gray-300"
+            className="absolute right-5 top-5 grid h-11 w-11 place-items-center rounded-2xl bg-white/10 text-2xl leading-none text-white transition hover:bg-white/20"
           >
             ✕
           </button>
           <img
             src={resultImage}
             alt="AI Generated Preview enlarged"
-            className="max-w-full max-h-[90vh] rounded-lg object-contain"
-            onClick={(e) => e.stopPropagation()}
+            className="max-h-[90vh] max-w-full rounded-3xl object-contain shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
           />
         </div>
       )}

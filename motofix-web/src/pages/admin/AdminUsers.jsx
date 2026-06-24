@@ -18,6 +18,51 @@ const EMPTY_NEW_ACCOUNT = {
 const inp = 'w-full px-3 py-2 rounded-lg bg-white dark:bg-dark-900 border border-gray-300 dark:border-gray-700 text-gray-900 dark:text-white text-sm placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition';
 const label = 'block text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-1';
 
+
+const SHOP_OPEN = 8;
+const SHOP_CLOSE = 17;
+
+function generateTimeSlots() {
+  const slots = [];
+
+  for (let hour = SHOP_OPEN; hour < SHOP_CLOSE; hour++) {
+    slots.push(`${String(hour).padStart(2, '0')}:00`);
+    slots.push(`${String(hour).padStart(2, '0')}:30`);
+  }
+
+  return slots;
+}
+
+const TIME_SLOTS = generateTimeSlots();
+
+function normalizeBookingTime(time) {
+  if (!time) return '';
+  return String(time).slice(0, 5);
+}
+
+function formatScheduleTime(time) {
+  const normalized = normalizeBookingTime(time);
+  if (!normalized) return 'No time';
+
+  const [h, m = '00'] = normalized.split(':');
+  const hour = parseInt(h, 10);
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+  const display = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour;
+
+  return `${display}:${m} ${ampm}`;
+}
+
+function formatScheduleDate(date) {
+  if (!date) return 'No date';
+
+  const [year, month, day] = String(date).split('-').map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString('en-PH', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 export default function AdminUsers() {
   const { user } = useAuth();
   const [users, setUsers] = useState([]);
@@ -64,6 +109,26 @@ export default function AdminUsers() {
 
   useEffect(() => { fetchUsers(); }, []);
 
+  useEffect(() => {
+    if (!selectedMechanicId) return;
+
+    fetchMechanicSchedule(selectedMechanicId);
+
+    const channel = supabase
+      .channel(`mechanic-schedule-${selectedMechanicId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'bookings' },
+        () => {
+          fetchMechanicSchedule(selectedMechanicId);
+          fetchUsers();
+        }
+      )
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, [selectedMechanicId]);
+
   async function fetchUsers() {
     const { data } = await supabase
       .from('profiles')
@@ -74,12 +139,14 @@ export default function AdminUsers() {
   }
 
   async function fetchMechanicSchedule(mechanicId) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('bookings')
-      .select('id, booking_date, booking_time, status, notes, profiles!bookings_customer_id_fkey(first_name, last_name), services(name)')
+      .select('id, booking_date, booking_time, status, notes, profiles!bookings_customer_id_fkey(first_name, last_name), services(name, estimated_duration_minutes)')
       .eq('mechanic_id', mechanicId)
-      .order('booking_date', { ascending: true });
-    if (data) setSchedules(data);
+      .order('booking_date', { ascending: true })
+      .order('booking_time', { ascending: true });
+
+    if (!error && data) setSchedules(data);
   }
 
   async function updateSchedule(bookingId, updates) {
@@ -485,55 +552,62 @@ export default function AdminUsers() {
                           <p className="text-sm text-gray-400 dark:text-gray-500 mb-2">No bookings assigned yet.</p>
                         ) : (
                           <div className="space-y-2">
-                            {schedules.map((b) => (
-                              <div key={b.id} className="bg-gray-50 dark:bg-dark-900 rounded-lg p-3 flex items-start justify-between flex-wrap gap-3 border border-gray-100 dark:border-gray-800">
-                                <div>
-                                  <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                                    {b.profiles?.first_name} {b.profiles?.last_name}
-                                  </p>
-                                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{b.services?.name}</p>
-                                  {b.notes && <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Note: {b.notes}</p>}
+                            {schedules.map((b) => {
+                              const bookingTime = normalizeBookingTime(b.booking_time);
+                              const timeOptions = TIME_SLOTS.includes(bookingTime)
+                                ? TIME_SLOTS
+                                : [bookingTime, ...TIME_SLOTS].filter(Boolean);
+
+                              return (
+                                <div key={b.id} className="bg-gray-50 dark:bg-dark-900 rounded-lg p-3 flex items-start justify-between flex-wrap gap-3 border border-gray-100 dark:border-gray-800">
+                                  <div>
+                                    <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                                      {b.profiles?.first_name} {b.profiles?.last_name}
+                                    </p>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{b.services?.name}</p>
+                                    <p className="text-xs font-semibold text-primary-600 dark:text-primary-400 mt-1">
+                                      {formatScheduleDate(b.booking_date)} · {formatScheduleTime(b.booking_time)}
+                                      {b.services?.estimated_duration_minutes ? ` · ${b.services.estimated_duration_minutes} mins` : ''}
+                                    </p>
+                                    {b.notes && <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Note: {b.notes}</p>}
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <div>
+                                      <p className="text-xs text-gray-500 mb-0.5">Date</p>
+                                      <input type="date" defaultValue={b.booking_date}
+                                        onBlur={(e) => { if (e.target.value !== b.booking_date) updateSchedule(b.id, { booking_date: e.target.value }); }}
+                                        className="bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 rounded-md px-2 py-1 text-xs text-gray-800 dark:text-white" />
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-gray-500 mb-0.5">Time</p>
+                                      <select value={bookingTime}
+                                        onChange={(e) => updateSchedule(b.id, { booking_time: e.target.value })}
+                                        className="bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 rounded-md px-2 py-1 text-xs text-gray-800 dark:text-white">
+                                        {timeOptions.map((slot) => (
+                                          <option key={slot} value={slot}>{formatScheduleTime(slot)}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-gray-500 mb-0.5">Status</p>
+                                      <select value={b.status}
+                                        onChange={(e) => updateSchedule(b.id, { status: e.target.value })}
+                                        className="bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 rounded-md px-2 py-1 text-xs text-gray-800 dark:text-white">
+                                        <option value="pending">Pending</option>
+                                        <option value="confirmed">Confirmed</option>
+                                        <option value="in_progress">In Progress</option>
+                                        <option value="completed">Completed</option>
+                                        <option value="cancelled">Cancelled</option>
+                                      </select>
+                                    </div>
+                                    <button onClick={() => removeFromSchedule(b.id)}
+                                      className="text-xs text-red-600 dark:text-red-400 border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-transparent px-2 py-1 rounded-md hover:bg-red-100 dark:hover:bg-red-500/10 transition">
+                                      Unassign
+                                    </button>
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <div>
-                                    <p className="text-xs text-gray-500 mb-0.5">Date</p>
-                                    <input type="date" defaultValue={b.booking_date}
-                                      onBlur={(e) => { if (e.target.value !== b.booking_date) updateSchedule(b.id, { booking_date: e.target.value }); }}
-                                      className="bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 rounded-md px-2 py-1 text-xs text-gray-800 dark:text-white" />
-                                  </div>
-                                  <div>
-                                    <p className="text-xs text-gray-500 mb-0.5">Time</p>
-                                    <select defaultValue={b.booking_time}
-                                      onChange={(e) => updateSchedule(b.id, { booking_time: e.target.value })}
-                                      className="bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 rounded-md px-2 py-1 text-xs text-gray-800 dark:text-white">
-                                      {['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00'].map((slot) => {
-                                        const [h] = slot.split(':');
-                                        const hour = parseInt(h);
-                                        const ampm = hour >= 12 ? 'PM' : 'AM';
-                                        const display = hour > 12 ? hour - 12 : hour;
-                                        return <option key={slot} value={slot}>{display}:00 {ampm}</option>;
-                                      })}
-                                    </select>
-                                  </div>
-                                  <div>
-                                    <p className="text-xs text-gray-500 mb-0.5">Status</p>
-                                    <select value={b.status}
-                                      onChange={(e) => updateSchedule(b.id, { status: e.target.value })}
-                                      className="bg-white dark:bg-dark-800 border border-gray-300 dark:border-gray-700 rounded-md px-2 py-1 text-xs text-gray-800 dark:text-white">
-                                      <option value="pending">Pending</option>
-                                      <option value="confirmed">Confirmed</option>
-                                      <option value="in_progress">In Progress</option>
-                                      <option value="completed">Completed</option>
-                                      <option value="cancelled">Cancelled</option>
-                                    </select>
-                                  </div>
-                                  <button onClick={() => removeFromSchedule(b.id)}
-                                    className="text-xs text-red-600 dark:text-red-400 border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-transparent px-2 py-1 rounded-md hover:bg-red-100 dark:hover:bg-red-500/10 transition">
-                                    Unassign
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                         <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
