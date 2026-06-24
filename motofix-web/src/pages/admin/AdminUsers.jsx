@@ -32,6 +32,13 @@ export default function AdminUsers() {
   const [editError, setEditError] = useState('');
   const [editSuccess, setEditSuccess] = useState('');
 
+  // Password change
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+
   // Create account panel
   const [showCreate, setShowCreate] = useState(false);
   const [newAccount, setNewAccount] = useState(EMPTY_NEW_ACCOUNT);
@@ -157,12 +164,16 @@ export default function AdminUsers() {
       moto_make: u.moto_make || '', moto_model: u.moto_model || '', moto_year: u.moto_year || '',
     });
     setEditError(''); setEditSuccess('');
+    setNewPassword(''); setConfirmNewPassword('');
+    setPasswordError(''); setPasswordSuccess('');
     setSelectedMechanicId(null); setSchedules([]);
   }
 
   function closeEdit() {
     setEditingUser(null); setEditForm({});
     setEditError(''); setEditSuccess('');
+    setNewPassword(''); setConfirmNewPassword('');
+    setPasswordError(''); setPasswordSuccess('');
     setSelectedMechanicId(null); setSchedules([]);
   }
 
@@ -191,6 +202,33 @@ export default function AdminUsers() {
       setEditingUser((prev) => ({ ...prev, ...payload }));
     }
     setSaving(false);
+  }
+
+  // ── Password change via Edge Function ────────────────────────────────────────
+  async function handleChangePassword(e) {
+    e.preventDefault();
+    setPasswordError(''); setPasswordSuccess('');
+    if (!newPassword) { setPasswordError('Please enter a new password.'); return; }
+    if (newPassword.length < 6) { setPasswordError('Password must be at least 6 characters.'); return; }
+    if (newPassword !== confirmNewPassword) { setPasswordError('Passwords do not match.'); return; }
+    setChangingPassword(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-change-password', {
+        body: { userId: editingUser.id, newPassword },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      await supabase.from('audit_logs').insert({
+        action: 'ADMIN_CHANGE_PASSWORD', entity: 'profiles', entity_id: editingUser.id,
+        performed_by: user.id, details: { email: editingUser.email },
+      });
+      setPasswordSuccess('Password changed successfully!');
+      setNewPassword(''); setConfirmNewPassword('');
+    } catch (err) {
+      setPasswordError(err.message);
+    } finally {
+      setChangingPassword(false);
+    }
   }
 
   async function handleDemote(userId, currentRole) {
@@ -292,7 +330,6 @@ export default function AdminUsers() {
 
         {/* ── Filters ── */}
         <div className="bg-white dark:bg-dark-800 rounded-xl border border-gray-200 dark:border-gray-700/50 p-4 space-y-3 shadow-sm">
-          {/* Role tabs */}
           <div className="flex gap-2 flex-wrap">
             {['all', 'customer', 'mechanic', 'staff', 'admin'].map(r => (
               <button key={r} onClick={() => setRoleFilter(r)}
@@ -305,7 +342,6 @@ export default function AdminUsers() {
               </button>
             ))}
           </div>
-          {/* Search */}
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
             <input
@@ -333,7 +369,6 @@ export default function AdminUsers() {
           </div>
         ) : (
           <div className="bg-white dark:bg-dark-800 rounded-xl border border-gray-200 dark:border-gray-700/50 shadow-sm overflow-hidden">
-            {/* List header */}
             <div className="px-5 py-3 border-b border-gray-100 dark:border-gray-700/50 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
                 Users <span className="text-gray-400 dark:text-gray-500 font-normal">({filtered.length})</span>
@@ -347,6 +382,7 @@ export default function AdminUsers() {
                 const completed = mechanicBookings.filter(b => b.status === 'completed').length;
                 const active = mechanicBookings.filter(b => ['pending', 'confirmed', 'in_progress'].includes(b.status)).length;
                 const roleConf = ROLE_CONFIG[u.role] || { label: u.role, classes: 'bg-gray-100 text-gray-600 dark:bg-gray-500/20 dark:text-gray-400' };
+                const isSelf = u.id === user?.id;
 
                 return (
                   <div key={u.id} className="px-5 py-4 hover:bg-gray-50 dark:hover:bg-dark-700/30 transition-colors">
@@ -365,6 +401,7 @@ export default function AdminUsers() {
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className="font-semibold text-sm text-gray-900 dark:text-white">
                               {u.first_name} {u.last_name}
+                              {isSelf && <span className="text-xs text-gray-400 dark:text-gray-500 font-normal ml-1">(you)</span>}
                             </p>
                             <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold capitalize ${roleConf.classes}`}>
                               {roleConf.label}
@@ -405,7 +442,8 @@ export default function AdminUsers() {
                         >
                           ✎ Edit
                         </button>
-                        {(u.role === 'mechanic' || u.role === 'staff') && (
+                        {/* Demote: show for mechanic, staff, and other admins (not self) */}
+                        {(u.role === 'mechanic' || u.role === 'staff' || (u.role === 'admin' && !isSelf)) && (
                           <button
                             onClick={() => handleDemote(u.id, u.role)}
                             className="text-xs px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-500/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-500/30 border border-red-200 dark:border-red-500/30 transition font-medium"
@@ -581,89 +619,140 @@ export default function AdminUsers() {
               <button onClick={closeEdit} className="text-gray-400 hover:text-gray-700 dark:hover:text-white text-xl leading-none transition">✕</button>
             </div>
 
-            <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
-              {editError && (
-                <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-700 dark:text-red-400 text-sm rounded-lg p-3">{editError}</div>
-              )}
-              {editSuccess && (
-                <div className="bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/30 text-green-700 dark:text-green-400 text-sm rounded-lg p-3">{editSuccess}</div>
-              )}
+            <div className="p-6 space-y-6">
+              {/* ── Profile form ── */}
+              <form onSubmit={handleSaveEdit} className="space-y-4">
+                {editError && (
+                  <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-700 dark:text-red-400 text-sm rounded-lg p-3">{editError}</div>
+                )}
+                {editSuccess && (
+                  <div className="bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/30 text-green-700 dark:text-green-400 text-sm rounded-lg p-3">{editSuccess}</div>
+                )}
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className={label}>First Name</label>
-                  <input value={editForm.first_name} onChange={e => setEditForm(f => ({ ...f, first_name: e.target.value }))} required className={inp} />
-                </div>
-                <div>
-                  <label className={label}>Last Name</label>
-                  <input value={editForm.last_name} onChange={e => setEditForm(f => ({ ...f, last_name: e.target.value }))} required className={inp} />
-                </div>
-              </div>
-
-              <div>
-                <label className={label}>Email</label>
-                <input value={editingUser.email} disabled
-                  className="w-full px-3 py-2 rounded-lg bg-gray-100 dark:bg-dark-900/50 border border-gray-200 dark:border-gray-800 text-gray-400 dark:text-gray-500 text-sm cursor-not-allowed" />
-                <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">Email cannot be changed here.</p>
-              </div>
-
-              <div>
-                <label className={label}>Phone</label>
-                <input value={editForm.phone} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} placeholder="09XX XXX XXXX" className={inp} />
-              </div>
-
-              <div>
-                <label className={label}>Role</label>
-                <select value={editForm.role} onChange={e => setEditForm(f => ({ ...f, role: e.target.value }))} className={inp}>
-                  <option value="customer">Customer</option>
-                  <option value="mechanic">Mechanic</option>
-                  <option value="staff">Staff</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
-
-              {editForm.role === 'mechanic' && (
-                <div>
-                  <label className={label}>Specialization</label>
-                  <input value={editForm.specialization} onChange={e => setEditForm(f => ({ ...f, specialization: e.target.value }))}
-                    placeholder="e.g. Engine Repair, Electrical" className={inp} />
-                </div>
-              )}
-
-              {editForm.role === 'customer' && (
-                <div className="border-t border-gray-100 dark:border-gray-800 pt-4 space-y-3">
-                  <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Motorcycle Info</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="col-span-2">
-                      <label className={label}>Make</label>
-                      <input value={editForm.moto_make || ''} onChange={e => setEditForm(f => ({ ...f, moto_make: e.target.value }))}
-                        placeholder="Honda, Yamaha..." className={inp} />
-                    </div>
-                    <div>
-                      <label className={label}>Year</label>
-                      <input value={editForm.moto_year || ''} onChange={e => setEditForm(f => ({ ...f, moto_year: e.target.value }))}
-                        placeholder="2022" type="number" className={inp} />
-                    </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={label}>First Name</label>
+                    <input value={editForm.first_name} onChange={e => setEditForm(f => ({ ...f, first_name: e.target.value }))} required className={inp} />
                   </div>
                   <div>
-                    <label className={label}>Model</label>
-                    <input value={editForm.moto_model || ''} onChange={e => setEditForm(f => ({ ...f, moto_model: e.target.value }))}
-                      placeholder="Click 125i, NMAX..." className={inp} />
+                    <label className={label}>Last Name</label>
+                    <input value={editForm.last_name} onChange={e => setEditForm(f => ({ ...f, last_name: e.target.value }))} required className={inp} />
                   </div>
                 </div>
-              )}
 
-              <div className="pt-2 flex gap-2">
-                <button type="submit" disabled={saving}
-                  className="flex-1 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 py-2.5 rounded-lg text-sm font-semibold transition text-white shadow-sm">
-                  {saving ? 'Saving...' : 'Save Changes'}
-                </button>
-                <button type="button" onClick={closeEdit}
-                  className="px-4 py-2.5 bg-gray-100 dark:bg-dark-900 hover:bg-gray-200 dark:hover:bg-dark-700 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-700 dark:text-gray-300 transition">
-                  Cancel
-                </button>
+                <div>
+                  <label className={label}>Email</label>
+                  <input value={editingUser.email} disabled
+                    className="w-full px-3 py-2 rounded-lg bg-gray-100 dark:bg-dark-900/50 border border-gray-200 dark:border-gray-800 text-gray-400 dark:text-gray-500 text-sm cursor-not-allowed" />
+                  <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">Email cannot be changed here.</p>
+                </div>
+
+                <div>
+                  <label className={label}>Phone</label>
+                  <input value={editForm.phone} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} placeholder="09XX XXX XXXX" className={inp} />
+                </div>
+
+                <div>
+                  <label className={label}>Role</label>
+                  <select value={editForm.role} onChange={e => setEditForm(f => ({ ...f, role: e.target.value }))} className={inp}>
+                    <option value="customer">Customer</option>
+                    <option value="mechanic">Mechanic</option>
+                    <option value="staff">Staff</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+
+                {editForm.role === 'mechanic' && (
+                  <div>
+                    <label className={label}>Specialization</label>
+                    <input value={editForm.specialization} onChange={e => setEditForm(f => ({ ...f, specialization: e.target.value }))}
+                      placeholder="e.g. Engine Repair, Electrical" className={inp} />
+                  </div>
+                )}
+
+                {editForm.role === 'customer' && (
+                  <div className="border-t border-gray-100 dark:border-gray-800 pt-4 space-y-3">
+                    <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Motorcycle Info</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="col-span-2">
+                        <label className={label}>Make</label>
+                        <input value={editForm.moto_make || ''} onChange={e => setEditForm(f => ({ ...f, moto_make: e.target.value }))}
+                          placeholder="Honda, Yamaha..." className={inp} />
+                      </div>
+                      <div>
+                        <label className={label}>Year</label>
+                        <input value={editForm.moto_year || ''} onChange={e => setEditForm(f => ({ ...f, moto_year: e.target.value }))}
+                          placeholder="2022" type="number" className={inp} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className={label}>Model</label>
+                      <input value={editForm.moto_model || ''} onChange={e => setEditForm(f => ({ ...f, moto_model: e.target.value }))}
+                        placeholder="Click 125i, NMAX..." className={inp} />
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-2 flex gap-2">
+                  <button type="submit" disabled={saving}
+                    className="flex-1 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 py-2.5 rounded-lg text-sm font-semibold transition text-white shadow-sm">
+                    {saving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                  <button type="button" onClick={closeEdit}
+                    className="px-4 py-2.5 bg-gray-100 dark:bg-dark-900 hover:bg-gray-200 dark:hover:bg-dark-700 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-700 dark:text-gray-300 transition">
+                    Cancel
+                  </button>
+                </div>
+              </form>
+
+              {/* ── Change Password section ── */}
+              <div className="border-t border-gray-100 dark:border-gray-800 pt-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-base">🔑</span>
+                  <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Change Password</p>
+                </div>
+                <form onSubmit={handleChangePassword} className="space-y-3">
+                  {passwordError && (
+                    <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-700 dark:text-red-400 text-sm rounded-lg p-3">{passwordError}</div>
+                  )}
+                  {passwordSuccess && (
+                    <div className="bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/30 text-green-700 dark:text-green-400 text-sm rounded-lg p-3">{passwordSuccess}</div>
+                  )}
+                  <div>
+                    <label className={label}>New Password</label>
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={e => { setNewPassword(e.target.value); setPasswordError(''); setPasswordSuccess(''); }}
+                      placeholder="Min. 6 characters"
+                      className={inp}
+                      autoComplete="new-password"
+                    />
+                  </div>
+                  <div>
+                    <label className={label}>Confirm New Password</label>
+                    <input
+                      type="password"
+                      value={confirmNewPassword}
+                      onChange={e => { setConfirmNewPassword(e.target.value); setPasswordError(''); setPasswordSuccess(''); }}
+                      placeholder="Re-enter new password"
+                      className={inp}
+                      autoComplete="new-password"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={changingPassword || !newPassword}
+                    className="w-full bg-gray-800 hover:bg-gray-900 dark:bg-gray-700 dark:hover:bg-gray-600 disabled:opacity-40 py-2.5 rounded-lg text-sm font-semibold transition text-white shadow-sm"
+                  >
+                    {changingPassword ? 'Updating Password...' : 'Update Password'}
+                  </button>
+                </form>
+                <p className="text-xs text-gray-400 dark:text-gray-600 mt-2">
+                  This action is audit-logged. The user will need to use the new password on their next login.
+                </p>
               </div>
-            </form>
+            </div>
           </div>
         </div>
       )}

@@ -40,6 +40,7 @@ export default function InventoryScreen() {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [stockFilter, setStockFilter] = useState('all'); // all | low | out
+  const [statusFilter, setStatusFilter] = useState('active'); // active | inactive | all
   const [sortBy, setSortBy] = useState('name'); // name | price_asc | price_desc | stock_asc | stock_desc
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -167,27 +168,38 @@ export default function InventoryScreen() {
     fetchParts();
   }
 
-  function confirmDelete(part) {
+  function confirmToggleActive(part) {
+    const activating = !part.is_active;
     Alert.alert(
-      'Delete Part',
-      `Delete "${part.name}"? This cannot be undone.`,
+      activating ? 'Reactivate Part' : 'Deactivate Part',
+      activating
+        ? `Reactivate "${part.name}"? It will reappear in the shop.`
+        : `Deactivate "${part.name}"? It will be hidden from customers but kept in your records (orders, reports). You can reactivate it anytime.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => deletePart(part) },
+        {
+          text: activating ? 'Reactivate' : 'Deactivate',
+          style: activating ? 'default' : 'destructive',
+          onPress: () => setPartActive(part, activating),
+        },
       ]
     );
   }
 
-  async function deletePart(part) {
-    await supabase.from('parts').delete().eq('id', part.id);
-    await supabase.from('audit_logs').insert({
-      action: 'DELETE_PART',
-      entity: 'parts',
-      entity_id: part.id,
-      performed_by: userId,
-      details: { name: part.name },
-    });
-    fetchParts();
+  async function setPartActive(part, active) {
+    const { error } = await supabase.from('parts').update({ is_active: active }).eq('id', part.id);
+    if (!error) {
+      await supabase.from('audit_logs').insert({
+        action: active ? 'REACTIVATE_PART' : 'DEACTIVATE_PART',
+        entity: 'parts',
+        entity_id: part.id,
+        performed_by: userId,
+        details: { name: part.name },
+      });
+      fetchParts();
+    } else {
+      Alert.alert('Error', error.message);
+    }
   }
 
   async function updateStock(id, qty) {
@@ -228,10 +240,11 @@ export default function InventoryScreen() {
   );
 
   const stats = useMemo(() => {
-    const totalValue = parts.reduce((sum, p) => sum + (p.price || 0) * (p.stock_quantity || 0), 0);
-    const lowStock = parts.filter((p) => p.stock_quantity > 0 && p.stock_quantity <= p.reorder_threshold).length;
-    const outOfStock = parts.filter((p) => p.stock_quantity <= 0).length;
-    return { totalValue, lowStock, outOfStock, total: parts.length };
+    const activeParts = parts.filter((p) => p.is_active);
+    const totalValue = activeParts.reduce((sum, p) => sum + (p.price || 0) * (p.stock_quantity || 0), 0);
+    const lowStock = activeParts.filter((p) => p.stock_quantity > 0 && p.stock_quantity <= p.reorder_threshold).length;
+    const outOfStock = activeParts.filter((p) => p.stock_quantity <= 0).length;
+    return { totalValue, lowStock, outOfStock, total: activeParts.length };
   }, [parts]);
 
   const filteredParts = useMemo(() => {
@@ -242,7 +255,11 @@ export default function InventoryScreen() {
         stockFilter === 'all' ||
         (stockFilter === 'low' && p.stock_quantity > 0 && p.stock_quantity <= p.reorder_threshold) ||
         (stockFilter === 'out' && p.stock_quantity <= 0);
-      return matchSearch && matchCategory && matchStock;
+      const matchStatus =
+        statusFilter === 'all' ||
+        (statusFilter === 'active' && p.is_active) ||
+        (statusFilter === 'inactive' && !p.is_active);
+      return matchSearch && matchCategory && matchStock && matchStatus;
     });
 
     result = [...result].sort((a, b) => {
@@ -256,7 +273,7 @@ export default function InventoryScreen() {
     });
 
     return result;
-  }, [parts, search, categoryFilter, stockFilter, sortBy]);
+  }, [parts, search, categoryFilter, stockFilter, statusFilter, sortBy]);
 
   const SORT_OPTIONS = [
     { key: 'name', label: 'Name (A-Z)' },
@@ -264,6 +281,12 @@ export default function InventoryScreen() {
     { key: 'price_desc', label: 'Price ↓' },
     { key: 'stock_asc', label: 'Stock ↑' },
     { key: 'stock_desc', label: 'Stock ↓' },
+  ];
+
+  const STATUS_OPTIONS = [
+    { key: 'active', label: 'Active' },
+    { key: 'inactive', label: 'Inactive' },
+    { key: 'all', label: 'All' },
   ];
 
   if (loading) {
@@ -291,7 +314,7 @@ export default function InventoryScreen() {
 
         {/* Stats Section with Horizontal Scroll */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
-          <StatCard theme={theme} label="Total Parts" value={stats.total} color={theme.primaryLight} borderColor="#3b82f6" />
+          <StatCard theme={theme} label="Active Parts" value={stats.total} color={theme.primaryLight} borderColor="#3b82f6" />
           <StatCard theme={theme} label="Low Stock" value={stats.lowStock} color={theme.warning} borderColor={theme.warning} />
           <StatCard theme={theme} label="Out of Stock" value={stats.outOfStock} color={theme.danger} borderColor={theme.danger} />
           <StatCard theme={theme} label="Inventory Value" value={`₱${stats.totalValue.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`} color={theme.accent} borderColor={theme.accent} />
@@ -346,6 +369,19 @@ export default function InventoryScreen() {
           ))}
         </ScrollView>
 
+        {/* Status filter chips */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chipRow}>
+          {STATUS_OPTIONS.map((f) => (
+            <TouchableOpacity
+              key={f.key}
+              style={[s.chip, statusFilter === f.key && s.chipActive]}
+              onPress={() => setStatusFilter(f.key)}
+            >
+              <Text style={[s.chipText, statusFilter === f.key && s.chipTextActive]}>{f.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
         {/* Sort chips */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chipRow}>
           {SORT_OPTIONS.map((opt) => (
@@ -378,7 +414,7 @@ export default function InventoryScreen() {
             {parts.length > 0 && (
               <TouchableOpacity
                 style={{ backgroundColor: theme.bg2, borderRadius: 10, paddingHorizontal: 20, paddingVertical: 10, borderWidth: 1, borderColor: theme.border }}
-                onPress={() => { setSearch(''); setCategoryFilter('all'); setStockFilter('all'); }}
+                onPress={() => { setSearch(''); setCategoryFilter('all'); setStockFilter('all'); setStatusFilter('all'); }}
               >
                 <Text style={{ color: theme.primaryLight, fontWeight: '600' }}>Clear Filters</Text>
               </TouchableOpacity>
@@ -390,9 +426,17 @@ export default function InventoryScreen() {
             const isLow = !isOut && p.stock_quantity <= p.reorder_threshold;
             const badgeColor = isOut ? theme.danger : isLow ? theme.warning : theme.success;
             const badgeText = isOut ? 'Out of Stock' : isLow ? 'Low Stock' : 'In Stock';
+            const inactive = !p.is_active;
 
             return (
-              <View key={p.id} style={[s.card, { borderLeftColor: isOut ? theme.danger : isLow ? theme.warning : theme.success }]}>
+              <View
+                key={p.id}
+                style={[
+                  s.card,
+                  { borderLeftColor: isOut ? theme.danger : isLow ? theme.warning : theme.success },
+                  inactive && { opacity: 0.55 },
+                ]}
+              >
                 <View style={s.cardTop}>
                   <View style={s.cardImage}>
                     {p.image_url ? (
@@ -405,8 +449,15 @@ export default function InventoryScreen() {
                     <Text style={s.cardName} numberOfLines={1}>{p.name}</Text>
                     <Text style={s.cardCategory}>{p.category || 'Uncategorized'}</Text>
                   </View>
-                  <View style={[s.badge, { backgroundColor: badgeColor + '22' }]}>
-                    <Text style={[s.badgeText, { color: badgeColor }]}>{badgeText}</Text>
+                  <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                    {inactive && (
+                      <View style={[s.badge, { backgroundColor: theme.textMuted + '22' }]}>
+                        <Text style={[s.badgeText, { color: theme.textMuted }]}>Inactive</Text>
+                      </View>
+                    )}
+                    <View style={[s.badge, { backgroundColor: badgeColor + '22' }]}>
+                      <Text style={[s.badgeText, { color: badgeColor }]}>{badgeText}</Text>
+                    </View>
                   </View>
                 </View>
 
@@ -472,8 +523,13 @@ export default function InventoryScreen() {
                   <TouchableOpacity style={[s.actionBtn, s.editBtn]} onPress={() => openEditModal(p)}>
                     <Text style={[s.actionBtnText, { color: theme.primaryLight }]}>✎ Edit</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={[s.actionBtn, s.deleteBtn]} onPress={() => confirmDelete(p)}>
-                    <Text style={[s.actionBtnText, { color: theme.danger }]}>🗑 Delete</Text>
+                  <TouchableOpacity
+                    style={[s.actionBtn, inactive ? s.reactivateBtn : s.deleteBtn]}
+                    onPress={() => confirmToggleActive(p)}
+                  >
+                    <Text style={[s.actionBtnText, { color: inactive ? theme.success : theme.danger }]}>
+                      {inactive ? '↺ Reactivate' : '🚫 Deactivate'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -680,6 +736,7 @@ const styles = (theme) =>
     actionBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8 },
     editBtn: { backgroundColor: theme.primary + '18' },
     deleteBtn: { backgroundColor: '#ef444418' },
+    reactivateBtn: { backgroundColor: theme.success + '18' },
     actionBtnText: { fontSize: 12, fontWeight: '600' },
 
     fab: {  
