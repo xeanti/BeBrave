@@ -1,221 +1,388 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
+
+const peso = new Intl.NumberFormat('en-PH', {
+  style: 'currency',
+  currency: 'PHP',
+  minimumFractionDigits: 2,
+});
+
+function CartIcon({ className = 'h-5 w-5' }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M2.25 3h2.386c.51 0 .955.343 1.087.835l.383 1.437m0 0L7.5 14.25A2.25 2.25 0 0 0 9.711 16.1h6.839a2.25 2.25 0 0 0 2.175-1.681l1.225-4.675A1.5 1.5 0 0 0 18.5 7.875H6.106m0-2.603L5.25 2.25M9 20.25h.008v.008H9v-.008Zm8.25 0h.008v.008h-.008v-.008Z"
+      />
+    </svg>
+  );
+}
+
+function CloseIcon({ className = 'h-5 w-5' }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+    </svg>
+  );
+}
+
+function EmptyCart({ onShop }) {
+  return (
+    <div className="flex h-full min-h-[420px] flex-col items-center justify-center px-6 py-16 text-center">
+      <div className="relative mb-6">
+        <div className="absolute inset-0 rounded-full bg-primary-500/20 blur-2xl" />
+        <div className="relative grid h-24 w-24 place-items-center rounded-[2rem] border border-primary-100 bg-primary-50 text-primary-600 shadow-xl shadow-primary-500/10 dark:border-primary-500/20 dark:bg-primary-500/10 dark:text-primary-300">
+          <CartIcon className="h-10 w-10" />
+        </div>
+      </div>
+
+      <h3 className="text-xl font-black tracking-tight text-gray-950 dark:text-white">
+        Your cart is empty
+      </h3>
+      <p className="mt-2 max-w-[260px] text-sm leading-6 text-gray-500 dark:text-gray-400">
+        Add motorcycle parts from the shop and review them here before checkout.
+      </p>
+
+      <button
+        onClick={onShop}
+        className="mt-7 inline-flex items-center justify-center rounded-2xl bg-primary-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-primary-600/25 transition hover:-translate-y-0.5 hover:bg-primary-700 active:translate-y-0"
+      >
+        Browse Shop
+      </button>
+    </div>
+  );
+}
+
+function CartItem({ item, onIncrease, onDecrease, onRemove }) {
+  const price = Number.parseFloat(item.price || 0);
+  const quantity = Number(item.quantity || 1);
+  const lineTotal = price * quantity;
+
+  return (
+    <div className="group rounded-3xl border border-gray-200 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-xl hover:shadow-primary-600/10 dark:border-gray-800 dark:bg-dark-800/70 dark:hover:border-primary-500/30">
+      <div className="flex gap-3">
+        <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl border border-gray-100 bg-gray-100 dark:border-gray-700 dark:bg-dark-900">
+          {item.image_url ? (
+            <img
+              src={item.image_url}
+              alt={item.name}
+              className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+              loading="lazy"
+            />
+          ) : (
+            <div className="grid h-full w-full place-items-center text-3xl text-gray-400 dark:text-gray-500">
+              ⚙️
+            </div>
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-black text-gray-950 transition group-hover:text-primary-600 dark:text-white dark:group-hover:text-primary-300">
+                {item.name}
+              </p>
+              <p className="mt-1 inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:bg-dark-900 dark:text-gray-400">
+                {item.category || 'Part'}
+              </p>
+            </div>
+
+            <button
+              onClick={onRemove}
+              className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-xl text-gray-400 transition hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10 dark:hover:text-red-300"
+              aria-label={`Remove ${item.name} from cart`}
+              title="Remove item"
+            >
+              <CloseIcon className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="mt-3 flex items-end justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                {peso.format(price)} each
+              </p>
+              <p className="mt-0.5 text-sm font-black text-gray-950 dark:text-white">
+                {peso.format(lineTotal)}
+              </p>
+            </div>
+
+            <div className="flex items-center rounded-2xl border border-gray-200 bg-gray-50 p-1 dark:border-gray-700 dark:bg-dark-900">
+              <button
+                onClick={onDecrease}
+                disabled={quantity <= 1}
+                className="grid h-8 w-8 place-items-center rounded-xl text-base font-black text-gray-600 transition hover:bg-white hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-35 dark:text-gray-300 dark:hover:bg-dark-800 dark:hover:text-white"
+                aria-label={`Decrease ${item.name} quantity`}
+              >
+                −
+              </button>
+
+              <span className="w-9 text-center text-sm font-black text-gray-950 dark:text-white">
+                {quantity}
+              </span>
+
+              <button
+                onClick={onIncrease}
+                className="grid h-8 w-8 place-items-center rounded-xl text-base font-black text-gray-600 transition hover:bg-white hover:text-gray-950 dark:text-gray-300 dark:hover:bg-dark-800 dark:hover:text-white"
+                aria-label={`Increase ${item.name} quantity`}
+              >
+                +
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function CartDrawer() {
   const { cart, removeFromCart, updateQuantity, clearCart, total, itemCount } = useCart();
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
-  
-  const drawerRef = useRef(null);
 
-  // Global listener to detect clicks completely outside of the drawer element
+  const [open, setOpen] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  const drawerRef = useRef(null);
+  const closeButtonRef = useRef(null);
+
+  const downPayment = useMemo(() => total * 0.15, [total]);
+  const remainingBalance = useMemo(() => total - downPayment, [total, downPayment]);
+
+  function closeDrawer() {
+    setOpen(false);
+    setConfirmClear(false);
+  }
+
+  function goTo(path) {
+    closeDrawer();
+    navigate(path);
+  }
+
+  function handleClearCart() {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      return;
+    }
+
+    clearCart();
+    setConfirmClear(false);
+  }
+
   useEffect(() => {
+    if (!open) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const timer = window.setTimeout(() => {
+      closeButtonRef.current?.focus();
+    }, 120);
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') closeDrawer();
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.clearTimeout(timer);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
     function handleOutsideClick(event) {
-      if (open && drawerRef.current && !drawerRef.current.contains(event.target)) {
-        if (!event.target.closest('.cart-toggle-btn')) {
-          setOpen(false);
-        }
+      if (
+        drawerRef.current &&
+        !drawerRef.current.contains(event.target) &&
+        !event.target.closest('.cart-toggle-btn')
+      ) {
+        closeDrawer();
       }
     }
 
-    if (open) {
-      document.addEventListener('mousedown', handleOutsideClick);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleOutsideClick);
-    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, [open]);
 
   return (
     <>
       {/* Cart button */}
       <button
-        onClick={() => setOpen(!open)}
-        className="cart-toggle-btn relative p-2.5 rounded-xl text-gray-400 hover:text-white hover:bg-dark-800 border border-transparent hover:border-dark-700 transition-all duration-200 flex-shrink-0"
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="cart-toggle-btn group relative grid h-11 w-11 place-items-center rounded-2xl border border-gray-200 bg-white text-gray-700 shadow-sm transition hover:-translate-y-0.5 hover:border-primary-200 hover:text-primary-600 hover:shadow-lg hover:shadow-primary-600/10 active:translate-y-0 dark:border-gray-700 dark:bg-dark-800 dark:text-gray-200 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
+        aria-label={`Open cart${itemCount ? `, ${itemCount} item${itemCount === 1 ? '' : 's'}` : ''}`}
+        aria-expanded={open}
+        aria-controls="cart-drawer"
       >
-        <span className="text-xl">🛒</span>
+        <CartIcon className="h-5 w-5 transition group-hover:scale-110" />
+
         {itemCount > 0 && (
-          <span className="absolute -top-1 -right-1 bg-pink-500 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-bold tracking-tight shadow-md animate-fade-in">
+          <span className="absolute -right-1.5 -top-1.5 grid h-5 min-w-[1.25rem] place-items-center rounded-full border-2 border-white bg-primary-600 px-1 text-[10px] font-black leading-none text-white shadow-lg dark:border-dark-900">
             {itemCount > 9 ? '9+' : itemCount}
           </span>
         )}
       </button>
 
-      {/* BACKDROP Overlay */}
-      {open && (
-        <div
-          onClick={() => setOpen(false)}
-          className="fixed inset-0 z-[9998] bg-black/70 backdrop-blur-md transition-opacity duration-300 cursor-pointer"
-        />
-      )}
+      {/* Backdrop */}
+      <div
+        onClick={closeDrawer}
+        className={`fixed inset-0 z-[9998] bg-gray-950/60 backdrop-blur-sm transition-opacity duration-300 ${
+          open ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
+        }`}
+        aria-hidden="true"
+      />
 
       {/* Drawer */}
-      <div
+      <aside
+        id="cart-drawer"
         ref={drawerRef}
-        className={`fixed top-0 right-0 h-screen max-h-screen z-[9999] flex flex-col shadow-[rgba(0,0,0,0.8)_0px_0px_50px_0px] transition-transform duration-300 ease-out overflow-hidden bg-dark-900 border-l border-dark-800 text-white w-full max-w-[420px] ${
+        className={`fixed right-0 top-0 z-[9999] flex h-screen w-full max-w-[430px] flex-col overflow-hidden border-l border-gray-200 bg-gray-50 text-gray-950 shadow-2xl shadow-gray-950/30 transition-transform duration-300 ease-out dark:border-gray-800 dark:bg-dark-900 dark:text-white ${
           open ? 'translate-x-0' : 'translate-x-full'
         }`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Shopping cart"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 flex-shrink-0 border-b border-dark-800 bg-dark-900/50 backdrop-blur-sm">
-          <div className="flex items-center gap-2.5">
-            <span className="text-xl">🛒</span>
-            <h2 className="font-bold text-lg tracking-tight text-white">
-              Parts Cart
-            </h2>
-            {itemCount > 0 && (
-              <span className="text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-pink-500/10 text-pink-400 border border-pink-500/20">
-                {itemCount} {itemCount === 1 ? 'item' : 'items'}
-              </span>
-            )}
+        <div className="relative overflow-hidden border-b border-gray-200 bg-white px-5 py-5 dark:border-gray-800 dark:bg-dark-900">
+          <div className="absolute -right-16 -top-20 h-40 w-40 rounded-full bg-primary-500/20 blur-3xl" />
+          <div className="relative flex items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="grid h-12 w-12 flex-shrink-0 place-items-center rounded-2xl bg-primary-600 text-white shadow-lg shadow-primary-600/25">
+                <CartIcon className="h-6 w-6" />
+              </div>
+
+              <div className="min-w-0">
+                <h2 className="truncate text-lg font-black tracking-tight">
+                  Parts Cart
+                </h2>
+                <p className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                  {itemCount > 0
+                    ? `${itemCount} ${itemCount === 1 ? 'item' : 'items'} ready for checkout`
+                    : 'No items added yet'}
+                </p>
+              </div>
+            </div>
+
+            <button
+              ref={closeButtonRef}
+              type="button"
+              onClick={closeDrawer}
+              className="grid h-10 w-10 flex-shrink-0 place-items-center rounded-2xl border border-gray-200 bg-gray-50 text-gray-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40 dark:border-gray-700 dark:bg-dark-800 dark:text-gray-300 dark:hover:border-red-500/30 dark:hover:bg-red-500/10 dark:hover:text-red-300"
+              aria-label="Close cart"
+            >
+              <CloseIcon />
+            </button>
           </div>
-          <button
-            onClick={() => setOpen(false)}
-            className="w-8 h-8 rounded-lg flex items-center justify-center transition-all bg-dark-800 text-gray-400 hover:text-white border border-transparent hover:border-dark-700 hover:bg-dark-700/50"
-          >
-            ✕
-          </button>
         </div>
 
-        {/* Items (Middle Scrollable Content) */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-4 scrollbar-thin scrollbar-thumb-dark-700">
+        {/* Items */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
           {cart.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center py-16">
-              <div className="w-20 h-20 rounded-full bg-dark-800 flex items-center justify-center text-4xl mb-4 border border-dark-700/50">
-                🛒
-              </div>
-              <p className="font-semibold text-lg mb-1 text-white">Your cart is empty</p>
-              <p className="text-sm mb-6 text-gray-400 max-w-[240px] mx-auto">
-                Browse our shop and add premium parts to get started.
-              </p>
-              <button
-                onClick={() => { setOpen(false); navigate('/shop'); }}
-                className="px-6 py-2.5 rounded-xl text-sm font-semibold transition-all bg-pink-600 text-white hover:bg-pink-500 active:scale-95 shadow-lg shadow-pink-600/20"
-              >
-                Browse Shop
-              </button>
-            </div>
+            <EmptyCart onShop={() => goTo('/shop')} />
           ) : (
-            cart.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-start gap-4 rounded-xl p-3.5 bg-dark-950/40 border border-dark-800/80 hover:border-dark-700 transition-all duration-200 group"
-              >
-                {/* Image Wrap */}
-                <div className="flex-shrink-0 relative overflow-hidden rounded-lg bg-dark-800 border border-dark-700/60 p-0.5">
-                  {item.image_url ? (
-                    <img
-                      src={item.image_url}
-                      alt={item.name}
-                      className="object-cover w-[56px] h-[56px] rounded-md group-hover:scale-105 transition-transform duration-200"
-                    />
-                  ) : (
-                    <div className="rounded-md flex items-center justify-center text-2xl w-[56px] h-[56px] bg-dark-800 text-gray-500">
-                      ⚙️
-                    </div>
-                  )}
-                </div>
+            <div className="space-y-3">
+              {cart.map((item) => {
+                const quantity = Number(item.quantity || 1);
 
-                {/* Info block */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-semibold truncate text-white group-hover:text-pink-400 transition-colors duration-200">
-                      {item.name}
-                    </p>
-                    <p className="text-sm font-bold text-white flex-shrink-0">
-                      ₱{(parseFloat(item.price) * item.quantity).toFixed(2)}
-                    </p>
-                  </div>
-                  <p className="text-[11px] font-medium tracking-wide mt-0.5 uppercase text-gray-500">
-                    {item.category || 'Part'}
-                  </p>
-                  <p className="text-xs mt-1 text-yellow-500 font-medium">
-                    ₱{parseFloat(item.price).toFixed(2)} <span className="text-gray-500 text-[10px]">each</span>
-                  </p>
-
-                  {/* Quantity adjustments + remove links */}
-                  <div className="flex items-center justify-between gap-2 mt-3.5 pt-2 border-t border-dark-800/40">
-                    <div className="flex items-center gap-1 bg-dark-900 rounded-lg p-0.5 border border-dark-800">
-                      <button
-                        onClick={() => updateQuantity(item.id, item.quantity - 1)}
-                        className="w-6 h-6 rounded-md flex items-center justify-center text-sm font-bold transition hover:bg-dark-800 text-gray-400 hover:text-white"
-                      >
-                        −
-                      </button>
-                      <span className="text-xs font-bold w-7 text-center text-white">
-                        {item.quantity}
-                      </span>
-                      <button
-                        onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                        className="w-6 h-6 rounded-md flex items-center justify-center text-sm font-bold transition hover:bg-dark-800 text-gray-400 hover:text-white"
-                      >
-                        +
-                      </button>
-                    </div>
-                    
-                    <button
-                      onClick={() => removeFromCart(item.id)}
-                      className="text-xs font-medium text-gray-500 hover:text-red-400 transition-colors duration-150"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))
+                return (
+                  <CartItem
+                    key={item.id}
+                    item={item}
+                    onIncrease={() => updateQuantity(item.id, quantity + 1)}
+                    onDecrease={() => {
+                      if (quantity > 1) updateQuantity(item.id, quantity - 1);
+                    }}
+                    onRemove={() => removeFromCart(item.id)}
+                  />
+                );
+              })}
+            </div>
           )}
         </div>
 
         {/* Footer */}
         {cart.length > 0 && (
-          <div className="flex-shrink-0 px-6 py-5 space-y-4 bg-dark-900 border-t border-dark-800 shadow-[0_-10px_30px_rgba(0,0,0,0.3)]">
-            {/* Totals Box */}
-            <div className="rounded-xl p-4 space-y-2.5 bg-dark-950/80 border border-dark-800/60">
-              <div className="flex justify-between text-xs font-medium">
-                <span className="text-gray-400">
-                  Subtotal ({itemCount} {itemCount === 1 ? 'item' : 'items'})
-                </span>
-                <span className="text-white">
-                  ₱{total.toFixed(2)}
-                </span>
+          <div className="border-t border-gray-200 bg-white p-5 shadow-[0_-18px_45px_rgba(15,23,42,0.08)] dark:border-gray-800 dark:bg-dark-900 dark:shadow-[0_-18px_45px_rgba(0,0,0,0.35)]">
+            <div className="rounded-3xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-dark-800/70">
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between gap-4">
+                  <span className="text-gray-500 dark:text-gray-400">
+                    Subtotal
+                  </span>
+                  <span className="font-bold text-gray-950 dark:text-white">
+                    {peso.format(total)}
+                  </span>
+                </div>
+
+                <div className="flex justify-between gap-4">
+                  <span className="text-gray-500 dark:text-gray-400">
+                    Down Payment 15%
+                  </span>
+                  <span className="font-black text-accent-500">
+                    {peso.format(downPayment)}
+                  </span>
+                </div>
+
+                <div className="border-t border-dashed border-gray-300 pt-3 dark:border-gray-700">
+                  <div className="flex justify-between gap-4">
+                    <span className="font-semibold text-gray-600 dark:text-gray-300">
+                      Remaining balance
+                    </span>
+                    <span className="font-black text-gray-950 dark:text-white">
+                      {peso.format(remainingBalance)}
+                    </span>
+                  </div>
+                </div>
               </div>
-              <div className="flex justify-between text-xs font-medium pt-2 border-t border-dark-800/40">
-                <span className="text-gray-400">Down Payment (15%)</span>
-                <span className="font-bold text-yellow-500">
-                  ₱{(total * 0.15).toFixed(2)}
-                </span>
-              </div>
+
+              <p className="mt-3 rounded-2xl bg-primary-50 px-3 py-2 text-[11px] font-medium leading-5 text-primary-700 dark:bg-primary-500/10 dark:text-primary-200">
+                Checkout will reserve your selected parts. Final installation fees may vary after assessment.
+              </p>
             </div>
 
-            {/* Main Action Call */}
             <button
-              onClick={() => { setOpen(false); navigate('/checkout'); }}
-              className="w-full py-3.5 rounded-xl text-sm font-bold transition-all bg-pink-600 hover:bg-pink-500 active:scale-[0.99] text-white flex items-center justify-center gap-2 shadow-lg shadow-pink-600/10 hover:shadow-pink-600/20"
+              type="button"
+              onClick={() => goTo('/checkout')}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-primary-600 px-5 py-3.5 text-sm font-black text-white shadow-lg shadow-primary-600/25 transition hover:-translate-y-0.5 hover:bg-primary-700 hover:shadow-primary-600/35 active:translate-y-0"
             >
               Proceed to Checkout
-              <span className="text-base">→</span>
+              <span aria-hidden="true">→</span>
             </button>
 
-            {/* Auxiliary actions */}
-            <div className="flex gap-2.5">
+            <div className="mt-3 grid grid-cols-2 gap-3">
               <button
-                onClick={() => { setOpen(false); navigate('/shop'); }}
-                className="flex-1 py-2.5 rounded-xl text-xs font-semibold transition-all bg-dark-800 text-gray-300 hover:text-white border border-dark-700/50 hover:bg-dark-700"
+                type="button"
+                onClick={() => goTo('/shop')}
+                className="rounded-2xl border border-gray-200 bg-white px-4 py-3 text-xs font-bold text-gray-700 transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 dark:border-gray-700 dark:bg-dark-800 dark:text-gray-300 dark:hover:border-primary-500/30 dark:hover:bg-primary-500/10 dark:hover:text-primary-200"
               >
                 Continue Shopping
               </button>
+
               <button
-                onClick={clearCart}
-                className="flex-1 py-2.5 rounded-xl text-xs font-semibold transition-all bg-dark-800 text-gray-400 hover:text-red-400 border border-dark-700/50 hover:bg-dark-700"
+                type="button"
+                onClick={handleClearCart}
+                onMouseLeave={() => setConfirmClear(false)}
+                className={`rounded-2xl border px-4 py-3 text-xs font-bold transition ${
+                  confirmClear
+                    ? 'border-red-300 bg-red-50 text-red-600 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300'
+                    : 'border-gray-200 bg-white text-gray-500 hover:border-red-200 hover:bg-red-50 hover:text-red-500 dark:border-gray-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:border-red-500/30 dark:hover:bg-red-500/10 dark:hover:text-red-300'
+                }`}
               >
-                Clear Cart
+                {confirmClear ? 'Click to Confirm' : 'Clear Cart'}
               </button>
             </div>
           </div>
         )}
-      </div>
+      </aside>
     </>
   );
 }
