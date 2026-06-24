@@ -38,6 +38,13 @@ export default function AdminUsersScreen() {
   const [editError, setEditError] = useState('');
   const [editSuccess, setEditSuccess] = useState('');
 
+  // Password change
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+
   const [showCreate, setShowCreate] = useState(false);
   const [newAccount, setNewAccount] = useState(EMPTY_NEW_ACCOUNT);
   const [creating, setCreating] = useState(false);
@@ -130,36 +137,26 @@ export default function AdminUsersScreen() {
     setCertError('');
     if (!certName.trim()) { setCertError('Please enter a certificate name.'); return; }
     if (!certFile) { setCertError('Please pick a file to upload.'); return; }
-
     setUploadingCert(true);
     try {
       const ext = certFile.name.split('.').pop() || 'pdf';
       const filePath = `${mechanicId}/${Date.now()}.${ext}`;
       const response = await fetch(certFile.uri);
       const blob = await response.blob();
-
       const { error: uploadError } = await supabase.storage
         .from('mechanic-certificates')
         .upload(filePath, blob, { contentType: certFile.mimeType || 'application/octet-stream' });
       if (uploadError) throw uploadError;
-
       const { data: urlData } = supabase.storage.from('mechanic-certificates').getPublicUrl(filePath);
-
       const { error: insertError } = await supabase.from('mechanic_certificates').insert({
-        mechanic_id: mechanicId,
-        name: certName.trim(),
-        file_url: urlData.publicUrl,
-        uploaded_by: adminId,
+        mechanic_id: mechanicId, name: certName.trim(), file_url: urlData.publicUrl, uploaded_by: adminId,
       });
       if (insertError) throw insertError;
-
       await supabase.from('audit_logs').insert({
         action: 'UPLOAD_MECHANIC_CERTIFICATE', entity: 'mechanic_certificates',
         entity_id: mechanicId, performed_by: adminId, details: { name: certName.trim() },
       });
-
-      setCertName('');
-      setCertFile(null);
+      setCertName(''); setCertFile(null);
       fetchCertificates(mechanicId);
     } catch (err) {
       setCertError(err.message);
@@ -202,21 +199,20 @@ export default function AdminUsersScreen() {
       moto_model: u.moto_model || '',
       moto_year: u.moto_year ? String(u.moto_year) : '',
     });
-    setEditError('');
-    setEditSuccess('');
+    setEditError(''); setEditSuccess('');
+    setNewPassword(''); setConfirmNewPassword('');
+    setPasswordError(''); setPasswordSuccess('');
   }
 
   function closeEdit() {
-    setEditingUser(null);
-    setEditForm({});
-    setEditError('');
-    setEditSuccess('');
+    setEditingUser(null); setEditForm({});
+    setEditError(''); setEditSuccess('');
+    setNewPassword(''); setConfirmNewPassword('');
+    setPasswordError(''); setPasswordSuccess('');
   }
 
   async function handleSaveEdit() {
-    setSaving(true);
-    setEditError('');
-    setEditSuccess('');
+    setSaving(true); setEditError(''); setEditSuccess('');
     const payload = {
       first_name: editForm.first_name,
       last_name: editForm.last_name,
@@ -242,6 +238,33 @@ export default function AdminUsersScreen() {
     setSaving(false);
   }
 
+  // ── Password change via Edge Function ────────────────────────────────────────
+  async function handleChangePassword() {
+    setPasswordError(''); setPasswordSuccess('');
+    if (!newPassword) { setPasswordError('Please enter a new password.'); return; }
+    if (newPassword.length < 6) { setPasswordError('Password must be at least 6 characters.'); return; }
+    if (newPassword !== confirmNewPassword) { setPasswordError('Passwords do not match.'); return; }
+
+    setChangingPassword(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-change-password', {
+        body: { userId: editingUser.id, newPassword },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      await supabase.from('audit_logs').insert({
+        action: 'ADMIN_CHANGE_PASSWORD', entity: 'profiles', entity_id: editingUser.id,
+        performed_by: adminId, details: { email: editingUser.email },
+      });
+      setPasswordSuccess('Password changed successfully!');
+      setNewPassword(''); setConfirmNewPassword('');
+    } catch (err) {
+      setPasswordError(err.message);
+    } finally {
+      setChangingPassword(false);
+    }
+  }
+
   async function handleDemote(userId, currentRole) {
     Alert.alert('Demote User', `Remove ${currentRole} access and set to customer?`, [
       { text: 'Cancel', style: 'cancel' },
@@ -263,11 +286,9 @@ export default function AdminUsersScreen() {
   }
 
   async function handleCreateAccount() {
-    setCreateError('');
-    setCreateSuccess('');
+    setCreateError(''); setCreateSuccess('');
     if (newAccount.password !== newAccount.confirmPassword) { setCreateError('Passwords do not match.'); return; }
     if (newAccount.password.length < 6) { setCreateError('Password must be at least 6 characters.'); return; }
-
     setCreating(true);
     try {
       const { data, error } = await supabase.functions.invoke('create-account', {
@@ -279,12 +300,10 @@ export default function AdminUsersScreen() {
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-
       await supabase.from('audit_logs').insert({
         action: 'CREATE_USER_ACCOUNT', entity: 'profiles', entity_id: data.account?.id,
         performed_by: adminId, details: { role: newAccount.role, email: newAccount.email },
       });
-
       setCreateSuccess(`✅ ${newAccount.role} account created for ${newAccount.firstName} ${newAccount.lastName}!`);
       setNewAccount(EMPTY_NEW_ACCOUNT);
       fetchUsers();
@@ -319,6 +338,7 @@ export default function AdminUsersScreen() {
     const completed = mechanicBookings.filter(b => b.status === 'completed').length;
     const active = mechanicBookings.filter(b => ['pending', 'confirmed', 'in_progress'].includes(b.status)).length;
     const isExpanded = selectedMechanicId === u.id;
+    const isSelf = u.id === adminId;
 
     return (
       <View style={s.card}>
@@ -331,6 +351,7 @@ export default function AdminUsersScreen() {
           <View style={{ flex: 1 }}>
             <View style={s.nameRow}>
               <Text style={s.userName}>{u.first_name} {u.last_name}</Text>
+              {isSelf && <Text style={s.selfLabel}>(you)</Text>}
               <View style={[s.roleBadge, { backgroundColor: ROLE_COLORS[u.role] + '22' }]}>
                 <Text style={[s.roleBadgeText, { color: ROLE_COLORS[u.role] }]}>{u.role}</Text>
               </View>
@@ -354,7 +375,8 @@ export default function AdminUsersScreen() {
           <TouchableOpacity style={s.editBtn} onPress={() => openEdit(u)}>
             <Text style={s.editBtnText}>✎ Edit</Text>
           </TouchableOpacity>
-          {(u.role === 'mechanic' || u.role === 'staff') && (
+          {/* Demote: mechanic, staff, and other admins (not self) */}
+          {(u.role === 'mechanic' || u.role === 'staff' || (u.role === 'admin' && !isSelf)) && (
             <TouchableOpacity style={s.demoteBtn} onPress={() => handleDemote(u.id, u.role)}>
               <Text style={s.demoteBtnText}>Demote</Text>
             </TouchableOpacity>
@@ -461,7 +483,6 @@ export default function AdminUsersScreen() {
     <View style={s.container}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={theme.bg} />
 
-      {/* Search — fixed height, anchored at top */}
       <View style={s.searchWrap}>
         <TextInput
           style={s.searchInput}
@@ -477,13 +498,8 @@ export default function AdminUsersScreen() {
         )}
       </View>
 
-      {/* Role filter — wrapped in fixed-height View */}
       <View style={s.filterBarWrap}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={s.filterContent}
-        >
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filterContent}>
           {['all', 'customer', 'mechanic', 'staff', 'admin'].map(r => (
             <TouchableOpacity
               key={r}
@@ -498,7 +514,6 @@ export default function AdminUsersScreen() {
         </ScrollView>
       </View>
 
-      {/* Action buttons — fixed height row */}
       <View style={s.createBtnRow}>
         <TouchableOpacity
           style={[s.createBtn, { backgroundColor: '#854d0e', flex: 1 }]}
@@ -508,18 +523,12 @@ export default function AdminUsersScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           style={[s.createBtn, { flex: 1 }]}
-          onPress={() => {
-            setShowCreate(true);
-            setCreateError('');
-            setCreateSuccess('');
-            setNewAccount(EMPTY_NEW_ACCOUNT);
-          }}
+          onPress={() => { setShowCreate(true); setCreateError(''); setCreateSuccess(''); setNewAccount(EMPTY_NEW_ACCOUNT); }}
         >
           <Text style={s.createBtnText}>+ Create Account</Text>
         </TouchableOpacity>
       </View>
 
-      {/* FlatList — flex: 1, takes all remaining space */}
       <FlatList
         data={filtered}
         keyExtractor={item => item.id}
@@ -553,17 +562,24 @@ export default function AdminUsersScreen() {
         ListFooterComponent={<View style={{ height: 40 }} />}
       />
 
-      {/* Edit Modal */}
+      {/* ── Edit Modal ── */}
       <Modal visible={!!editingUser} animationType="slide" transparent onRequestClose={closeEdit}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.modalOverlay}>
           <View style={s.modalSheet}>
             <View style={s.modalHeader}>
-              <Text style={s.modalTitle}>Edit User</Text>
+              <View>
+                <Text style={s.modalTitle}>Edit User</Text>
+                {editingUser && (
+                  <Text style={s.modalSubtitle}>{editingUser.email}</Text>
+                )}
+              </View>
               <TouchableOpacity onPress={closeEdit}>
                 <Text style={s.modalClose}>✕</Text>
               </TouchableOpacity>
             </View>
-            <ScrollView keyboardShouldPersistTaps="handled">
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+
+              {/* ── Profile section ── */}
               {editError ? <Text style={s.errorText}>{editError}</Text> : null}
               {editSuccess ? <Text style={s.successText}>{editSuccess}</Text> : null}
 
@@ -635,7 +651,8 @@ export default function AdminUsersScreen() {
                 </TouchableOpacity>
               </View>
 
-              {(editForm.role === 'mechanic' || editForm.role === 'staff') && (
+              {/* Demote button — mechanic, staff, and other admins */}
+              {editingUser && (editForm.role === 'mechanic' || editForm.role === 'staff' || (editForm.role === 'admin' && editingUser.id !== adminId)) && (
                 <TouchableOpacity
                   style={s.demoteModalBtn}
                   onPress={() => { handleDemote(editingUser?.id, editForm.role); closeEdit(); }}
@@ -643,13 +660,58 @@ export default function AdminUsersScreen() {
                   <Text style={s.demoteModalBtnText}>Remove {editForm.role} access (demote to customer)</Text>
                 </TouchableOpacity>
               )}
+
+              {/* ── Change Password section ── */}
+              <View style={s.passwordSection}>
+                <Text style={s.passwordSectionTitle}>🔑 Change Password</Text>
+
+                {passwordError ? <Text style={s.errorText}>{passwordError}</Text> : null}
+                {passwordSuccess ? <Text style={s.successText}>{passwordSuccess}</Text> : null}
+
+                <Text style={s.fieldLabel}>New Password</Text>
+                <TextInput
+                  style={s.input}
+                  value={newPassword}
+                  onChangeText={v => { setNewPassword(v); setPasswordError(''); setPasswordSuccess(''); }}
+                  placeholder="Min. 6 characters"
+                  placeholderTextColor={theme.textMuted}
+                  secureTextEntry
+                  autoComplete="new-password"
+                />
+
+                <Text style={s.fieldLabel}>Confirm New Password</Text>
+                <TextInput
+                  style={s.input}
+                  value={confirmNewPassword}
+                  onChangeText={v => { setConfirmNewPassword(v); setPasswordError(''); setPasswordSuccess(''); }}
+                  placeholder="Re-enter new password"
+                  placeholderTextColor={theme.textMuted}
+                  secureTextEntry
+                  autoComplete="new-password"
+                />
+
+                <TouchableOpacity
+                  style={[s.changePasswordBtn, (changingPassword || !newPassword) && { opacity: 0.4 }]}
+                  onPress={handleChangePassword}
+                  disabled={changingPassword || !newPassword}
+                >
+                  {changingPassword
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <Text style={s.changePasswordBtnText}>Update Password</Text>
+                  }
+                </TouchableOpacity>
+                <Text style={s.passwordHint}>
+                  This action is audit-logged. The user will need to use the new password on their next login.
+                </Text>
+              </View>
+
               <View style={{ height: 24 }} />
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Create Account Modal */}
+      {/* ── Create Account Modal ── */}
       <Modal visible={showCreate} animationType="slide" transparent onRequestClose={() => setShowCreate(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.modalOverlay}>
           <View style={s.modalSheet}>
@@ -665,7 +727,7 @@ export default function AdminUsersScreen() {
 
               <Text style={s.fieldLabel}>Role</Text>
               <View style={s.roleRow}>
-                {['mechanic', 'staff', 'customer'].map(r => (
+                {['mechanic', 'staff', 'customer', 'admin'].map(r => (
                   <TouchableOpacity
                     key={r}
                     style={[s.roleChip, newAccount.role === r && s.roleChipActive]}
@@ -727,7 +789,7 @@ export default function AdminUsersScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* RA 10173 Policy Modal */}
+      {/* ── Policy Modal ── */}
       <Modal visible={showPolicy} transparent animationType="fade" onRequestClose={() => setShowPolicy(false)}>
         <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setShowPolicy(false)}>
           <View style={[s.modalSheet, { margin: 20, borderRadius: 16 }]} onStartShouldSetResponder={() => true}>
@@ -762,7 +824,6 @@ const styles = (theme) => StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.bg },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.bg },
 
-  // Search — fixed height, no flex, at top
   searchWrap: {
     flexDirection: 'row', alignItems: 'center',
     height: 44, marginHorizontal: 12, marginTop: 10, marginBottom: 6,
@@ -772,7 +833,6 @@ const styles = (theme) => StyleSheet.create({
   searchInput: { flex: 1, fontSize: 14, color: theme.text },
   searchClear: { padding: 4 },
 
-  // Filter bar — plain View with fixed height so it never expands
   filterBarWrap: { height: 46, borderBottomWidth: 1, borderBottomColor: theme.border },
   filterContent: { paddingHorizontal: 12, paddingVertical: 6, gap: 6, alignItems: 'center' },
   filterChip: {
@@ -783,7 +843,6 @@ const styles = (theme) => StyleSheet.create({
   filterText: { fontSize: 12, color: theme.textSub, fontWeight: '500', textTransform: 'capitalize' },
   filterTextActive: { color: '#fff', fontWeight: 'bold' },
 
-  // Action buttons — fixed height row, side by side
   createBtnRow: {
     flexDirection: 'row', gap: 8,
     paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6,
@@ -794,12 +853,10 @@ const styles = (theme) => StyleSheet.create({
   },
   createBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
 
-  // FlatList
   list: { flex: 1 },
   listContent: { paddingTop: 4 },
   listEmptyContent: { flex: 1 },
 
-  // Warning banner (ListHeaderComponent)
   warningBanner: {
     backgroundColor: '#422006', borderWidth: 1, borderColor: '#854d0e',
     borderRadius: 12, padding: 14, marginHorizontal: 12, marginBottom: 12,
@@ -818,8 +875,9 @@ const styles = (theme) => StyleSheet.create({
   cardHeader: { flexDirection: 'row', alignItems: 'flex-start', padding: 14, gap: 12 },
   avatarWrap: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.primary, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
   avatarText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   userName: { fontSize: 15, fontWeight: 'bold', color: theme.text },
+  selfLabel: { fontSize: 11, color: theme.textMuted },
   roleBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   roleBadgeText: { fontSize: 11, fontWeight: 'bold', textTransform: 'capitalize' },
   userEmail: { fontSize: 12, color: theme.textSub, marginTop: 2 },
@@ -838,6 +896,7 @@ const styles = (theme) => StyleSheet.create({
   scheduleBtnActive: { backgroundColor: theme.primary, borderColor: theme.primary },
   scheduleBtnText: { fontSize: 12, fontWeight: '600', color: '#3b82f6' },
   scheduleBtnTextActive: { color: '#fff' },
+
   expandedPanel: { borderTopWidth: 1, borderTopColor: theme.border, padding: 14, backgroundColor: theme.bg2 },
   panelTitle: { fontSize: 14, fontWeight: 'bold', color: theme.text, marginBottom: 10 },
   emptyText: { fontSize: 13, color: theme.textMuted, marginBottom: 8 },
@@ -861,10 +920,12 @@ const styles = (theme) => StyleSheet.create({
   filePickerBtnText: { fontSize: 13, color: theme.textSub },
   uploadBtn: { backgroundColor: theme.primary, borderRadius: 10, padding: 12, alignItems: 'center' },
   uploadBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
+
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
   modalSheet: { backgroundColor: theme.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '90%' },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
   modalTitle: { fontSize: 17, fontWeight: 'bold', color: theme.text },
+  modalSubtitle: { fontSize: 12, color: theme.textMuted, marginTop: 2 },
   modalClose: { fontSize: 20, color: theme.textMuted },
   fieldLabel: { fontSize: 12, color: theme.textMuted, marginBottom: 6, marginTop: 12 },
   input: { borderWidth: 1, borderColor: theme.border, borderRadius: 10, padding: 12, fontSize: 14, color: theme.text, backgroundColor: theme.bg2, marginBottom: 4 },
@@ -880,6 +941,24 @@ const styles = (theme) => StyleSheet.create({
   saveBtnText: { color: '#fff', fontWeight: 'bold' },
   demoteModalBtn: { marginTop: 12, borderWidth: 1, borderColor: '#ef444444', borderRadius: 10, padding: 14, alignItems: 'center', backgroundColor: '#ef444418' },
   demoteModalBtnText: { color: '#ef4444', fontWeight: '600', fontSize: 13 },
+
+  // Password change section
+  passwordSection: {
+    marginTop: 24, paddingTop: 20,
+    borderTopWidth: 1, borderTopColor: theme.border,
+  },
+  passwordSectionTitle: {
+    fontSize: 14, fontWeight: 'bold', color: theme.text, marginBottom: 4,
+  },
+  changePasswordBtn: {
+    marginTop: 16, backgroundColor: theme.bg2, borderWidth: 1,
+    borderColor: theme.border, borderRadius: 10, padding: 14, alignItems: 'center',
+  },
+  changePasswordBtnText: { color: theme.text, fontWeight: '600', fontSize: 14 },
+  passwordHint: {
+    fontSize: 11, color: theme.textMuted, marginTop: 8, lineHeight: 16,
+  },
+
   errorText: { color: '#ef4444', fontSize: 13, marginBottom: 8, backgroundColor: '#ef444418', padding: 10, borderRadius: 8 },
   successText: { color: '#22c55e', fontSize: 13, marginBottom: 8, backgroundColor: '#22c55e18', padding: 10, borderRadius: 8 },
 });

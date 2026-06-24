@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
@@ -8,7 +8,7 @@ import CartDrawer from './CartDrawer';
 function Badge({ count, color = 'bg-red-500' }) {
   if (!count) return null;
   return (
-    <span className={`${color} text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center leading-none`}>
+    <span className={`${color} flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[10px] font-bold leading-none text-white shadow-sm ring-2 ring-white dark:ring-dark-900`}>
       {count > 9 ? '9+' : count}
     </span>
   );
@@ -215,22 +215,40 @@ export default function Navbar() {
 
   // ─── Reusable NavLink ───────────────────────────────────────────────────────
   function NavLink({ to, label, icon, mobile = false, onClick }) {
-    const badge  = getBadge(to, badgeState);
-    const active = location.pathname === to || (to !== '/' && location.pathname.startsWith(to));
+    const badge = getBadge(to, badgeState);
+
+    // Better active state:
+    // - Home only active on "/"
+    // - Admin dashboard only active on "/admin", not every admin child page
+    // - Other pages active on exact route or nested route
+    const active =
+      to === '/'
+        ? location.pathname === '/'
+        : to === '/admin'
+          ? location.pathname === '/admin'
+          : location.pathname === to || location.pathname.startsWith(`${to}/`);
 
     if (mobile) {
       return (
         <Link
           to={to}
           onClick={onClick}
-          className={`flex items-center justify-between rounded-2xl px-5 py-4 text-base font-semibold transition-all ${
+          className={`group flex items-center justify-between rounded-2xl px-5 py-4 text-base font-semibold transition-all duration-200 ${
             active
-              ? 'bg-primary-600 text-white'
-              : 'text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-800'
+              ? 'bg-gradient-to-r from-primary-600 to-primary-500 text-white shadow-lg shadow-primary-600/25'
+              : 'text-gray-700 hover:-translate-y-0.5 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-800'
           }`}
         >
           <span className="flex items-center gap-3">
-            <span className="text-xl w-7 text-center">{icon}</span>
+            <span
+              className={`grid h-9 w-9 place-items-center rounded-xl text-lg transition ${
+                active
+                  ? 'bg-white/20'
+                  : 'bg-gray-100 group-hover:bg-white dark:bg-dark-700 dark:group-hover:bg-dark-700'
+              }`}
+            >
+              {icon}
+            </span>
             {label}
           </span>
           <Badge {...badge} />
@@ -241,15 +259,21 @@ export default function Navbar() {
     return (
       <Link
         to={to}
-        className={`relative flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all whitespace-nowrap ${
+        className={`group relative flex items-center gap-2 rounded-2xl border px-3.5 py-2 text-sm font-semibold whitespace-nowrap transition-all duration-200 ${
           active
-            ? 'bg-primary-600 text-white shadow-md'
-            : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-dark-800 dark:hover:text-white'
+            ? 'border-primary-500 bg-gradient-to-r from-primary-600 to-primary-500 text-white shadow-lg shadow-primary-600/25'
+            : 'border-transparent text-gray-600 hover:-translate-y-0.5 hover:border-gray-200 hover:bg-white hover:text-gray-950 hover:shadow-sm dark:text-gray-300 dark:hover:border-gray-700 dark:hover:bg-dark-800 dark:hover:text-white'
         }`}
       >
-        <span>{icon}</span>
+        <span className={`transition-transform duration-200 ${active ? '' : 'group-hover:scale-110'}`}>
+          {icon}
+        </span>
         <span>{label}</span>
-        {badge.count > 0 && <Badge {...badge} />}
+        {badge.count > 0 && (
+          <span className={active ? 'ml-0.5' : 'ml-0.5'}>
+            <Badge {...badge} />
+          </span>
+        )}
       </Link>
     );
   }
@@ -278,44 +302,55 @@ export default function Navbar() {
   }
 
   // ─── Theme Toggle Button ────────────────────────────────────────────────────
-  // Pill-style slider with animated sun/moon swap
+  // Smooth pill switch with clear light/dark states
   function ThemeToggle({ mobile = false }) {
     return (
       <button
+        type="button"
         onClick={() => setIsDark(v => !v)}
         title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+        aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
         className={`
-          relative flex items-center gap-1 rounded-full border transition-all duration-300 flex-shrink-0
-          ${mobile
-            ? 'w-16 h-8 px-1'
-            : 'w-14 h-7 px-1'
-          }
+          group relative isolate flex flex-shrink-0 items-center rounded-full border p-1
+          transition-all duration-300 ease-out hover:scale-[1.03] active:scale-95
+          ${mobile ? 'h-10 w-[76px]' : 'h-9 w-[72px]'}
           ${isDark
-            ? 'bg-dark-800 border-gray-600'
-            : 'bg-gray-100 border-gray-300'
+            ? 'border-primary-400/40 bg-gradient-to-r from-dark-800 to-dark-700 shadow-inner shadow-black/30'
+            : 'border-primary-200 bg-gradient-to-r from-amber-100 via-white to-primary-50 shadow-sm'
           }
         `}
-        aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
       >
-        {/* Track icons */}
-        <span className={`absolute left-1.5 text-[11px] transition-opacity duration-200 ${isDark ? 'opacity-40' : 'opacity-100'}`}>
-          ☀️
-        </span>
-        <span className={`absolute right-1.5 text-[11px] transition-opacity duration-200 ${isDark ? 'opacity-100' : 'opacity-40'}`}>
-          🌙
-        </span>
-        {/* Sliding thumb */}
         <span
           className={`
-            absolute top-0.5 w-6 h-6 rounded-full shadow-md transition-all duration-300 flex items-center justify-center text-[11px]
-            ${mobile ? 'w-6 h-6' : 'w-5 h-5 top-[3px]'}
+            pointer-events-none absolute left-3 text-sm transition-all duration-300
+            ${isDark ? 'scale-75 opacity-35' : 'scale-100 opacity-100'}
+          `}
+        >
+          ☀️
+        </span>
+
+        <span
+          className={`
+            pointer-events-none absolute right-3 text-sm transition-all duration-300
+            ${isDark ? 'scale-100 opacity-100' : 'scale-75 opacity-35'}
+          `}
+        >
+          🌙
+        </span>
+
+        <span
+          className={`
+            relative z-10 grid rounded-full shadow-lg ring-1 transition-all duration-300 ease-out
+            ${mobile ? 'h-8 w-8' : 'h-7 w-7'}
             ${isDark
-              ? 'translate-x-[calc(100%+4px)] bg-dark-600'
-              : 'translate-x-0 bg-white'
+              ? 'translate-x-9 bg-dark-900 text-primary-300 ring-primary-400/30'
+              : 'translate-x-0 bg-white text-amber-500 ring-amber-200'
             }
           `}
         >
-          {isDark ? '🌙' : '☀️'}
+          <span className="m-auto text-sm transition-transform duration-300 group-hover:rotate-12">
+            {isDark ? '🌙' : '☀️'}
+          </span>
         </span>
       </button>
     );
@@ -326,16 +361,28 @@ export default function Navbar() {
       {/* ════════════════════════════════════════════════════════════════════════
           NAVBAR
       ════════════════════════════════════════════════════════════════════════ */}
-      <nav className="sticky top-0 z-50 bg-white dark:bg-dark-900 border-b border-gray-200 dark:border-gray-800 shadow-sm transition-colors duration-200">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center gap-3">
+      <nav className="sticky top-0 z-50 border-b border-gray-200/70 bg-white/85 shadow-sm backdrop-blur-xl transition-all duration-300 dark:border-gray-800/80 dark:bg-dark-900/85">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-[72px] flex items-center gap-3">
 
           {/* Logo */}
-          <Link to="/" className="flex-shrink-0 text-2xl font-black tracking-tight text-gray-900 dark:text-white mr-1">
-            Moto<span className="text-primary-500">Fix</span>
+          <Link
+            to="/"
+            className="group flex flex-shrink-0 items-center gap-2 rounded-2xl pr-2 text-2xl font-black tracking-tight text-gray-900 transition-transform hover:scale-[1.02] dark:text-white"
+          >
+            <span className="grid h-10 w-10 place-items-center overflow-hidden rounded-2xl bg-white p-1 shadow-lg shadow-primary-600/20 ring-1 ring-primary-200 transition group-hover:ring-primary-400 dark:bg-dark-800 dark:ring-primary-500/30">
+              <img
+                src="https://wcqqduuimpjipwvwzyzx.supabase.co/storage/v1/object/public/motorcycle-photos/MOTORCYCLE%20PHOTOS/icon.png"
+                alt="MotoFix logo"
+                className="h-full w-full object-contain"
+              />
+            </span>
+            <span>
+              Moto<span className="text-primary-500">Fix</span>
+            </span>
           </Link>
 
           {/* ── Desktop links ── */}
-          <div className="hidden xl:flex flex-1 items-center gap-0.5 min-w-0 overflow-x-auto no-scrollbar">
+          <div className="hidden xl:flex flex-1 items-center gap-1.5 min-w-0 overflow-x-auto no-scrollbar rounded-2xl px-1">
             <NavLink to="/" label="Home" icon="🏠" />
             {user && navLinks.map(link => (
               <NavLink key={link.to} {...link} />
@@ -344,7 +391,7 @@ export default function Navbar() {
 
           {/* ── Desktop right controls ── */}
           {/* flex-shrink-0 + explicit order keeps cart → toggle → profile always visible */}
-          <div className="hidden xl:flex items-center gap-2 flex-shrink-0 ml-auto">
+          <div className="hidden xl:flex items-center gap-2.5 flex-shrink-0 ml-auto">
 
             {/* 1. Cart — only for customers */}
             {user && profile?.role === 'customer' && (
@@ -359,10 +406,10 @@ export default function Navbar() {
             {/* 3. Auth: login/signup or profile dropdown */}
             {!user ? (
               <div className="flex items-center gap-2 flex-shrink-0">
-                <Link to="/login" className="px-4 py-2 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-800 transition">
+                <Link to="/login" className="rounded-2xl border border-transparent px-4 py-2 text-sm font-semibold text-gray-700 transition hover:border-gray-200 hover:bg-white hover:shadow-sm dark:text-gray-300 dark:hover:border-gray-700 dark:hover:bg-dark-800">
                   Log In
                 </Link>
-                <Link to="/register" className="bg-primary-600 hover:bg-primary-700 text-white px-5 py-2 rounded-xl text-sm font-semibold transition shadow-md">
+                <Link to="/register" className="rounded-2xl bg-gradient-to-r from-primary-600 to-primary-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-primary-600/25 transition hover:-translate-y-0.5 hover:from-primary-700 hover:to-primary-600">
                   Sign Up
                 </Link>
               </div>
@@ -370,7 +417,7 @@ export default function Navbar() {
               <div className="relative flex-shrink-0" ref={dropdownRef}>
                 <button
                   onClick={() => setDropdownOpen(v => !v)}
-                  className="flex items-center gap-2.5 pl-2 pr-3 py-1.5 rounded-full border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-dark-800 hover:border-primary-500 transition-all"
+                  className="flex items-center gap-2.5 rounded-full border border-gray-200 bg-white/80 py-1.5 pl-2 pr-3 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-dark-800/90"
                 >
                   <Avatar url={profile?.profile_photo_url} initials={initials} size="sm" />
                   <div className="text-left">
@@ -387,8 +434,8 @@ export default function Navbar() {
                 </button>
 
                 {dropdownOpen && (
-                  <div className="absolute right-0 mt-3 w-60 rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-dark-800 shadow-2xl overflow-hidden z-50">
-                    <div className="px-4 py-3 bg-gray-50 dark:bg-dark-900 border-b border-gray-100 dark:border-gray-700 flex items-center gap-3">
+                  <div className="absolute right-0 mt-3 w-64 overflow-hidden rounded-3xl border border-gray-200/80 bg-white/95 shadow-2xl shadow-gray-900/10 backdrop-blur-xl dark:border-gray-700/80 dark:bg-dark-800/95 z-50">
+                    <div className="flex items-center gap-3 border-b border-gray-100 bg-gradient-to-r from-primary-50 to-white px-4 py-3 dark:border-gray-700 dark:from-primary-900/20 dark:to-dark-900">
                       <Avatar url={profile?.profile_photo_url} initials={initials} size="sm" />
                       <div className="min-w-0">
                         <p className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide font-medium mb-0.5">Signed in as</p>
@@ -441,8 +488,9 @@ export default function Navbar() {
 
             <button
               onClick={() => setMenuOpen(v => !v)}
-              className="relative w-11 h-11 rounded-xl flex items-center justify-center text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-800 transition flex-shrink-0"
+              className="relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl border border-gray-200 bg-white/80 text-gray-700 shadow-sm transition hover:border-primary-300 hover:bg-primary-50 dark:border-gray-700 dark:bg-dark-800 dark:text-gray-200 dark:hover:bg-dark-700"
               aria-label="Toggle menu"
+              aria-expanded={menuOpen}
             >
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 {menuOpen
@@ -461,11 +509,11 @@ export default function Navbar() {
           MOBILE FULL-SCREEN MENU
       ════════════════════════════════════════════════════════════════════════ */}
       {menuOpen && (
-        <div className="xl:hidden fixed inset-0 top-16 z-40 bg-white dark:bg-dark-900 overflow-y-auto">
-          <div className="px-4 py-5 space-y-1.5 pb-10">
+        <div className="xl:hidden fixed inset-0 top-[72px] z-40 overflow-y-auto bg-gray-950/30 backdrop-blur-sm dark:bg-black/40">
+          <div className="min-h-full rounded-t-3xl border-t border-gray-200 bg-white px-4 py-5 space-y-1.5 pb-10 shadow-2xl dark:border-gray-800 dark:bg-dark-900">
 
             {user && (
-              <div className="flex items-center gap-3 px-5 py-4 mb-4 rounded-2xl bg-primary-50 dark:bg-primary-900/20 border border-primary-100 dark:border-primary-800">
+              <div className="mb-4 flex items-center gap-3 rounded-3xl border border-primary-100 bg-gradient-to-r from-primary-50 to-white px-5 py-4 shadow-sm dark:border-primary-800/70 dark:from-primary-900/20 dark:to-dark-800">
                 <Avatar url={profile?.profile_photo_url} initials={initials} size="lg" />
                 <div>
                   <p className="font-bold text-gray-900 dark:text-white leading-tight">
@@ -513,7 +561,7 @@ export default function Navbar() {
                 </Link>
                 <Link
                   to="/register"
-                  className="flex items-center justify-center gap-2 rounded-2xl bg-primary-600 hover:bg-primary-700 text-white px-5 py-4 text-base font-semibold shadow-md"
+                  className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-primary-600 to-primary-500 px-5 py-4 text-base font-semibold text-white shadow-lg shadow-primary-600/25 transition hover:from-primary-700 hover:to-primary-600"
                 >
                   Sign Up — It&apos;s Free
                 </Link>

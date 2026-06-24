@@ -104,7 +104,7 @@ export default function Login() {
               <FeatureRow
                 icon="👤"
                 color="bg-purple-500/10 text-purple-500 dark:text-purple-400"
-                title="GCash & Maya"
+                title="GCash"
                 description="Pay your way, no cash required"
               />
             </div>

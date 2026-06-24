@@ -103,8 +103,13 @@ export default function Landing() {
                   ✨ Live
                 </span>
               </div>
-              <div className="aspect-video rounded-xl bg-dark-900 border border-primary-500/10 flex items-center justify-center text-5xl mb-4">
-                🏍️
+              {/* Real motorcycle photo */}
+              <div className="aspect-video rounded-xl overflow-hidden border border-primary-500/10 mb-4">
+                <img
+                  src="https://wcqqduuimpjipwvwzyzx.supabase.co/storage/v1/object/public/motorcycle-photos/MOTORCYCLE%20PHOTOS/sample.png"
+                  alt="Motorcycle preview"
+                  className="w-full h-full object-cover"
+                />
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-400">Exhaust + Rims swap</span>
