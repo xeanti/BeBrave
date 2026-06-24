@@ -7,6 +7,17 @@ const SHOP_OPEN = 8;
 const SHOP_CLOSE = 17;
 const ACTIVE_STATUSES = ['pending', 'confirmed', 'in_progress'];
 
+const POLICY_DEFAULTS = {
+  cancellation_window_hours: '24',
+  reschedule_window_hours: '12',
+  max_reschedules: '1',
+  no_show_penalty_amount: '100',
+  refund_percent_before_window: '100',
+  refund_percent_after_window: '0',
+};
+
+const POLICY_KEYS = Object.keys(POLICY_DEFAULTS);
+
 function generateTimeSlots() {
   const slots = [];
 
@@ -83,6 +94,114 @@ function isPastSlot(date, slot) {
   return timeToMinutes(slot) <= currentMinutes;
 }
 
+function getPolicyNumber(policies, key) {
+  const value = Number(policies?.[key] ?? POLICY_DEFAULTS[key]);
+
+  return Number.isNaN(value) ? Number(POLICY_DEFAULTS[key]) : value;
+}
+
+function getBookingDateTime(booking) {
+  if (!booking?.booking_date || !booking?.booking_time) return null;
+
+  const [year, month, day] = booking.booking_date.split('-').map(Number);
+  const [hours, minutes] = normalizeTime(booking.booking_time).split(':').map(Number);
+
+  return new Date(year, month - 1, day, hours || 0, minutes || 0);
+}
+
+function getHoursBeforeBooking(booking) {
+  const bookingDateTime = getBookingDateTime(booking);
+
+  if (!bookingDateTime) return 0;
+
+  const now = new Date();
+  const diffMs = bookingDateTime.getTime() - now.getTime();
+
+  return diffMs / (1000 * 60 * 60);
+}
+
+function canCancelBooking(booking, policies) {
+  if (booking?.status !== 'pending') {
+    return {
+      allowed: false,
+      reason: 'Only pending bookings can be cancelled.',
+    };
+  }
+
+  const hoursBefore = getHoursBeforeBooking(booking);
+  const cancellationWindow = getPolicyNumber(policies, 'cancellation_window_hours');
+
+  if (hoursBefore < 0) {
+    return {
+      allowed: false,
+      reason: 'This appointment schedule has already passed.',
+    };
+  }
+
+  if (hoursBefore < cancellationWindow) {
+    return {
+      allowed: false,
+      reason: `Cancellation is only allowed at least ${cancellationWindow} hours before the appointment.`,
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: '',
+  };
+}
+
+function canRescheduleBooking(booking, policies) {
+  if (booking?.status !== 'pending') {
+    return {
+      allowed: false,
+      reason: 'Only pending bookings can be rescheduled.',
+    };
+  }
+
+  const hoursBefore = getHoursBeforeBooking(booking);
+  const rescheduleWindow = getPolicyNumber(policies, 'reschedule_window_hours');
+  const maxReschedules = getPolicyNumber(policies, 'max_reschedules');
+  const usedReschedules = Number(booking?.reschedule_count) || 0;
+
+  if (hoursBefore < 0) {
+    return {
+      allowed: false,
+      reason: 'This appointment schedule has already passed.',
+    };
+  }
+
+  if (usedReschedules >= maxReschedules) {
+    return {
+      allowed: false,
+      reason: `You have reached the maximum reschedule limit of ${maxReschedules}.`,
+    };
+  }
+
+  if (hoursBefore < rescheduleWindow) {
+    return {
+      allowed: false,
+      reason: `Rescheduling is only allowed at least ${rescheduleWindow} hours before the appointment.`,
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: '',
+  };
+}
+
+function getCancelRefundPercent(booking, policies) {
+  const hoursBefore = getHoursBeforeBooking(booking);
+  const cancellationWindow = getPolicyNumber(policies, 'cancellation_window_hours');
+
+  if (hoursBefore >= cancellationWindow) {
+    return getPolicyNumber(policies, 'refund_percent_before_window');
+  }
+
+  return getPolicyNumber(policies, 'refund_percent_after_window');
+}
+
 const STATUS_CONFIG = {
   pending: {
     label: 'Pending',
@@ -114,13 +233,21 @@ const STATUS_CONFIG = {
     classes:
       'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25',
   },
+  no_show: {
+    label: 'No Show',
+    icon: '⚠',
+    classes:
+      'bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-500/25',
+  },
 };
 
 function StatusBadge({ status }) {
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
 
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-black ring-1 ${config.classes}`}>
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-black ring-1 ${config.classes}`}
+    >
       <span>{config.icon}</span>
       {config.label}
     </span>
@@ -133,6 +260,7 @@ export default function Appointments() {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
+  const [policies, setPolicies] = useState(POLICY_DEFAULTS);
 
   const [ratingBooking, setRatingBooking] = useState(null);
   const [ratedBookings, setRatedBookings] = useState(new Set());
@@ -153,6 +281,7 @@ export default function Appointments() {
     if (!user?.id) return;
 
     fetchBookings();
+    fetchBookingPolicies();
 
     const channel = supabase
       .channel(`customer-appointments-${user.id}`)
@@ -168,8 +297,22 @@ export default function Appointments() {
       )
       .subscribe();
 
+    const settingsChannel = supabase
+      .channel(`customer-booking-policies-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'settings',
+        },
+        () => fetchBookingPolicies()
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(channel);
+      supabase.removeChannel(settingsChannel);
     };
   }, [user?.id]);
 
@@ -212,6 +355,28 @@ export default function Appointments() {
     setLoading(false);
   }
 
+  async function fetchBookingPolicies() {
+    const { data, error } = await supabase
+      .from('settings')
+      .select('key, value')
+      .in('key', POLICY_KEYS);
+
+    if (error) {
+      console.error('Failed to load booking policies:', error);
+      return;
+    }
+
+    const nextPolicies = { ...POLICY_DEFAULTS };
+
+    (data || []).forEach((item) => {
+      if (POLICY_KEYS.includes(item.key)) {
+        nextPolicies[item.key] = String(item.value ?? POLICY_DEFAULTS[item.key]);
+      }
+    });
+
+    setPolicies(nextPolicies);
+  }
+
   async function fetchRescheduleConflicts(booking, date) {
     if (!booking?.mechanic_id || !date) {
       setRescheduleConflicts([]);
@@ -238,11 +403,26 @@ export default function Appointments() {
   async function confirmCancel() {
     if (!cancellingBooking) return;
 
+    const policyCheck = canCancelBooking(cancellingBooking, policies);
+
+    if (!policyCheck.allowed) {
+      alert(policyCheck.reason);
+      return;
+    }
+
+    const refundPercent = getCancelRefundPercent(cancellingBooking, policies);
+
     setCancelSaving(true);
 
     const { error } = await supabase
       .from('bookings')
-      .update({ status: 'cancelled' })
+      .update({
+        status: 'cancelled',
+        cancelled_at: new Date().toISOString(),
+        cancelled_by: user.id,
+        cancel_reason: 'Cancelled by customer',
+        refund_status: refundPercent > 0 ? 'pending' : 'none',
+      })
       .eq('id', cancellingBooking.id)
       .eq('customer_id', user.id)
       .eq('status', 'pending');
@@ -257,7 +437,25 @@ export default function Appointments() {
     }
   }
 
+  function openCancel(booking) {
+    const policyCheck = canCancelBooking(booking, policies);
+
+    if (!policyCheck.allowed) {
+      alert(policyCheck.reason);
+      return;
+    }
+
+    setCancellingBooking(booking);
+  }
+
   function openReschedule(booking) {
+    const policyCheck = canRescheduleBooking(booking, policies);
+
+    if (!policyCheck.allowed) {
+      alert(policyCheck.reason);
+      return;
+    }
+
     setReschedulingBooking(booking);
     setNewDate(booking.booking_date || getTodayString());
     setNewTime(normalizeTime(booking.booking_time));
@@ -295,7 +493,9 @@ export default function Appointments() {
 
       const outsideShopHours = slotEnd > SHOP_CLOSE * 60;
       const past = isPastSlot(newDate, slot);
-      const overlaps = conflicts.some((conflict) => slotStart < conflict.end && slotEnd > conflict.start);
+      const overlaps = conflicts.some(
+        (conflict) => slotStart < conflict.end && slotEnd > conflict.start
+      );
 
       if (outsideShopHours || past || overlaps) {
         blockedSlots.add(slot);
@@ -314,6 +514,13 @@ export default function Appointments() {
 
     setRescheduleError('');
 
+    const policyCheck = canRescheduleBooking(reschedulingBooking, policies);
+
+    if (!policyCheck.allowed) {
+      setRescheduleError(policyCheck.reason);
+      return;
+    }
+
     if (!newDate || !newTime) {
       setRescheduleError('Please select both a date and a time.');
       return;
@@ -326,11 +533,15 @@ export default function Appointments() {
 
     setRescheduleSaving(true);
 
+    const currentRescheduleCount = Number(reschedulingBooking.reschedule_count) || 0;
+
     const { error } = await supabase
       .from('bookings')
       .update({
         booking_date: newDate,
         booking_time: newTime,
+        reschedule_count: currentRescheduleCount + 1,
+        last_rescheduled_at: new Date().toISOString(),
       })
       .eq('id', reschedulingBooking.id)
       .eq('customer_id', user.id)
@@ -354,6 +565,7 @@ export default function Appointments() {
       in_progress: 0,
       completed: 0,
       cancelled: 0,
+      no_show: 0,
     };
 
     bookings.forEach((booking) => {
@@ -387,16 +599,55 @@ export default function Appointments() {
                 My Appointments
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
-                View your service bookings, reschedule pending appointments, cancel requests, and rate completed jobs.
+                View your service bookings, reschedule pending appointments,
+                cancel requests, and rate completed jobs.
               </p>
             </div>
+          </div>
+        </div>
+
+        {/* Policy Summary */}
+        <div className="mb-6 grid gap-3 md:grid-cols-3">
+          <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+            <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              Cancellation Window
+            </p>
+            <p className="mt-1 text-xl font-black text-red-600 dark:text-red-300">
+              {getPolicyNumber(policies, 'cancellation_window_hours')} hours
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+            <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              Reschedule Window
+            </p>
+            <p className="mt-1 text-xl font-black text-blue-600 dark:text-blue-300">
+              {getPolicyNumber(policies, 'reschedule_window_hours')} hours
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+            <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              Max Reschedules
+            </p>
+            <p className="mt-1 text-xl font-black text-primary-600 dark:text-primary-400">
+              {getPolicyNumber(policies, 'max_reschedules')} time(s)
+            </p>
           </div>
         </div>
 
         {/* Filters */}
         <div className="mb-6 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800">
           <div className="flex flex-wrap gap-2">
-            {['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled'].map((status) => {
+            {[
+              'all',
+              'pending',
+              'confirmed',
+              'in_progress',
+              'completed',
+              'cancelled',
+              'no_show',
+            ].map((status) => {
               const active = filter === status;
               const label = status === 'all' ? 'All' : status.replace('_', ' ');
 
@@ -452,6 +703,11 @@ export default function Appointments() {
                 (Number(booking.services?.base_price) || 0) +
                 (Number(booking.services?.labor_cost) || 0);
 
+              const maxReschedules = getPolicyNumber(policies, 'max_reschedules');
+              const usedReschedules = Number(booking.reschedule_count) || 0;
+              const cancelPolicy = canCancelBooking(booking, policies);
+              const reschedulePolicy = canRescheduleBooking(booking, policies);
+
               return (
                 <article
                   key={booking.id}
@@ -501,8 +757,67 @@ export default function Appointments() {
 
                         {booking.notes && (
                           <div className="mt-3 rounded-2xl border border-gray-100 bg-gray-50 p-4 text-sm text-gray-600 dark:border-dark-700 dark:bg-dark-900/60 dark:text-gray-400">
-                            <span className="font-black text-gray-900 dark:text-white">Note:</span>{' '}
+                            <span className="font-black text-gray-900 dark:text-white">
+                              Note:
+                            </span>{' '}
                             {booking.notes}
+                          </div>
+                        )}
+
+                        {booking.status === 'pending' && (
+                          <div className="mt-3 rounded-2xl bg-gray-50 p-3 text-[11px] leading-5 text-gray-500 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:text-gray-400 dark:ring-dark-700">
+                            <p>
+                              Cancellation window: at least{' '}
+                              <span className="font-black text-gray-700 dark:text-gray-200">
+                                {getPolicyNumber(policies, 'cancellation_window_hours')} hours
+                              </span>{' '}
+                              before appointment.
+                            </p>
+
+                            <p>
+                              Reschedule window: at least{' '}
+                              <span className="font-black text-gray-700 dark:text-gray-200">
+                                {getPolicyNumber(policies, 'reschedule_window_hours')} hours
+                              </span>{' '}
+                              before appointment.
+                            </p>
+
+                            <p>
+                              Reschedules used:{' '}
+                              <span className="font-black text-gray-700 dark:text-gray-200">
+                                {usedReschedules}/{maxReschedules}
+                              </span>
+                            </p>
+
+                            {!cancelPolicy.allowed && (
+                              <p className="mt-1 font-semibold text-red-600 dark:text-red-300">
+                                Cancel unavailable: {cancelPolicy.reason}
+                              </p>
+                            )}
+
+                            {!reschedulePolicy.allowed && (
+                              <p className="mt-1 font-semibold text-red-600 dark:text-red-300">
+                                Reschedule unavailable: {reschedulePolicy.reason}
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {booking.refund_status && booking.refund_status !== 'none' && (
+                          <div className="mt-3 rounded-2xl border border-yellow-200 bg-yellow-50 p-3 text-xs font-semibold text-yellow-800 dark:border-yellow-500/30 dark:bg-yellow-500/10 dark:text-yellow-200">
+                            Refund status:{' '}
+                            <span className="font-black capitalize">
+                              {String(booking.refund_status).replace('_', ' ')}
+                            </span>
+                          </div>
+                        )}
+
+                        {Number(booking.penalty_amount) > 0 && (
+                          <div className="mt-3 rounded-2xl border border-orange-200 bg-orange-50 p-3 text-xs font-semibold text-orange-800 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200">
+                            Penalty amount:{' '}
+                            <span className="font-black">
+                              {formatPeso(booking.penalty_amount)}
+                            </span>
                           </div>
                         )}
                       </div>
@@ -518,16 +833,17 @@ export default function Appointments() {
                             </span>
                           </div>
 
-                          {booking.down_payment !== null && booking.down_payment !== undefined && (
-                            <div className="mt-2 flex justify-between text-sm">
-                              <span className="text-gray-600 dark:text-gray-400">
-                                Down Payment
-                              </span>
-                              <span className="font-black text-accent-600 dark:text-accent-400">
-                                {formatPeso(booking.down_payment)}
-                              </span>
-                            </div>
-                          )}
+                          {booking.down_payment !== null &&
+                            booking.down_payment !== undefined && (
+                              <div className="mt-2 flex justify-between text-sm">
+                                <span className="text-gray-600 dark:text-gray-400">
+                                  Down Payment
+                                </span>
+                                <span className="font-black text-accent-600 dark:text-accent-400">
+                                  {formatPeso(booking.down_payment)}
+                                </span>
+                              </div>
+                            )}
                         </div>
 
                         <div className="mt-3 flex flex-wrap gap-2 lg:flex-col">
@@ -535,13 +851,22 @@ export default function Appointments() {
                             <>
                               <button
                                 onClick={() => openReschedule(booking)}
-                                className="flex-1 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-xs font-black text-blue-700 transition hover:bg-blue-100 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300 dark:hover:bg-blue-500/20 lg:flex-none"
+                                className={`flex-1 rounded-2xl border px-4 py-2.5 text-xs font-black transition lg:flex-none ${
+                                  reschedulePolicy.allowed
+                                    ? 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300 dark:hover:bg-blue-500/20'
+                                    : 'border-gray-200 bg-gray-100 text-gray-400 hover:bg-gray-200 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-500'
+                                }`}
                               >
                                 Reschedule
                               </button>
+
                               <button
-                                onClick={() => setCancellingBooking(booking)}
-                                className="flex-1 rounded-2xl border border-red-200 bg-red-50 px-4 py-2.5 text-xs font-black text-red-700 transition hover:bg-red-100 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/20 lg:flex-none"
+                                onClick={() => openCancel(booking)}
+                                className={`flex-1 rounded-2xl border px-4 py-2.5 text-xs font-black transition lg:flex-none ${
+                                  cancelPolicy.allowed
+                                    ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/20'
+                                    : 'border-gray-200 bg-gray-100 text-gray-400 hover:bg-gray-200 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-500'
+                                }`}
                               >
                                 Cancel
                               </button>
@@ -698,6 +1023,12 @@ export default function Appointments() {
 
                 <div className="mt-3 flex flex-wrap gap-3 text-xs text-gray-500 dark:text-gray-400">
                   <span>Shop hours: 8:00 AM – 5:00 PM</span>
+                  <span>•</span>
+                  <span>
+                    Rescheduling must be done at least{' '}
+                    {getPolicyNumber(policies, 'reschedule_window_hours')} hours before
+                    the appointment.
+                  </span>
                   {reschedulingBooking.mechanic_id && (
                     <>
                       <span>•</span>
@@ -745,6 +1076,7 @@ export default function Appointments() {
             <h2 className="mb-2 text-xl font-black text-gray-950 dark:text-white">
               Cancel appointment?
             </h2>
+
             <p className="mb-5 text-sm leading-6 text-gray-600 dark:text-gray-400">
               {cancellingBooking.services?.name || 'This service'} on{' '}
               <span className="font-bold text-gray-900 dark:text-white">
@@ -756,6 +1088,21 @@ export default function Appointments() {
               </span>{' '}
               will be cancelled. This cannot be undone.
             </p>
+
+            <div className="mb-5 rounded-2xl border border-yellow-200 bg-yellow-50 p-4 text-xs leading-5 text-yellow-800 dark:border-yellow-500/30 dark:bg-yellow-500/10 dark:text-yellow-200">
+              <p className="font-black">Refund Policy</p>
+              <p className="mt-1">
+                Based on the current booking policy, this cancellation is eligible
+                for{' '}
+                <span className="font-black">
+                  {getCancelRefundPercent(cancellingBooking, policies)}%
+                </span>{' '}
+                refund review.
+              </p>
+              <p className="mt-1">
+                Final refund approval is still subject to MotoFix admin review.
+              </p>
+            </div>
 
             <div className="flex gap-3">
               <button

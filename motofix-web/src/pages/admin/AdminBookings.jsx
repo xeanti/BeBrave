@@ -4,9 +4,29 @@ import { useAuth } from '../../context/AuthContext';
 import { fetchPaymentsFor, recordPayment, summarizePayments } from '../../lib/payments';
 import { notifyUser } from '../../lib/notifications';
 
-const STATUS_OPTIONS = ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'];
+const STATUS_OPTIONS = [
+  'pending',
+  'confirmed',
+  'in_progress',
+  'completed',
+  'cancelled',
+  'no_show',
+];
+
 const PAYMENT_TYPES = ['down_payment', 'balance', 'full', 'refund'];
 const PAYMENT_METHODS = ['cash', 'gcash', 'card', 'bank_transfer'];
+
+const POLICY_DEFAULTS = {
+  no_show_penalty_amount: '100',
+};
+
+const POLICY_KEYS = Object.keys(POLICY_DEFAULTS);
+
+function getPolicyNumber(policies, key) {
+  const value = Number(policies?.[key] ?? POLICY_DEFAULTS[key]);
+
+  return Number.isNaN(value) ? Number(POLICY_DEFAULTS[key]) : value;
+}
 
 function formatPeso(value) {
   const amount = Number(value) || 0;
@@ -64,13 +84,17 @@ function formatTime(time) {
 }
 
 function getCustomerName(booking) {
-  const name = `${booking.profiles?.first_name || ''} ${booking.profiles?.last_name || ''}`.trim();
+  const name = `${booking.profiles?.first_name || ''} ${
+    booking.profiles?.last_name || ''
+  }`.trim();
 
   return name || 'Unknown Customer';
 }
 
 function getMechanicName(booking) {
-  const name = `${booking.mechanic?.first_name || ''} ${booking.mechanic?.last_name || ''}`.trim();
+  const name = `${booking.mechanic?.first_name || ''} ${
+    booking.mechanic?.last_name || ''
+  }`.trim();
 
   return name || 'Unassigned';
 }
@@ -80,6 +104,21 @@ function getServiceTotal(booking) {
     (Number(booking.services?.base_price) || 0) +
     (Number(booking.services?.labor_cost) || 0)
   );
+}
+
+function getStatusNotificationMessage(status, penaltyAmount = 0) {
+  if (status === 'pending') return 'Your booking is now pending.';
+  if (status === 'confirmed') return 'Your booking has been confirmed.';
+  if (status === 'in_progress') return 'Your service is now in progress.';
+  if (status === 'completed') return 'Your service booking has been completed.';
+  if (status === 'cancelled') return 'Your booking has been cancelled.';
+  if (status === 'no_show') {
+    return `Your booking was marked as no-show. A penalty of ${formatPeso(
+      penaltyAmount
+    )} may apply according to shop policy.`;
+  }
+
+  return `Your booking status is now ${String(status).replace('_', ' ')}.`;
 }
 
 const STATUS_STYLES = {
@@ -93,6 +132,8 @@ const STATUS_STYLES = {
     'bg-gray-100 text-gray-700 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25',
   cancelled:
     'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25',
+  no_show:
+    'bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-500/25',
 };
 
 const ACTION_STYLES = {
@@ -106,6 +147,8 @@ const ACTION_STYLES = {
     'bg-gray-100 text-gray-700 ring-gray-200 hover:bg-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25 dark:hover:bg-gray-500/20',
   cancelled:
     'bg-red-50 text-red-700 ring-red-200 hover:bg-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25 dark:hover:bg-red-500/20',
+  no_show:
+    'bg-orange-50 text-orange-700 ring-orange-200 hover:bg-orange-100 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-500/25 dark:hover:bg-orange-500/20',
 };
 
 function StatusBadge({ status }) {
@@ -143,6 +186,7 @@ function StatCard({ label, value, icon, tone = 'default' }) {
     yellow: 'text-yellow-600 dark:text-yellow-300',
     blue: 'text-blue-600 dark:text-blue-300',
     red: 'text-red-600 dark:text-red-300',
+    orange: 'text-orange-600 dark:text-orange-300',
   };
 
   return (
@@ -178,6 +222,8 @@ export default function AdminBookings() {
 
   const [bookings, setBookings] = useState([]);
   const [mechanics, setMechanics] = useState([]);
+  const [policies, setPolicies] = useState(POLICY_DEFAULTS);
+
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -188,6 +234,7 @@ export default function AdminBookings() {
   const [savingPayment, setSavingPayment] = useState(null);
   const [updatingStatus, setUpdatingStatus] = useState(null);
   const [assigningMechanic, setAssigningMechanic] = useState(null);
+  const [smartAssigning, setSmartAssigning] = useState(null);
 
   const [paymentToast, setPaymentToast] = useState(null);
   const [expandedPayment, setExpandedPayment] = useState(null);
@@ -197,6 +244,7 @@ export default function AdminBookings() {
   useEffect(() => {
     fetchBookings();
     fetchMechanics();
+    fetchBookingPolicies();
 
     const bookingsChannel = supabase
       .channel('admin-bookings-bookings')
@@ -240,15 +288,30 @@ export default function AdminBookings() {
       )
       .subscribe();
 
+    const settingsChannel = supabase
+      .channel('admin-bookings-settings')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'settings',
+        },
+        () => fetchBookingPolicies()
+      )
+      .subscribe();
+
     const handleFocus = () => {
       fetchBookings(false);
       fetchMechanics();
+      fetchBookingPolicies();
     };
 
     const handleVisibilityChange = () => {
       if (!document.hidden) {
         fetchBookings(false);
         fetchMechanics();
+        fetchBookingPolicies();
       }
     };
 
@@ -259,10 +322,33 @@ export default function AdminBookings() {
       supabase.removeChannel(bookingsChannel);
       supabase.removeChannel(paymentsChannel);
       supabase.removeChannel(profilesChannel);
+      supabase.removeChannel(settingsChannel);
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
+
+  async function fetchBookingPolicies() {
+    const { data, error } = await supabase
+      .from('settings')
+      .select('key, value')
+      .in('key', POLICY_KEYS);
+
+    if (error) {
+      console.error('Failed to load booking policies:', error);
+      return;
+    }
+
+    const nextPolicies = { ...POLICY_DEFAULTS };
+
+    (data || []).forEach((item) => {
+      if (POLICY_KEYS.includes(item.key)) {
+        nextPolicies[item.key] = String(item.value ?? POLICY_DEFAULTS[item.key]);
+      }
+    });
+
+    setPolicies(nextPolicies);
+  }
 
   async function fetchBookings(showLoader = true) {
     if (showLoader) setLoading(true);
@@ -345,27 +431,43 @@ export default function AdminBookings() {
 
     try {
       const booking = bookings.find((item) => item.id === id);
+      const penaltyAmount =
+        status === 'no_show'
+          ? getPolicyNumber(policies, 'no_show_penalty_amount')
+          : Number(booking?.penalty_amount) || 0;
+
+      const updatePayload = {
+        status,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (status === 'no_show') {
+        updatePayload.no_show_at = new Date().toISOString();
+        updatePayload.no_show_marked_by = user.id;
+        updatePayload.penalty_amount = penaltyAmount;
+      }
 
       const { error } = await supabase
         .from('bookings')
-        .update({
-          status,
-          updated_at: new Date().toISOString(),
-        })
+        .update(updatePayload)
         .eq('id', id);
 
       if (error) throw error;
 
       await insertAuditLog('UPDATE_BOOKING_STATUS', id, {
         new_status: status,
+        penalty_amount: status === 'no_show' ? penaltyAmount : undefined,
       });
 
       if (booking?.customer_id) {
         await notifyUser({
           userId: booking.customer_id,
-          title: 'Booking Status Updated',
-          message: `Your booking status is now ${status.replace('_', ' ')}.`,
-          type: 'service_status',
+          title:
+            status === 'no_show'
+              ? 'Booking Marked as No-show'
+              : 'Booking Status Updated',
+          message: getStatusNotificationMessage(status, penaltyAmount),
+          type: status === 'no_show' ? 'penalty' : 'service_status',
           relatedTable: 'bookings',
           relatedId: id,
         });
@@ -392,6 +494,48 @@ export default function AdminBookings() {
       setUpdatingStatus(null);
     }
   }
+
+  async function smartAssignMechanic(booking) {
+  if (!booking?.id || !booking?.service_id || !booking?.booking_date || !booking?.booking_time) {
+    setFetchError('Booking is missing service, date, or time.');
+    return;
+  }
+
+  setSmartAssigning(booking.id);
+  setFetchError('');
+
+  try {
+    const { data, error } = await supabase.rpc('recommend_mechanics', {
+      p_service_id: booking.service_id,
+      p_booking_date: booking.booking_date,
+      p_booking_time: booking.booking_time,
+    });
+
+    if (error) throw error;
+
+    const bestMechanic = data?.[0];
+
+    if (!bestMechanic) {
+      setFetchError('No available mechanic found for this schedule.');
+      return;
+    }
+
+    await assignMechanic(booking.id, bestMechanic.mechanic_id);
+
+    await insertAuditLog('SMART_ASSIGN_MECHANIC', booking.id, {
+      mechanic_id: bestMechanic.mechanic_id,
+      mechanic_name: `${bestMechanic.first_name} ${bestMechanic.last_name}`,
+      score: bestMechanic.score,
+      skill_level: bestMechanic.skill_level,
+      daily_bookings: bestMechanic.daily_bookings,
+      active_bookings: bestMechanic.active_bookings,
+    });
+  } catch (err) {
+    setFetchError(err.message || 'Failed to smart assign mechanic.');
+  } finally {
+    setSmartAssigning(null);
+  }
+}
 
   async function assignMechanic(id, mechanicId) {
     setAssigningMechanic(id);
@@ -489,9 +633,7 @@ export default function AdminBookings() {
       );
 
       const newTotalPaid =
-        form.payment_type === 'refund'
-          ? existingPaid - amount
-          : existingPaid + amount;
+        form.payment_type === 'refund' ? existingPaid - amount : existingPaid + amount;
 
       const newBalance = Math.max(total - newTotalPaid, 0);
 
@@ -502,7 +644,9 @@ export default function AdminBookings() {
           message:
             form.payment_type === 'refund'
               ? `A refund of ${formatPeso(amount)} has been recorded for your booking.`
-              : `Your payment of ${formatPeso(amount)} has been recorded. Remaining balance: ${formatPeso(newBalance)}.`,
+              : `Your payment of ${formatPeso(
+                  amount
+                )} has been recorded. Remaining balance: ${formatPeso(newBalance)}.`,
           type: 'payment',
           relatedTable: 'bookings',
           relatedId: bookingId,
@@ -544,6 +688,7 @@ export default function AdminBookings() {
       in_progress: 0,
       completed: 0,
       cancelled: 0,
+      no_show: 0,
     };
 
     bookings.forEach((booking) => {
@@ -596,6 +741,8 @@ export default function AdminBookings() {
     );
   }, [filtered, payments]);
 
+  const noShowPenalty = getPolicyNumber(policies, 'no_show_penalty_amount');
+
   return (
     <div className="min-h-[calc(100vh-65px)] bg-gray-50 px-4 py-8 text-gray-900 dark:bg-dark-900 dark:text-white sm:px-6 lg:py-10">
       <div className="mx-auto max-w-6xl">
@@ -613,7 +760,7 @@ export default function AdminBookings() {
                   Manage Bookings
                 </h1>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
-                  View customer bookings, assign mechanics, record payments, and update booking statuses.
+                  View customer bookings, assign mechanics, record payments, update booking statuses, and apply no-show penalties.
                 </p>
                 {lastUpdated && (
                   <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
@@ -627,6 +774,7 @@ export default function AdminBookings() {
                 onClick={() => {
                   fetchBookings(false);
                   fetchMechanics();
+                  fetchBookingPolicies();
                 }}
                 className="inline-flex items-center justify-center rounded-2xl border border-gray-200 px-5 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
               >
@@ -642,7 +790,7 @@ export default function AdminBookings() {
           </div>
         )}
 
-        <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <StatCard label="Filtered Bookings" value={filtered.length} icon="📅" tone="primary" />
           <StatCard label="Expected Total" value={formatPeso(paymentStats.total)} icon="💰" tone="accent" />
           <StatCard label="Total Paid" value={formatPeso(paymentStats.paid)} icon="✅" tone="green" />
@@ -651,6 +799,12 @@ export default function AdminBookings() {
             value={formatPeso(paymentStats.balance)}
             icon="⚠️"
             tone={paymentStats.balance > 0 ? 'yellow' : 'default'}
+          />
+          <StatCard
+            label="No-show Penalty"
+            value={formatPeso(noShowPenalty)}
+            icon="🚫"
+            tone="orange"
           />
         </div>
 
@@ -773,6 +927,23 @@ export default function AdminBookings() {
                       </div>
                     )}
 
+                    {booking.status === 'no_show' && (
+                      <div className="mb-5 rounded-3xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-800 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200">
+                        <p className="font-black">No-show Penalty Applied</p>
+                        <p className="mt-1">
+                          Penalty amount:{' '}
+                          <span className="font-black">
+                            {formatPeso(booking.penalty_amount)}
+                          </span>
+                        </p>
+                        {booking.no_show_at && (
+                          <p className="mt-1 text-xs">
+                            Marked no-show on {formatDateTime(booking.no_show_at)}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
                     <div className="mb-5 grid gap-3 md:grid-cols-4">
                       <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
                         <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
@@ -843,6 +1014,21 @@ export default function AdminBookings() {
                               </option>
                             ))}
                           </select>
+
+                          <button
+  type="button"
+  onClick={() => smartAssignMechanic(booking)}
+  disabled={
+    smartAssigning === booking.id ||
+    assigningMechanic === booking.id ||
+    updatingStatus !== null
+  }
+  className="mt-3 w-full rounded-2xl bg-primary-600 px-4 py-2.5 text-xs font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+>
+  {smartAssigning === booking.id
+    ? 'Finding best mechanic...'
+    : 'Smart Assign Best Mechanic'}
+</button>
                         </div>
 
                         <div className="text-xs font-semibold text-gray-500 dark:text-gray-400">
@@ -857,6 +1043,11 @@ export default function AdminBookings() {
                       <p className="mb-3 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
                         Update Status
                       </p>
+
+                      <div className="mb-3 rounded-2xl border border-orange-200 bg-orange-50 p-3 text-xs leading-5 text-orange-800 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200">
+                        Current no-show penalty from settings:{' '}
+                        <span className="font-black">{formatPeso(noShowPenalty)}</span>
+                      </div>
 
                       <div className="flex flex-wrap gap-2">
                         {STATUS_OPTIONS.filter((status) => status !== booking.status).map(

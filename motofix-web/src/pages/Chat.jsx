@@ -22,17 +22,6 @@ function formatDate(timestamp) {
   });
 }
 
-function formatDateTime(timestamp) {
-  if (!timestamp) return '';
-
-  return new Date(timestamp).toLocaleString('en-PH', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
 function getRoleLabel(role) {
   if (!role) return 'Support';
   return String(role).charAt(0).toUpperCase() + String(role).slice(1);
@@ -64,7 +53,11 @@ function RoleBadge({ role, isBot = false }) {
   const label = isBot ? 'AI Assistant' : getRoleLabel(normalized);
 
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ring-1 ${getRoleBadgeStyle(normalized)}`}>
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ring-1 ${getRoleBadgeStyle(
+        normalized
+      )}`}
+    >
       {label}
     </span>
   );
@@ -90,7 +83,11 @@ function getInitials(profile, fallback = 'U') {
   return `${first}${last}`.toUpperCase() || fallback;
 }
 
-function Avatar({ profile, fallback = 'U', className = 'h-10 w-10 rounded-2xl' }) {
+function Avatar({
+  profile,
+  fallback = 'U',
+  className = 'h-10 w-10 rounded-2xl',
+}) {
   if (profile?.profile_photo_url) {
     return (
       <img
@@ -102,7 +99,9 @@ function Avatar({ profile, fallback = 'U', className = 'h-10 w-10 rounded-2xl' }
   }
 
   return (
-    <div className={`${className} grid flex-shrink-0 place-items-center bg-primary-600 text-sm font-black text-white shadow-sm shadow-primary-600/20`}>
+    <div
+      className={`${className} grid flex-shrink-0 place-items-center bg-primary-600 text-sm font-black text-white shadow-sm shadow-primary-600/20`}
+    >
       {getInitials(profile, fallback)}
     </div>
   );
@@ -119,7 +118,11 @@ function MessageBubble({ message, isOwn, isLastOwn }) {
 
   return (
     <div className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
-      <div className={`mb-1 flex items-center gap-2 px-1 ${isOwn ? 'flex-row-reverse' : 'flex-row'}`}>
+      <div
+        className={`mb-1 flex items-center gap-2 px-1 ${
+          isOwn ? 'flex-row-reverse' : 'flex-row'
+        }`}
+      >
         <span
           className={`text-[11px] font-bold ${
             isOwn
@@ -142,7 +145,11 @@ function MessageBubble({ message, isOwn, isLastOwn }) {
         <p className="whitespace-pre-wrap break-words">{message.message}</p>
       </div>
 
-      <div className={`mt-1 flex items-center gap-1.5 px-1 ${isOwn ? 'flex-row-reverse' : 'flex-row'}`}>
+      <div
+        className={`mt-1 flex items-center gap-1.5 px-1 ${
+          isOwn ? 'flex-row-reverse' : 'flex-row'
+        }`}
+      >
         <span className="text-[11px] text-gray-400 dark:text-gray-500">
           {formatTime(message.created_at)}
         </span>
@@ -179,14 +186,17 @@ function ConversationSkeleton() {
 export default function Chat() {
   const { user, profile } = useAuth();
 
+  const [selectedType, setSelectedType] = useState(null);
+
   const [conversation, setConversation] = useState(null);
   const conversationRef = useRef(null);
+  const selectedTypeRef = useRef(null);
 
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
 
   const [sending, setSending] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState('');
 
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -200,16 +210,16 @@ export default function Chat() {
   }, [conversation]);
 
   useEffect(() => {
-    if (!user?.id) return;
+    selectedTypeRef.current = selectedType;
+  }, [selectedType]);
 
-    initChat();
+  useEffect(() => {
+    if (!user?.id || !selectedType) return;
 
-    /*
-      Realtime refresh for customer chat.
-      Enable Realtime in Supabase for chat_conversations and chat_messages.
-    */
+    initChat(selectedType);
+
     const convChannel = supabase
-      .channel(`customer-chat-conversations-${user.id}`)
+      .channel(`customer-chat-conversations-${user.id}-${selectedType}`)
       .on(
         'postgres_changes',
         {
@@ -220,11 +230,14 @@ export default function Chat() {
         },
         async (payload) => {
           const activeConversation = conversationRef.current;
+          const activeType = selectedTypeRef.current;
+
+          if (payload.new?.conversation_type !== activeType) return;
 
           if (payload.new?.id && activeConversation?.id === payload.new.id) {
             await fetchConversation(payload.new.id);
           } else if (!activeConversation) {
-            await initChat(false);
+            await initChat(activeType, false);
           }
         }
       )
@@ -234,11 +247,15 @@ export default function Chat() {
 
     const handleFocus = () => {
       const activeConversation = conversationRef.current;
+      const activeType = selectedTypeRef.current;
+
+      if (!activeType) return;
+
       if (activeConversation?.id) {
         fetchConversation(activeConversation.id);
         fetchMessages(activeConversation.id, false);
       } else {
-        initChat(false);
+        initChat(activeType, false);
       }
     };
 
@@ -250,19 +267,27 @@ export default function Chat() {
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      if (messageChannelRef.current) supabase.removeChannel(messageChannelRef.current);
-      if (conversationChannelRef.current) supabase.removeChannel(conversationChannelRef.current);
+      if (messageChannelRef.current) {
+        supabase.removeChannel(messageChannelRef.current);
+        messageChannelRef.current = null;
+      }
+
+      if (conversationChannelRef.current) {
+        supabase.removeChannel(conversationChannelRef.current);
+        conversationChannelRef.current = null;
+      }
+
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [user?.id]);
+  }, [user?.id, selectedType]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  async function initChat(showLoader = true) {
-    if (!user?.id) return;
+  async function initChat(type = selectedTypeRef.current || 'human', showLoader = true) {
+    if (!user?.id || !type) return;
 
     if (showLoader) setLoading(true);
 
@@ -277,6 +302,7 @@ export default function Chat() {
         `)
         .eq('customer_id', user.id)
         .eq('status', 'open')
+        .eq('conversation_type', type)
         .order('created_at', { ascending: true })
         .limit(1);
 
@@ -323,7 +349,9 @@ export default function Chat() {
 
     const { data, error } = await supabase
       .from('chat_messages')
-      .select('*, profiles!chat_messages_sender_id_fkey(first_name, last_name, role, profile_photo_url)')
+      .select(
+        '*, profiles!chat_messages_sender_id_fkey(first_name, last_name, role, profile_photo_url)'
+      )
       .eq('conversation_id', conversationId)
       .order('created_at', { ascending: true });
 
@@ -359,13 +387,18 @@ export default function Chat() {
         async (payload) => {
           const { data } = await supabase
             .from('chat_messages')
-            .select('*, profiles!chat_messages_sender_id_fkey(first_name, last_name, role, profile_photo_url)')
+            .select(
+              '*, profiles!chat_messages_sender_id_fkey(first_name, last_name, role, profile_photo_url)'
+            )
             .eq('id', payload.new.id)
             .single();
 
           if (data) {
             setMessages((previous) => {
-              if (previous.find((message) => message.id === data.id)) return previous;
+              if (previous.find((message) => message.id === data.id)) {
+                return previous;
+              }
+
               return [...previous, data];
             });
 
@@ -397,10 +430,37 @@ export default function Chat() {
     messageChannelRef.current = channel;
   }
 
+  function handleChooseChat(type) {
+    setSelectedType(type);
+    setConversation(null);
+    setMessages([]);
+    setInput('');
+    setFetchError('');
+  }
+
+  function handleBackToChoices() {
+    if (messageChannelRef.current) {
+      supabase.removeChannel(messageChannelRef.current);
+      messageChannelRef.current = null;
+    }
+
+    if (conversationChannelRef.current) {
+      supabase.removeChannel(conversationChannelRef.current);
+      conversationChannelRef.current = null;
+    }
+
+    setSelectedType(null);
+    setConversation(null);
+    setMessages([]);
+    setInput('');
+    setFetchError('');
+    setLastUpdated(null);
+  }
+
   async function handleSend(event) {
     event.preventDefault();
 
-    if (!input.trim() || !user?.id) return;
+    if (!input.trim() || !user?.id || !selectedType) return;
 
     const messageText = input.trim();
 
@@ -416,6 +476,7 @@ export default function Chat() {
           .insert({
             customer_id: user.id,
             status: 'open',
+            conversation_type: selectedType,
           })
           .select(`
             *,
@@ -453,6 +514,24 @@ export default function Chat() {
 
       setInput('');
       setLastUpdated(new Date());
+
+      if ((activeConversation.conversation_type || selectedType) === 'ai') {
+        supabase.functions
+          .invoke('ai-chatbot', {
+            body: {
+              conversation_id: activeConversation.id,
+              message: messageText,
+            },
+          })
+          .then(({ error }) => {
+            if (error) {
+              console.error('AI chatbot error:', error);
+              setFetchError(
+                'AI Assistant could not reply right now. Please try again later.'
+              );
+            }
+          });
+      }
     } catch (err) {
       console.error('Send error:', err);
       setFetchError(err.message || 'Failed to send message.');
@@ -478,7 +557,76 @@ export default function Chat() {
   }, []);
 
   const lastMessage = messages[messages.length - 1];
-  const handledBy = getAgentName(conversation);
+
+  const activeType = conversation?.conversation_type || selectedType;
+  const isAiChat = activeType === 'ai';
+
+  const chatTitle = isAiChat ? 'AI Assistant' : 'MotoFix Support';
+  const chatIcon = isAiChat ? 'AI' : 'MF';
+  const handledBy = isAiChat ? 'AI Assistant' : getAgentName(conversation);
+
+  if (!selectedType) {
+    return (
+      <div className="min-h-[calc(100vh-65px)] bg-gray-50 px-4 py-10 text-gray-900 dark:bg-dark-900 dark:text-white">
+        <div className="mx-auto max-w-5xl">
+          <div className="mb-8 text-center">
+            <p className="mb-2 text-xs font-black uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
+              MotoFix Chat
+            </p>
+            <h1 className="text-3xl font-black text-gray-950 dark:text-white md:text-4xl">
+              How can we help you?
+            </h1>
+            <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
+              Choose AI Assistant for quick automated help or talk to the MotoFix
+              support team for real-person assistance.
+            </p>
+          </div>
+
+          <div className="grid gap-5 md:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => handleChooseChat('ai')}
+              className="rounded-3xl border border-gray-200 bg-white p-8 text-left shadow-sm transition hover:-translate-y-1 hover:border-primary-400 hover:shadow-md dark:border-dark-700 dark:bg-dark-800"
+            >
+              <div className="mb-5 grid h-16 w-16 place-items-center rounded-3xl bg-yellow-50 text-4xl ring-1 ring-yellow-100 dark:bg-yellow-500/10 dark:ring-yellow-500/25">
+                🤖
+              </div>
+              <h2 className="text-xl font-black text-gray-950 dark:text-white">
+                AI Assistant
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-400">
+                Get quick automated help about booking, payments, parts, shop
+                information, and basic motorcycle service questions.
+              </p>
+              <div className="mt-5 inline-flex rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white">
+                Start AI Chat
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleChooseChat('human')}
+              className="rounded-3xl border border-gray-200 bg-white p-8 text-left shadow-sm transition hover:-translate-y-1 hover:border-primary-400 hover:shadow-md dark:border-dark-700 dark:bg-dark-800"
+            >
+              <div className="mb-5 grid h-16 w-16 place-items-center rounded-3xl bg-primary-50 text-4xl ring-1 ring-primary-100 dark:bg-primary-500/10 dark:ring-primary-500/25">
+                💬
+              </div>
+              <h2 className="text-xl font-black text-gray-950 dark:text-white">
+                Talk to a Real Person
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-400">
+                Chat with MotoFix admin, staff, or mechanic using the existing
+                shared real-time support chat.
+              </p>
+              <div className="mt-5 inline-flex rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white">
+                Start Support Chat
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) return <ConversationSkeleton />;
 
@@ -495,7 +643,7 @@ export default function Chat() {
               Messages
             </h2>
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              Your support conversation
+              {isAiChat ? 'Your AI assistant conversation' : 'Your support conversation'}
             </p>
           </div>
 
@@ -507,13 +655,13 @@ export default function Chat() {
               >
                 <div className="mb-3 flex items-start gap-3">
                   <div className="grid h-11 w-11 flex-shrink-0 place-items-center rounded-2xl bg-primary-600 text-sm font-black text-white">
-                    MF
+                    {chatIcon}
                   </div>
 
                   <div className="min-w-0 flex-1">
                     <div className="mb-1 flex items-center justify-between gap-2">
                       <p className="truncate text-sm font-black text-gray-950 dark:text-white">
-                        MotoFix Support
+                        {chatTitle}
                       </p>
                       {lastMessage && (
                         <span className="text-[11px] text-gray-400 dark:text-gray-500">
@@ -536,14 +684,21 @@ export default function Chat() {
                     <p className="truncate text-xs font-black text-primary-700 dark:text-primary-400">
                       {handledBy}
                     </p>
-                    {conversation?.staff?.role && <RoleBadge role={conversation.staff.role} />}
+
+                    {isAiChat ? (
+                      <RoleBadge role="bot" isBot />
+                    ) : (
+                      conversation?.staff?.role && (
+                        <RoleBadge role={conversation.staff.role} />
+                      )
+                    )}
                   </div>
                 </div>
               </button>
             ) : (
               <div className="rounded-3xl border border-dashed border-gray-300 p-8 text-center dark:border-dark-700">
                 <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-3xl bg-primary-50 text-3xl ring-1 ring-primary-100 dark:bg-primary-500/10 dark:ring-primary-500/20">
-                  💬
+                  {isAiChat ? '🤖' : '💬'}
                 </div>
                 <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
                   No conversation yet.
@@ -581,12 +736,12 @@ export default function Chat() {
             <div className="flex items-center justify-between gap-4">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="grid h-11 w-11 flex-shrink-0 place-items-center rounded-2xl bg-primary-600 text-sm font-black text-white shadow-sm shadow-primary-600/20">
-                  MF
+                  {chatIcon}
                 </div>
 
                 <div className="min-w-0">
                   <p className="font-black leading-tight text-gray-950 dark:text-white">
-                    MotoFix Support
+                    {chatTitle}
                   </p>
                   <p className="mt-1 flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
                     <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
@@ -596,20 +751,30 @@ export default function Chat() {
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  if (conversation?.id) {
-                    fetchConversation(conversation.id);
-                    fetchMessages(conversation.id);
-                  } else {
-                    initChat(false);
-                  }
-                }}
-                className="rounded-2xl border border-gray-200 px-4 py-2 text-xs font-black text-gray-600 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
-              >
-                Refresh
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleBackToChoices}
+                  className="rounded-2xl border border-gray-200 px-4 py-2 text-xs font-black text-gray-600 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
+                >
+                  Change
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (conversation?.id) {
+                      fetchConversation(conversation.id);
+                      fetchMessages(conversation.id);
+                    } else {
+                      initChat(activeType, false);
+                    }
+                  }}
+                  className="rounded-2xl border border-gray-200 px-4 py-2 text-xs font-black text-gray-600 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
+                >
+                  Refresh
+                </button>
+              </div>
             </div>
 
             <div className="mt-3 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3 dark:border-dark-700 dark:bg-dark-900/70">
@@ -617,19 +782,30 @@ export default function Chat() {
                 Handled by
               </p>
               <div className="mt-2 flex items-center gap-3">
-                {conversation?.staff ? (
-                  <Avatar profile={conversation.staff} fallback="S" className="h-9 w-9 rounded-2xl" />
+                {isAiChat ? (
+                  <div className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-2xl bg-yellow-100 text-xs font-black text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-300">
+                    AI
+                  </div>
+                ) : conversation?.staff ? (
+                  <Avatar
+                    profile={conversation.staff}
+                    fallback="S"
+                    className="h-9 w-9 rounded-2xl"
+                  />
                 ) : (
                   <div className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-2xl bg-gray-200 text-xs font-black text-gray-500 dark:bg-dark-700 dark:text-gray-300">
                     …
                   </div>
                 )}
+
                 <div className="min-w-0">
                   <p className="truncate text-sm font-black text-gray-950 dark:text-white">
                     {handledBy}
                   </p>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
-                    {conversation?.staff?.role ? (
+                    {isAiChat ? (
+                      <RoleBadge role="bot" isBot />
+                    ) : conversation?.staff?.role ? (
                       <RoleBadge role={conversation.staff.role} />
                     ) : (
                       <p className="truncate text-xs text-gray-500 dark:text-gray-400">
@@ -653,13 +829,15 @@ export default function Chat() {
             {messages.length === 0 ? (
               <div className="flex flex-1 flex-col items-center justify-center py-20 text-center">
                 <div className="mb-5 grid h-20 w-20 place-items-center rounded-3xl bg-white text-4xl shadow-sm ring-1 ring-gray-200 dark:bg-dark-800 dark:ring-dark-700">
-                  💬
+                  {isAiChat ? '🤖' : '💬'}
                 </div>
                 <h2 className="mb-2 text-xl font-black text-gray-950 dark:text-white">
                   Hi {profile?.first_name || 'there'}! 👋
                 </h2>
                 <p className="max-w-sm text-sm leading-6 text-gray-600 dark:text-gray-400">
-                  Send a message to start chatting with the MotoFix support team.
+                  {isAiChat
+                    ? 'Ask the AI Assistant about bookings, payments, parts, or basic MotoFix help.'
+                    : 'Send a message to start chatting with the MotoFix support team.'}
                 </p>
               </div>
             ) : (
@@ -676,7 +854,8 @@ export default function Chat() {
                   <div className="space-y-3">
                     {group.messages.map((message) => {
                       const isOwn = message.sender_id === user.id;
-                      const isLastOwn = isOwn && messages[messages.length - 1]?.id === message.id;
+                      const isLastOwn =
+                        isOwn && messages[messages.length - 1]?.id === message.id;
 
                       return (
                         <MessageBubble
@@ -700,7 +879,8 @@ export default function Chat() {
             {conversation?.status === 'closed' ? (
               <div className="rounded-3xl border border-gray-200 bg-gray-50 p-4 text-center dark:border-dark-700 dark:bg-dark-900/70">
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  This conversation has been closed by the shop. Send a new message to start another conversation.
+                  This conversation has been closed by the shop. Send a new message
+                  to start another conversation.
                 </p>
                 <button
                   type="button"
@@ -725,7 +905,11 @@ export default function Chat() {
                     }
                   }}
                   rows={1}
-                  placeholder="Type a message..."
+                  placeholder={
+                    isAiChat
+                      ? 'Ask the AI Assistant...'
+                      : 'Type a message...'
+                  }
                   disabled={sending}
                   className="max-h-32 min-h-11 flex-1 resize-none rounded-3xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 disabled:opacity-50 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
                 />
