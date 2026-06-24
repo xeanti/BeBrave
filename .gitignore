@@ -1,0 +1,6 @@
+motofix-web/node_modules/
+motofix-web/dist/
+motofix-web/.env
+motofix-web/.env.local
+motofix-web/.expo/
+motofix-web/build/
