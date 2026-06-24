@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 import { fetchPaymentsFor, recordPayment, summarizePayments } from '../../lib/payments';
-
+import { notifyUser } from '../../lib/notifications';
 const STATUS_OPTIONS = ['pending', 'confirmed', 'preparing', 'ready', 'completed', 'cancelled'];
 const PAYMENT_TYPES = ['down_payment', 'balance', 'full', 'refund'];
 const PAYMENT_METHODS = ['cash', 'gcash', 'card', 'bank_transfer'];
@@ -303,31 +303,66 @@ export default function AdminOrders() {
   }
 
   async function updateStatus(id, status) {
-    setUpdatingStatus(`${id}-${status}`);
-    setFetchError('');
+  setUpdatingStatus(`${id}-${status}`);
+  setFetchError('');
 
-    try {
-      const { error } = await supabase
-        .from('orders')
-        .update({
-          status,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', id);
+  try {
+    const order = orders.find((item) => item.id === id);
+const { error } = await supabase
+    
+      .from('orders')
+      .update({
+        status,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
 
-      if (error) throw error;
+    if (error) throw error;
 
-      await insertAuditLog('UPDATE_ORDER_STATUS', id, {
-        new_status: status,
+    await insertAuditLog('UPDATE_ORDER_STATUS', id, {
+      new_status: status,
+    });
+
+    if (order?.customer_id) {
+      let message = `Your order status is now ${status.replace('_', ' ')}.`;
+
+      if (status === 'confirmed') {
+        message = 'Your parts order has been confirmed.';
+      }
+
+      if (status === 'preparing') {
+        message = 'Your parts order is now being prepared.';
+      }
+
+      if (status === 'ready') {
+        message = 'Your parts order is ready for pickup.';
+      }
+
+      if (status === 'completed') {
+        message = 'Your parts order has been completed. Thank you for using MotoFix.';
+      }
+
+      if (status === 'cancelled') {
+        message = 'Your parts order has been cancelled.';
+      }
+
+      await notifyUser({
+        userId: order.customer_id,
+        title: 'Order Status Updated',
+        message,
+        type: 'order',
+        relatedTable: 'orders',
+        relatedId: id,
       });
-
-      await fetchOrders(false);
-    } catch (err) {
-      setFetchError(err.message || 'Failed to update order status.');
-    } finally {
-      setUpdatingStatus(null);
     }
+
+    await fetchOrders(false);
+  } catch (err) {
+    setFetchError(err.message || 'Failed to update order status.');
+  } finally {
+    setUpdatingStatus(null);
   }
+}
 
   async function submitPayment(orderId) {
     const form = paymentForm[orderId] || {
@@ -378,6 +413,20 @@ export default function AdminOrders() {
           : existingPaid + amount;
 
       const newBalance = Math.max(total - newTotalPaid, 0);
+
+      if (currentOrder?.customer_id) {
+  await notifyUser({
+    userId: currentOrder.customer_id,
+    title: 'Order Payment Recorded',
+    message:
+      form.payment_type === 'refund'
+        ? `A refund of ${formatPeso(amount)} has been recorded for your order.`
+        : `Your order payment of ${formatPeso(amount)} has been recorded. Remaining balance: ${formatPeso(newBalance)}.`,
+    type: 'payment',
+    relatedTable: 'orders',
+    relatedId: orderId,
+  });
+}
 
       setPaymentToast({
         orderId,

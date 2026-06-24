@@ -1,6 +1,8 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'; // Added Navigate for legacy redirects
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
+
 import Navbar from './components/Navbar';
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -23,6 +25,7 @@ import Checkout from './pages/Checkout';
 import OrderConfirmation from './pages/OrderConfirmation';
 import BookingConfirmation from './pages/BookingConfirmation';
 import MechanicRatings from './pages/MechanicRatings';
+import Notifications from './pages/Notifications';
 
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminBookings from './pages/admin/AdminBookings';
@@ -33,7 +36,7 @@ import AdminOrders from './pages/admin/AdminOrders';
 import AdminReports from './pages/admin/AdminReports';
 import AdminAssessments from './pages/admin/AdminAssessments';
 import AdminSettings from './pages/admin/AdminSettings';
-import AdminUsers from './pages/admin/AdminUsers'; // <-- Added Import
+import AdminUsers from './pages/admin/AdminUsers';
 
 import StaffDashboard from './pages/staff/StaffDashboard';
 
@@ -50,6 +53,25 @@ export default function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/mechanics" element={<Mechanics />} />
+
+            {/* Shared Protected */}
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <Profile />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/notifications"
+              element={
+                <ProtectedRoute>
+                  <Notifications />
+                </ProtectedRoute>
+              }
+            />
 
             {/* Customer */}
             <Route
@@ -75,15 +97,6 @@ export default function App() {
               element={
                 <ProtectedRoute allowedRoles={['customer']}>
                   <Customize />
-                </ProtectedRoute>
-              }
-            />
-
-            <Route
-              path="/profile"
-              element={
-                <ProtectedRoute>
-                  <Profile />
                 </ProtectedRoute>
               }
             />
@@ -199,20 +212,20 @@ export default function App() {
             />
 
             {/* Admin */}
-            <Route 
-              path="/admin/settings" 
-              element={
-                <ProtectedRoute allowedRoles={['admin']}>
-                  <AdminSettings />
-                </ProtectedRoute>
-              } 
-            />
-
             <Route
               path="/admin"
               element={
                 <ProtectedRoute allowedRoles={['admin']}>
                   <AdminDashboard />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/admin/settings"
+              element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <AdminSettings />
                 </ProtectedRoute>
               }
             />
@@ -300,7 +313,6 @@ export default function App() {
               }
             />
 
-            {/* New Admin Users Route */}
             <Route
               path="/admin/users"
               element={

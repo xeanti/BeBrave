@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDownPaymentPercent } from '../lib/settings';
+import { notifyRole, notifyUser } from '../lib/notifications';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../lib/supabaseClient';
 
-const GCASH_QR_IMAGE = 'https://wcqqduuimpjipwvwzyzx.supabase.co/storage/v1/object/public/motorcycle-photos/MISCS/GCASH%20(1).jpg';
+const GCASH_QR_IMAGE =
+  'https://wcqqduuimpjipwvwzyzx.supabase.co/storage/v1/object/public/motorcycle-photos/MISCS/GCASH%20(1).jpg';
 
 function formatPeso(value) {
   const amount = Number(value) || 0;
@@ -95,9 +97,7 @@ export default function Checkout() {
         };
       });
 
-      const { error: itemsError } = await supabase
-        .from('order_items')
-        .insert(items);
+      const { error: itemsError } = await supabase.from('order_items').insert(items);
 
       if (itemsError) throw itemsError;
 
@@ -109,6 +109,34 @@ export default function Checkout() {
 
         if (stockError) throw stockError;
       }
+
+      await notifyUser({
+        userId: user.id,
+        title: 'Order Submitted',
+        message:
+          'Your parts order has been submitted. Please wait for admin confirmation.',
+        type: 'order',
+        relatedTable: 'orders',
+        relatedId: order.id,
+      });
+
+      await notifyRole({
+        role: 'admin',
+        title: 'New Parts Order',
+        message: 'A customer submitted a new parts order.',
+        type: 'order',
+        relatedTable: 'orders',
+        relatedId: order.id,
+      });
+
+      await notifyRole({
+        role: 'staff',
+        title: 'New Parts Order',
+        message: 'A new parts order is waiting for processing.',
+        type: 'order',
+        relatedTable: 'orders',
+        relatedId: order.id,
+      });
 
       clearCart();
 
@@ -400,9 +428,7 @@ export default function Checkout() {
 
               <div className="space-y-3 border-t border-gray-200 pt-4 dark:border-dark-700">
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-600 dark:text-gray-400">
-                    Subtotal
-                  </span>
+                  <span className="text-gray-600 dark:text-gray-400">Subtotal</span>
                   <span className="font-bold text-gray-950 dark:text-white">
                     {formatPeso(total)}
                   </span>
@@ -427,9 +453,7 @@ export default function Checkout() {
                 </div>
 
                 <div className="flex justify-between border-t border-gray-200 pt-4 text-base dark:border-dark-700">
-                  <span className="font-black text-gray-950 dark:text-white">
-                    Total
-                  </span>
+                  <span className="font-black text-gray-950 dark:text-white">Total</span>
                   <span className="font-black text-gray-950 dark:text-white">
                     {formatPeso(total)}
                   </span>

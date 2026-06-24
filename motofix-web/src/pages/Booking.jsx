@@ -4,6 +4,7 @@ import { useCart } from '../context/CartContext';
 import { getDownPaymentPercent } from '../lib/settings';
 import { supabase } from '../lib/supabaseClient';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { notifyRole, notifyUser } from '../lib/notifications';
 
 const GCASH_QR_IMAGE = 'https://wcqqduuimpjipwvwzyzx.supabase.co/storage/v1/object/public/motorcycle-photos/MISCS/GCASH%20(1).jpg';
 
@@ -242,22 +243,56 @@ export default function Booking() {
     setLoading(true);
 
     try {
-      const { error } = await supabase.from('bookings').insert({
-        customer_id: user.id,
-        service_id: form.service_id || null,
-        mechanic_id: selectedMechanic || null,
-        booking_date: form.booking_date,
-        booking_time: form.booking_time,
-        notes: form.notes,
-        status: 'pending',
-        down_payment: Number(downpayment) || 0,
-      });
+const { data: booking, error } = await supabase
+  .from('bookings')
+  .insert({
+    customer_id: user.id,
+    service_id: form.service_id || null,
+    mechanic_id: selectedMechanic || null,
+    booking_date: form.booking_date,
+    booking_time: form.booking_time,
+    notes: form.notes,
+    status: 'pending',
+    down_payment: Number(downpayment) || 0,
+  })
+  .select('id')
+  .single();
 
-      if (error) throw error;
+if (error) throw error;
+
+await notifyUser({
+  userId: user.id,
+  title: 'Booking Submitted',
+  message: 'Your booking request has been submitted. Please wait for admin confirmation.',
+  type: 'booking',
+  relatedTable: 'bookings',
+  relatedId: booking.id,
+});
+
+await notifyRole({
+  role: 'admin',
+  title: 'New Booking Request',
+  message: 'A customer submitted a new service booking request.',
+  type: 'booking',
+  relatedTable: 'bookings',
+  relatedId: booking.id,
+});
+
+if (selectedMechanic) {
+  await notifyUser({
+    userId: selectedMechanic,
+    title: 'New Assigned Booking',
+    message: 'A customer selected you for a new pending booking.',
+    type: 'booking',
+    relatedTable: 'bookings',
+    relatedId: booking.id,
+  });
+}
 
       navigate('/booking-confirmation', {
         state: {
           booking: {
+  id: booking.id,
             ...form,
             down_payment: Number(downpayment) || 0,
             include_cart_parts: includeCartParts,

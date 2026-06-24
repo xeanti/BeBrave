@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 import { fetchPaymentsFor, recordPayment, summarizePayments } from '../../lib/payments';
+import { notifyUser } from '../../lib/notifications';
 
 const STATUS_OPTIONS = ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'];
 const PAYMENT_TYPES = ['down_payment', 'balance', 'full', 'refund'];
@@ -109,7 +110,11 @@ const ACTION_STYLES = {
 
 function StatusBadge({ status }) {
   return (
-    <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-black capitalize ring-1 ${STATUS_STYLES[status] || STATUS_STYLES.pending}`}>
+    <span
+      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-black capitalize ring-1 ${
+        STATUS_STYLES[status] || STATUS_STYLES.pending
+      }`}
+    >
       {String(status || 'pending').replace('_', ' ')}
     </span>
   );
@@ -193,10 +198,6 @@ export default function AdminBookings() {
     fetchBookings();
     fetchMechanics();
 
-    /*
-      Realtime refresh for admin booking management.
-      Enable Realtime in Supabase for bookings, payments, and profiles.
-    */
     const bookingsChannel = supabase
       .channel('admin-bookings-bookings')
       .on(
@@ -343,6 +344,8 @@ export default function AdminBookings() {
     setFetchError('');
 
     try {
+      const booking = bookings.find((item) => item.id === id);
+
       const { error } = await supabase
         .from('bookings')
         .update({
@@ -353,7 +356,35 @@ export default function AdminBookings() {
 
       if (error) throw error;
 
-      await insertAuditLog('UPDATE_BOOKING_STATUS', id, { new_status: status });
+      await insertAuditLog('UPDATE_BOOKING_STATUS', id, {
+        new_status: status,
+      });
+
+      if (booking?.customer_id) {
+        await notifyUser({
+          userId: booking.customer_id,
+          title: 'Booking Status Updated',
+          message: `Your booking status is now ${status.replace('_', ' ')}.`,
+          type: 'service_status',
+          relatedTable: 'bookings',
+          relatedId: id,
+        });
+      }
+
+      if (
+        booking?.mechanic_id &&
+        ['confirmed', 'in_progress', 'completed'].includes(status)
+      ) {
+        await notifyUser({
+          userId: booking.mechanic_id,
+          title: 'Service Status Updated',
+          message: `A booking assigned to you is now ${status.replace('_', ' ')}.`,
+          type: 'service_status',
+          relatedTable: 'bookings',
+          relatedId: id,
+        });
+      }
+
       await fetchBookings(false);
     } catch (err) {
       setFetchError(err.message || 'Failed to update booking status.');
@@ -367,6 +398,8 @@ export default function AdminBookings() {
     setFetchError('');
 
     try {
+      const booking = bookings.find((item) => item.id === id);
+
       const { error } = await supabase
         .from('bookings')
         .update({
@@ -380,6 +413,30 @@ export default function AdminBookings() {
       await insertAuditLog('ASSIGN_MECHANIC', id, {
         mechanic_id: mechanicId || null,
       });
+
+      if (mechanicId) {
+        await notifyUser({
+          userId: mechanicId,
+          title: 'New Service Assignment',
+          message: 'You have been assigned to a motorcycle service booking.',
+          type: 'booking',
+          relatedTable: 'bookings',
+          relatedId: id,
+        });
+      }
+
+      if (booking?.customer_id) {
+        await notifyUser({
+          userId: booking.customer_id,
+          title: mechanicId ? 'Mechanic Assigned' : 'Mechanic Unassigned',
+          message: mechanicId
+            ? 'A mechanic has been assigned to your booking.'
+            : 'The mechanic assigned to your booking has been removed.',
+          type: 'booking',
+          relatedTable: 'bookings',
+          relatedId: id,
+        });
+      }
 
       await fetchBookings(false);
     } catch (err) {
@@ -437,6 +494,20 @@ export default function AdminBookings() {
           : existingPaid + amount;
 
       const newBalance = Math.max(total - newTotalPaid, 0);
+
+      if (booking?.customer_id) {
+        await notifyUser({
+          userId: booking.customer_id,
+          title: 'Payment Recorded',
+          message:
+            form.payment_type === 'refund'
+              ? `A refund of ${formatPeso(amount)} has been recorded for your booking.`
+              : `Your payment of ${formatPeso(amount)} has been recorded. Remaining balance: ${formatPeso(newBalance)}.`,
+          type: 'payment',
+          relatedTable: 'bookings',
+          relatedId: bookingId,
+        });
+      }
 
       setPaymentToast({
         bookingId,
@@ -528,7 +599,6 @@ export default function AdminBookings() {
   return (
     <div className="min-h-[calc(100vh-65px)] bg-gray-50 px-4 py-8 text-gray-900 dark:bg-dark-900 dark:text-white sm:px-6 lg:py-10">
       <div className="mx-auto max-w-6xl">
-        {/* Header */}
         <div className="mb-8 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
           <div className="relative p-6 sm:p-8">
             <div className="absolute -right-8 -top-14 h-36 w-36 rounded-full bg-primary-500/10 blur-3xl" />
@@ -572,15 +642,18 @@ export default function AdminBookings() {
           </div>
         )}
 
-        {/* Summary */}
         <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard label="Filtered Bookings" value={filtered.length} icon="📅" tone="primary" />
           <StatCard label="Expected Total" value={formatPeso(paymentStats.total)} icon="💰" tone="accent" />
           <StatCard label="Total Paid" value={formatPeso(paymentStats.paid)} icon="✅" tone="green" />
-          <StatCard label="Total Balance" value={formatPeso(paymentStats.balance)} icon="⚠️" tone={paymentStats.balance > 0 ? 'yellow' : 'default'} />
+          <StatCard
+            label="Total Balance"
+            value={formatPeso(paymentStats.balance)}
+            icon="⚠️"
+            tone={paymentStats.balance > 0 ? 'yellow' : 'default'}
+          />
         </div>
 
-        {/* Filters */}
         <div className="mb-6 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-wrap gap-2">
@@ -640,7 +713,8 @@ export default function AdminBookings() {
               const { totalPaid } = summarizePayments(bookingPayments);
               const balance = Math.max(total - totalPaid, 0);
               const isFullyPaid = total > 0 && balance <= 0;
-              const paymentPercent = total > 0 ? Math.min((totalPaid / total) * 100, 100) : 0;
+              const paymentPercent =
+                total > 0 ? Math.min((totalPaid / total) * 100, 100) : 0;
               const form = paymentForm[booking.id] || {
                 amount: '',
                 payment_type: 'balance',
@@ -655,7 +729,6 @@ export default function AdminBookings() {
                   className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800"
                 >
                   <div className="p-5 sm:p-6">
-                    {/* Header Row */}
                     <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div className="min-w-0">
                         <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -700,7 +773,6 @@ export default function AdminBookings() {
                       </div>
                     )}
 
-                    {/* Summary */}
                     <div className="mb-5 grid gap-3 md:grid-cols-4">
                       <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
                         <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
@@ -752,7 +824,6 @@ export default function AdminBookings() {
                       />
                     </div>
 
-                    {/* Mechanic assignment */}
                     <div className="mb-5 rounded-3xl border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/60">
                       <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
                         <div>
@@ -775,35 +846,37 @@ export default function AdminBookings() {
                         </div>
 
                         <div className="text-xs font-semibold text-gray-500 dark:text-gray-400">
-                          {assigningMechanic === booking.id ? 'Updating mechanic...' : 'Changes save automatically.'}
+                          {assigningMechanic === booking.id
+                            ? 'Updating mechanic...'
+                            : 'Changes save automatically.'}
                         </div>
                       </div>
                     </div>
 
-                    {/* Status Actions */}
                     <div className="mb-5 rounded-3xl border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/60">
                       <p className="mb-3 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
                         Update Status
                       </p>
 
                       <div className="flex flex-wrap gap-2">
-                        {STATUS_OPTIONS.filter((status) => status !== booking.status).map((status) => (
-                          <button
-                            key={status}
-                            type="button"
-                            onClick={() => updateStatus(booking.id, status)}
-                            disabled={updatingStatus === `${booking.id}-${status}`}
-                            className={`rounded-2xl px-4 py-2 text-xs font-black capitalize ring-1 transition disabled:cursor-not-allowed disabled:opacity-50 ${ACTION_STYLES[status]}`}
-                          >
-                            {updatingStatus === `${booking.id}-${status}`
-                              ? 'Updating...'
-                              : status.replace('_', ' ')}
-                          </button>
-                        ))}
+                        {STATUS_OPTIONS.filter((status) => status !== booking.status).map(
+                          (status) => (
+                            <button
+                              key={status}
+                              type="button"
+                              onClick={() => updateStatus(booking.id, status)}
+                              disabled={updatingStatus === `${booking.id}-${status}`}
+                              className={`rounded-2xl px-4 py-2 text-xs font-black capitalize ring-1 transition disabled:cursor-not-allowed disabled:opacity-50 ${ACTION_STYLES[status]}`}
+                            >
+                              {updatingStatus === `${booking.id}-${status}`
+                                ? 'Updating...'
+                                : status.replace('_', ' ')}
+                            </button>
+                          )
+                        )}
                       </div>
                     </div>
 
-                    {/* Utility Buttons */}
                     <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
@@ -823,12 +896,12 @@ export default function AdminBookings() {
                           onClick={() => setExpandedHistory(isHistoryOpen ? null : booking.id)}
                           className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
                         >
-                          {isHistoryOpen ? 'Hide Payment History' : 'View Payment History'} ({bookingPayments.length})
+                          {isHistoryOpen ? 'Hide Payment History' : 'View Payment History'} (
+                          {bookingPayments.length})
                         </button>
                       )}
                     </div>
 
-                    {/* Payment History */}
                     {isHistoryOpen && bookingPayments.length > 0 && (
                       <div className="mt-5 rounded-3xl border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/60">
                         <p className="mb-3 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
@@ -843,7 +916,8 @@ export default function AdminBookings() {
                             >
                               <div>
                                 <p className="font-black capitalize text-gray-950 dark:text-white">
-                                  {String(payment.payment_type || '').replace('_', ' ')} · {payment.method}
+                                  {String(payment.payment_type || '').replace('_', ' ')} ·{' '}
+                                  {payment.method}
                                 </p>
                                 <p className="mt-1 text-gray-500 dark:text-gray-400">
                                   {formatDateTime(payment.created_at)} · processed by{' '}
@@ -869,7 +943,6 @@ export default function AdminBookings() {
                       </div>
                     )}
 
-                    {/* Record Payment */}
                     {isPaymentOpen && (
                       <div className="mt-5 rounded-3xl border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/60">
                         <p className="mb-4 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
