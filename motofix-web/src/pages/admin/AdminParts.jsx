@@ -21,6 +21,7 @@ export default function AdminParts() {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [stockFilter, setStockFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('active'); // 'all' | 'active' | 'inactive'
   const [sortBy, setSortBy] = useState('name');
 
   const [panelOpen, setPanelOpen] = useState(false);
@@ -29,14 +30,15 @@ export default function AdminParts() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [toast, setToast] = useState('');
-  const [deletingId, setDeletingId] = useState(null);
+  const [togglingId, setTogglingId] = useState(null);
+  const [deactivateConfirm, setDeactivateConfirm] = useState(null);
   const [stockEdits, setStockEdits] = useState({});
 
   // Category management state
   const [catPanelOpen, setCatPanelOpen] = useState(false);
   const [customCategories, setCustomCategories] = useState([]);
   const [newCatName, setNewCatName] = useState('');
-  const [renamingCat, setRenamingCat] = useState(null); // { old, value }
+  const [renamingCat, setRenamingCat] = useState(null);
   const [catSaving, setCatSaving] = useState(false);
   const [showCategoryInput, setShowCategoryInput] = useState(false);
 
@@ -144,20 +146,28 @@ export default function AdminParts() {
     setSaving(false);
   }
 
-  async function deletePart(part) {
-    if (!confirm(`Delete "${part.name}"? This cannot be undone.`)) return;
-    setDeletingId(part.id);
-    await supabase.from('parts').delete().eq('id', part.id);
-    await supabase.from('audit_logs').insert({
-      action: 'DELETE_PART',
-      entity: 'parts',
-      entity_id: part.id,
-      performed_by: user.id,
-      details: { name: part.name },
-    });
-    setDeletingId(null);
-    setToast(`Deleted ${part.name}`);
-    fetchParts();
+  async function setPartActive(part, active) {
+    setTogglingId(part.id);
+    const { error } = await supabase
+      .from('parts')
+      .update({ is_active: active })
+      .eq('id', part.id);
+
+    if (!error) {
+      await supabase.from('audit_logs').insert({
+        action: active ? 'REACTIVATE_PART' : 'DEACTIVATE_PART',
+        entity: 'parts',
+        entity_id: part.id,
+        performed_by: user.id,
+        details: { name: part.name },
+      });
+      setToast(active ? `✓ ${part.name} reactivated` : `${part.name} deactivated`);
+      fetchParts();
+    } else {
+      setToast(`❌ ${error.message}`);
+    }
+    setTogglingId(null);
+    setDeactivateConfirm(null);
   }
 
   async function updateStock(id, qty) {
@@ -194,7 +204,6 @@ export default function AdminParts() {
 
   // ── Category management helpers ──────────────────────────────────────────
 
-  // All known categories: from parts + any locally added ones not yet on a part
   const derivedCategories = useMemo(
     () => [...new Set(parts.map((p) => p.category).filter(Boolean))].sort(),
     [parts]
@@ -236,7 +245,6 @@ export default function AdminParts() {
   }
 
   async function deleteCategory(name) {
-    if (!confirm(`Remove category "${name}"? Parts using it will become uncategorized.`)) return;
     setCatSaving(true);
     await supabase.from('parts').update({ category: null }).eq('category', name);
     await supabase.from('audit_logs').insert({
@@ -260,10 +268,11 @@ export default function AdminParts() {
   );
 
   const stats = useMemo(() => {
-    const totalValue = parts.reduce((sum, p) => sum + (p.price || 0) * (p.stock_quantity || 0), 0);
-    const lowStock = parts.filter((p) => p.stock_quantity > 0 && p.stock_quantity <= p.reorder_threshold).length;
-    const outOfStock = parts.filter((p) => p.stock_quantity <= 0).length;
-    return { totalValue, lowStock, outOfStock, total: parts.length };
+    const activeParts = parts.filter((p) => p.is_active);
+    const totalValue = activeParts.reduce((sum, p) => sum + (p.price || 0) * (p.stock_quantity || 0), 0);
+    const lowStock = activeParts.filter((p) => p.stock_quantity > 0 && p.stock_quantity <= p.reorder_threshold).length;
+    const outOfStock = activeParts.filter((p) => p.stock_quantity <= 0).length;
+    return { totalValue, lowStock, outOfStock, total: activeParts.length };
   }, [parts]);
 
   const filteredParts = useMemo(() => {
@@ -274,7 +283,11 @@ export default function AdminParts() {
         stockFilter === 'all' ||
         (stockFilter === 'low' && p.stock_quantity > 0 && p.stock_quantity <= p.reorder_threshold) ||
         (stockFilter === 'out' && p.stock_quantity <= 0);
-      return matchSearch && matchCategory && matchStock;
+      const matchStatus =
+        statusFilter === 'all' ||
+        (statusFilter === 'active' && p.is_active) ||
+        (statusFilter === 'inactive' && !p.is_active);
+      return matchSearch && matchCategory && matchStock && matchStatus;
     });
 
     result = [...result].sort((a, b) => {
@@ -288,7 +301,7 @@ export default function AdminParts() {
     });
 
     return result;
-  }, [parts, search, categoryFilter, stockFilter, sortBy]);
+  }, [parts, search, categoryFilter, stockFilter, statusFilter, sortBy]);
 
   return (
     <div className="min-h-[calc(100vh-65px)] bg-dark-900 text-white px-6 py-10">
@@ -318,7 +331,7 @@ export default function AdminParts() {
 
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <StatCard label="Total Parts" value={stats.total} icon="⚙️" />
+          <StatCard label="Active Parts" value={stats.total} icon="⚙️" />
           <StatCard label="Low Stock" value={stats.lowStock} icon="⚠️" color="text-yellow-400" />
           <StatCard label="Out of Stock" value={stats.outOfStock} icon="🚫" color="text-red-400" />
           <StatCard
@@ -330,7 +343,7 @@ export default function AdminParts() {
         </div>
 
         {/* Filter pills (category) */}
-        <div className="flex gap-2 mb-4 flex-wrap">
+        <div className="flex gap-2 mb-3 flex-wrap">
           {categories.map((c) => (
             <button
               key={c}
@@ -340,6 +353,25 @@ export default function AdminParts() {
               }`}
             >
               {c === 'all' ? 'All Categories' : c}
+            </button>
+          ))}
+        </div>
+
+        {/* Filter pills (status) */}
+        <div className="flex gap-2 mb-4 flex-wrap">
+          {[
+            { key: 'active', label: 'Active' },
+            { key: 'inactive', label: 'Inactive' },
+            { key: 'all', label: 'All' },
+          ].map((s) => (
+            <button
+              key={s.key}
+              onClick={() => setStatusFilter(s.key)}
+              className={`px-4 py-1.5 rounded-full text-xs font-medium transition ${
+                statusFilter === s.key ? 'bg-dark-700 text-white border border-gray-500' : 'bg-dark-800 text-gray-500 hover:text-white'
+              }`}
+            >
+              {s.label}
             </button>
           ))}
         </div>
@@ -398,7 +430,7 @@ export default function AdminParts() {
               </button>
             ) : (
               <button
-                onClick={() => { setSearch(''); setCategoryFilter('all'); setStockFilter('all'); }}
+                onClick={() => { setSearch(''); setCategoryFilter('all'); setStockFilter('all'); setStatusFilter('all'); }}
                 className="text-primary-400 text-sm hover:underline"
               >
                 Clear filters
@@ -415,11 +447,14 @@ export default function AdminParts() {
                 ? Math.min(100, (p.stock_quantity / (p.reorder_threshold * 3)) * 100)
                 : p.stock_quantity > 0 ? 100 : 0;
               const barColor = isOut ? 'bg-red-500' : isLow ? 'bg-yellow-400' : 'bg-green-500';
+              const inactive = !p.is_active;
 
               return (
                 <div
                   key={p.id}
-                  className="bg-dark-800 rounded-xl p-5 flex flex-col gap-4 hover:bg-dark-800/70 transition"
+                  className={`bg-dark-800 rounded-xl p-5 flex flex-col gap-4 hover:bg-dark-800/70 transition ${
+                    inactive ? 'opacity-50' : ''
+                  }`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
@@ -437,9 +472,16 @@ export default function AdminParts() {
                         </p>
                       </div>
                     </div>
-                    <span className={`text-xs px-3 py-1 rounded-full capitalize font-medium whitespace-nowrap ${STOCK_BADGE_STYLES[stockState]}`}>
-                      {stockState === 'ok' ? 'In Stock' : stockState === 'low' ? 'Low Stock' : 'Out of Stock'}
-                    </span>
+                    <div className="flex flex-col items-end gap-1">
+                      {inactive && (
+                        <span className="text-xs px-3 py-1 rounded-full bg-gray-500/20 text-gray-400 font-medium whitespace-nowrap">
+                          Inactive
+                        </span>
+                      )}
+                      <span className={`text-xs px-3 py-1 rounded-full capitalize font-medium whitespace-nowrap ${STOCK_BADGE_STYLES[stockState]}`}>
+                        {stockState === 'ok' ? 'In Stock' : stockState === 'low' ? 'Low Stock' : 'Out of Stock'}
+                      </span>
+                    </div>
                   </div>
 
                   {p.compatible_models?.length > 0 && (
@@ -506,13 +548,23 @@ export default function AdminParts() {
                     >
                       ✎ Edit
                     </button>
-                    <button
-                      onClick={() => deletePart(p)}
-                      disabled={deletingId === p.id}
-                      className="text-xs px-3 py-1.5 rounded-md transition capitalize bg-red-500/20 text-red-400 hover:bg-red-500/30 disabled:opacity-50 mt-3"
-                    >
-                      {deletingId === p.id ? 'Deleting...' : '🗑 Delete'}
-                    </button>
+                    {inactive ? (
+                      <button
+                        onClick={() => setPartActive(p, true)}
+                        disabled={togglingId === p.id}
+                        className="text-xs px-3 py-1.5 rounded-md transition capitalize bg-green-500/20 text-green-400 hover:bg-green-500/30 disabled:opacity-50 mt-3"
+                      >
+                        {togglingId === p.id ? 'Reactivating...' : '↺ Reactivate'}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setDeactivateConfirm(p)}
+                        disabled={togglingId === p.id}
+                        className="text-xs px-3 py-1.5 rounded-md transition capitalize bg-red-500/20 text-red-400 hover:bg-red-500/30 disabled:opacity-50 mt-3"
+                      >
+                        {togglingId === p.id ? 'Deactivating...' : '🚫 Deactivate'}
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -528,12 +580,40 @@ export default function AdminParts() {
         </div>
       )}
 
+      {/* ── Deactivate Confirmation Modal ─────────────────────────────────── */}
+      {deactivateConfirm && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setDeactivateConfirm(null)} />
+          <div className="relative bg-dark-800 border border-gray-700 rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl">
+            <h3 className="text-lg font-semibold mb-2">Deactivate Part?</h3>
+            <p className="text-gray-400 text-sm mb-6">
+              <span className="text-white font-medium">"{deactivateConfirm.name}"</span> will be hidden from
+              customers but kept in your records (orders, reports). You can reactivate it anytime.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeactivateConfirm(null)}
+                className="flex-1 border border-gray-700 hover:border-gray-500 py-2.5 rounded-lg text-sm transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => setPartActive(deactivateConfirm, false)}
+                disabled={togglingId === deactivateConfirm.id}
+                className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 py-2.5 rounded-lg font-medium text-sm transition"
+              >
+                {togglingId === deactivateConfirm.id ? 'Deactivating...' : 'Yes, Deactivate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Manage Categories slide-over ──────────────────────────────────── */}
       {catPanelOpen && (
         <div className="fixed inset-0 z-[100] flex justify-end" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/60" onClick={() => setCatPanelOpen(false)} />
           <div className="relative w-full sm:max-w-sm h-full bg-dark-800 shadow-2xl overflow-y-auto flex flex-col">
-            {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 sticky top-0 bg-dark-800 z-10">
               <div>
                 <h2 className="text-lg font-semibold">Manage Categories</h2>
@@ -543,7 +623,6 @@ export default function AdminParts() {
             </div>
 
             <div className="p-6 flex-1 flex flex-col gap-6">
-              {/* Add new category */}
               <div>
                 <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Add Category</p>
                 <div className="flex gap-2">
@@ -565,7 +644,6 @@ export default function AdminParts() {
                 </div>
               </div>
 
-              {/* Category list */}
               <div>
                 <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">
                   All Categories <span className="normal-case text-gray-600">({allCategories.length})</span>
@@ -663,7 +741,6 @@ export default function AdminParts() {
                 </div>
               )}
 
-              {/* Image preview */}
               <div>
                 <label className="block text-sm text-gray-300 mb-1">Image URL</label>
                 <div className="flex items-center gap-3 mb-2">
@@ -690,7 +767,6 @@ export default function AdminParts() {
                   className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
               </div>
 
-              {/* Category — select from list or type custom */}
               <div>
                 <label className="block text-sm text-gray-300 mb-1">Category</label>
                 {allCategories.length > 0 && !showCategoryInput ? (

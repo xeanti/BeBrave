@@ -6,4 +6,15 @@ export default defineConfig({
   server: {
     port: 5173,
   },
+  build: {
+    target: 'es2015',
+    rollupOptions: {
+      output: {
+        format: 'iife',
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]',
+      }
+    }
+  }
 });

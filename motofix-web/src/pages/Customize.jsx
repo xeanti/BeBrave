@@ -47,10 +47,13 @@ export default function Customize() {
     if (data) setModels(data);
   }
 
-  async function fetchAllParts() {
-    const { data } = await supabase.from('parts').select('*');
-    if (data) setParts(data);
-  }
+async function fetchAllParts() {
+  const { data } = await supabase
+    .from('parts')
+    .select('*')
+    .eq('is_active', true);
+  if (data) setParts(data);
+}
 
   function resetDownstream() {
     setSelectedParts([]);

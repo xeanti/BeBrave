@@ -21,15 +21,16 @@ export default function Shop() {
     fetchModels();
   }, []);
 
-  async function fetchParts() {
-    const { data } = await supabase
-      .from('parts')
-      .select('*')
-      .gt('stock_quantity', 0)
-      .order('name', { ascending: true });
-    if (data) setParts(data);
-    setLoading(false);
-  }
+async function fetchParts() {
+  const { data } = await supabase
+    .from('parts')
+    .select('*')
+    .eq('is_active', true)
+    .gt('stock_quantity', 0)
+    .order('name', { ascending: true });
+  if (data) setParts(data);
+  setLoading(false);
+}
 
   async function fetchModels() {
     const { data } = await supabase
