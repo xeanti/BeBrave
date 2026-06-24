@@ -1,109 +1,320 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 
 const EMPTY_SERVICE_FORM = {
-  name: '', description: '', base_price: '',
-  labor_cost: '', estimated_duration_minutes: '60',
+  name: '',
+  description: '',
+  base_price: '',
+  labor_cost: '',
+  estimated_duration_minutes: '60',
 };
 
 const EMPTY_MODEL_FORM = {
-  make: '', model: '', year_range: '', reference_photo_url: '',
+  make: '',
+  model: '',
+  year_range: '',
+  reference_photo_url: '',
 };
+
+function formatPeso(value) {
+  const amount = Number(value) || 0;
+
+  return `₱${amount.toLocaleString('en-PH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function formatDateTime(value) {
+  if (!value) return '—';
+
+  return new Date(value).toLocaleString('en-PH', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatDuration(minutes) {
+  const total = Number(minutes) || 0;
+
+  if (total < 60) return `${total} min${total === 1 ? '' : 's'}`;
+
+  const hours = Math.floor(total / 60);
+  const mins = total % 60;
+
+  if (!mins) return `${hours} hr${hours === 1 ? '' : 's'}`;
+
+  return `${hours} hr${hours === 1 ? '' : 's'} ${mins} min${mins === 1 ? '' : 's'}`;
+}
+
+function StatCard({ label, value, icon, tone = 'default' }) {
+  const tones = {
+    default: 'text-gray-950 dark:text-white',
+    primary: 'text-primary-600 dark:text-primary-400',
+    accent: 'text-accent-600 dark:text-accent-400',
+    green: 'text-green-600 dark:text-green-300',
+    blue: 'text-blue-600 dark:text-blue-300',
+  };
+
+  return (
+    <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+          {label}
+        </p>
+        <span className="text-2xl">{icon}</span>
+      </div>
+      <p className={`text-2xl font-black ${tones[tone] || tones.default}`}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function TextInput({ label, helper, ...props }) {
+  return (
+    <div>
+      <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+        {label}
+      </label>
+      <input
+        {...props}
+        className={`w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500 ${props.className || ''}`}
+      />
+      {helper && (
+        <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+          {helper}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function EmptyState({ icon, title, text, actionLabel, onAction }) {
+  return (
+    <div className="rounded-3xl border border-gray-200 bg-white p-12 text-center shadow-sm dark:border-dark-700 dark:bg-dark-800">
+      <div className="mx-auto mb-5 grid h-20 w-20 place-items-center rounded-3xl bg-primary-50 text-4xl ring-1 ring-primary-100 dark:bg-primary-500/10 dark:ring-primary-500/20">
+        {icon}
+      </div>
+      <h2 className="mb-2 text-xl font-black text-gray-950 dark:text-white">
+        {title}
+      </h2>
+      <p className="mx-auto mb-6 max-w-md text-sm leading-6 text-gray-600 dark:text-gray-400">
+        {text}
+      </p>
+      {actionLabel && (
+        <button
+          type="button"
+          onClick={onAction}
+          className="rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700"
+        >
+          {actionLabel}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function SkeletonStack() {
+  return (
+    <div className="space-y-4">
+      {[1, 2, 3].map((item) => (
+        <div
+          key={item}
+          className="h-40 animate-pulse rounded-3xl bg-white ring-1 ring-gray-200 dark:bg-dark-800 dark:ring-dark-700"
+        />
+      ))}
+    </div>
+  );
+}
+
+function ServiceStatusBadge({ active }) {
+  return (
+    <span
+      className={`inline-flex rounded-full px-3 py-1 text-xs font-black ring-1 ${
+        active
+          ? 'bg-green-50 text-green-700 ring-green-200 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25'
+          : 'bg-gray-100 text-gray-600 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25'
+      }`}
+    >
+      {active ? '✓ Active' : 'Inactive'}
+    </span>
+  );
+}
 
 export default function AdminServices() {
   const { user } = useAuth();
+
   const [activeTab, setActiveTab] = useState('services');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // ── Services state ──
   const [services, setServices] = useState([]);
   const [loadingServices, setLoadingServices] = useState(true);
 
-  // ── Motorcycle models state ──
   const [models, setModels] = useState([]);
   const [loadingModels, setLoadingModels] = useState(true);
 
-  // ── Slide-over panel state (shared shape, different payloads) ──
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [serviceForm, setServiceForm] = useState(EMPTY_SERVICE_FORM);
   const [modelForm, setModelForm] = useState(EMPTY_MODEL_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+
+  const [fetchError, setFetchError] = useState('');
   const [toast, setToast] = useState('');
-
-  // ── Fetch Methods ──
-  const fetchServices = useCallback(async () => {
-    try {
-      const { data, error } = await supabase.from('services').select('*').order('name');
-      if (error) throw error;
-      if (data) setServices(data);
-    } catch (err) {
-      console.error("Error fetching services:", err.message);
-    } finally {
-      setLoadingServices(false);
-    }
-  }, []);
-
-  const fetchModels = useCallback(async () => {
-    try {
-      const { data, error } = await supabase.from('motorcycle_models').select('*').order('make', { ascending: true });
-      if (error) throw error;
-      if (data) setModels(data);
-    } catch (err) {
-      console.error("Error fetching models:", err.message);
-    } finally {
-      setLoadingModels(false);
-    }
-  }, []);
+  const [deletingId, setDeletingId] = useState(null);
+  const [togglingId, setTogglingId] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
 
   useEffect(() => {
     fetchServices();
     fetchModels();
-  }, [fetchServices, fetchModels]);
+
+    /*
+      Realtime refresh for catalog management.
+      Enable Realtime in Supabase for services and motorcycle_models.
+    */
+    const servicesChannel = supabase
+      .channel('admin-services-services')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'services',
+        },
+        () => fetchServices(false)
+      )
+      .subscribe();
+
+    const modelsChannel = supabase
+      .channel('admin-services-models')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'motorcycle_models',
+        },
+        () => fetchModels(false)
+      )
+      .subscribe();
+
+    const handleFocus = () => {
+      fetchServices(false);
+      fetchModels(false);
+    };
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        fetchServices(false);
+        fetchModels(false);
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      supabase.removeChannel(servicesChannel);
+      supabase.removeChannel(modelsChannel);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(''), 2500);
-    return () => clearTimeout(t);
+
+    const timeout = setTimeout(() => setToast(''), 3000);
+    return () => clearTimeout(timeout);
   }, [toast]);
 
-  const handleTabChange = (tab) => {
+  async function fetchServices(showLoader = true) {
+    if (showLoader) setLoadingServices(true);
+
+    setFetchError('');
+
+    const { data, error } = await supabase
+      .from('services')
+      .select('*')
+      .order('name', { ascending: true });
+
+    if (error) {
+      setFetchError(error.message || 'Failed to load services.');
+      setServices([]);
+      setLoadingServices(false);
+      return;
+    }
+
+    setServices(data || []);
+    setLastUpdated(new Date());
+    setLoadingServices(false);
+  }
+
+  async function fetchModels(showLoader = true) {
+    if (showLoader) setLoadingModels(true);
+
+    setFetchError('');
+
+    const { data, error } = await supabase
+      .from('motorcycle_models')
+      .select('*')
+      .order('make', { ascending: true })
+      .order('model', { ascending: true });
+
+    if (error) {
+      setFetchError(error.message || 'Failed to load motorcycle models.');
+      setModels([]);
+      setLoadingModels(false);
+      return;
+    }
+
+    setModels(data || []);
+    setLastUpdated(new Date());
+    setLoadingModels(false);
+  }
+
+  async function insertAuditLog(action, entity, entityId, details = {}) {
+    if (!user?.id) return;
+
+    await supabase.from('audit_logs').insert({
+      action,
+      entity,
+      entity_id: entityId,
+      performed_by: user.id,
+      details,
+    });
+  }
+
+  function handleTabChange(tab) {
     setActiveTab(tab);
     setSearchQuery('');
-  };
+    closePanel();
+  }
 
-  // ── Computed Filtered UI States ──
-  const filteredServices = services.filter((s) => {
-    const query = searchQuery.toLowerCase();
-    return (
-      s.name.toLowerCase().includes(query) ||
-      (s.description && s.description.toLowerCase().includes(query))
-    );
-  });
-
-  const filteredModels = models.filter((m) => {
-    const query = searchQuery.toLowerCase();
-    return (
-      m.make.toLowerCase().includes(query) ||
-      m.model.toLowerCase().includes(query) ||
-      (m.year_range && m.year_range.toLowerCase().includes(query))
-    );
-  });
-
-  // ── Panel open/close ──
   function openAddPanel() {
     setEditingId(null);
     setFormError('');
-    if (activeTab === 'services') setServiceForm(EMPTY_SERVICE_FORM);
-    else setModelForm(EMPTY_MODEL_FORM);
+
+    if (activeTab === 'services') {
+      setServiceForm(EMPTY_SERVICE_FORM);
+    } else {
+      setModelForm(EMPTY_MODEL_FORM);
+    }
+
     setPanelOpen(true);
   }
 
   function openEditPanel(item) {
     setEditingId(item.id);
     setFormError('');
+
     if (activeTab === 'services') {
       setServiceForm({
         name: item.name || '',
@@ -120,6 +331,7 @@ export default function AdminServices() {
         reference_photo_url: item.reference_photo_url || '',
       });
     }
+
     setPanelOpen(true);
   }
 
@@ -131,320 +343,620 @@ export default function AdminServices() {
     setModelForm(EMPTY_MODEL_FORM);
   }
 
-  function handleServiceChange(e) {
-    setServiceForm({ ...serviceForm, [e.target.name]: e.target.value });
+  function handleServiceChange(event) {
+    setServiceForm({
+      ...serviceForm,
+      [event.target.name]: event.target.value,
+    });
   }
 
-  function handleModelChange(e) {
-    setModelForm({ ...modelForm, [e.target.name]: e.target.value });
+  function handleModelChange(event) {
+    setModelForm({
+      ...modelForm,
+      [event.target.name]: event.target.value,
+    });
   }
 
-  // ── Submit (handles both add + edit, branches on activeTab) ──
-  async function handleSubmit(e) {
-    e.preventDefault();
+  function validateServiceForm() {
+    if (!serviceForm.name.trim()) return 'Service name is required.';
+
+    const basePrice = parseFloat(serviceForm.base_price);
+    if (Number.isNaN(basePrice) || basePrice < 0) return 'Please enter a valid base price.';
+
+    const laborCost = parseFloat(serviceForm.labor_cost || '0');
+    if (Number.isNaN(laborCost) || laborCost < 0) return 'Please enter a valid labor cost.';
+
+    const duration = parseInt(serviceForm.estimated_duration_minutes || '60', 10);
+    if (Number.isNaN(duration) || duration <= 0) return 'Duration must be greater than 0 minutes.';
+
+    return '';
+  }
+
+  function validateModelForm() {
+    if (!modelForm.make.trim()) return 'Motorcycle make is required.';
+    if (!modelForm.model.trim()) return 'Motorcycle model is required.';
+
+    return '';
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+
     setSaving(true);
     setFormError('');
 
-    if (activeTab === 'services') {
-      const payload = {
-        name: serviceForm.name.trim(),
-        description: serviceForm.description.trim() || null,
-        base_price: parseFloat(serviceForm.base_price) || 0,
-        labor_cost: parseFloat(serviceForm.labor_cost || 0),
-        estimated_duration_minutes: parseInt(serviceForm.estimated_duration_minutes) || 60,
-      };
+    try {
+      if (activeTab === 'services') {
+        const validationError = validateServiceForm();
 
-      if (editingId) {
-        const { error } = await supabase.from('services').update(payload).eq('id', editingId);
-        if (error) {
-          setFormError(error.message);
-        } else {
-          await supabase.from('audit_logs').insert({
-            action: 'UPDATE_SERVICE', entity: 'services', entity_id: editingId,
-            performed_by: user?.id, details: payload,
-          });
+        if (validationError) {
+          setFormError(validationError);
+          setSaving(false);
+          return;
+        }
+
+        const payload = {
+          name: serviceForm.name.trim(),
+          description: serviceForm.description.trim() || null,
+          base_price: parseFloat(serviceForm.base_price),
+          labor_cost: parseFloat(serviceForm.labor_cost || 0),
+          estimated_duration_minutes:
+            parseInt(serviceForm.estimated_duration_minutes || '60', 10) || 60,
+        };
+
+        if (editingId) {
+          const { error } = await supabase
+            .from('services')
+            .update(payload)
+            .eq('id', editingId);
+
+          if (error) throw error;
+
+          await insertAuditLog('UPDATE_SERVICE', 'services', editingId, payload);
           setToast(`✓ ${payload.name} updated`);
-          closePanel();
-          fetchServices();
-        }
-      } else {
-        const { data, error } = await supabase.from('services')
-          .insert({ ...payload, is_active: true }).select().single();
-        if (error) {
-          setFormError(error.message);
         } else {
-          await supabase.from('audit_logs').insert({
-            action: 'CREATE_SERVICE', entity: 'services', entity_id: data.id,
-            performed_by: user?.id, details: { name: payload.name, base_price: payload.base_price },
+          const { data, error } = await supabase
+            .from('services')
+            .insert({
+              ...payload,
+              is_active: true,
+            })
+            .select('id')
+            .single();
+
+          if (error) throw error;
+
+          await insertAuditLog('CREATE_SERVICE', 'services', data.id, {
+            name: payload.name,
+            base_price: payload.base_price,
           });
+
           setToast(`✓ ${payload.name} added`);
-          closePanel();
-          fetchServices();
         }
-      }
-    } else {
-      const payload = {
-        make: modelForm.make.trim(),
-        model: modelForm.model.trim(),
-        year_range: modelForm.year_range.trim() || null,
-        reference_photo_url: modelForm.reference_photo_url.trim() || null,
-      };
 
-      if (editingId) {
-        const { error } = await supabase.from('motorcycle_models').update(payload).eq('id', editingId);
-        if (error) {
-          setFormError(error.code === '23505' ? 'This make + model already exists.' : error.message);
-        } else {
-          await supabase.from('audit_logs').insert({
-            action: 'UPDATE_MOTORCYCLE_MODEL', entity: 'motorcycle_models', entity_id: editingId,
-            performed_by: user?.id, details: { make: payload.make, model: payload.model },
-          });
-          setToast(`✓ ${payload.make} ${payload.model} updated`);
-          closePanel();
-          fetchModels();
-        }
+        closePanel();
+        await fetchServices(false);
       } else {
-        const { data, error } = await supabase.from('motorcycle_models').insert(payload).select().single();
-        if (error) {
-          setFormError(error.code === '23505' ? 'This make + model already exists.' : error.message);
-        } else {
-          await supabase.from('audit_logs').insert({
-            action: 'CREATE_MOTORCYCLE_MODEL', entity: 'motorcycle_models', entity_id: data.id,
-            performed_by: user?.id, details: { make: payload.make, model: payload.model },
-          });
-          setToast(`✓ ${payload.make} ${payload.model} added`);
-          closePanel();
-          fetchModels();
+        const validationError = validateModelForm();
+
+        if (validationError) {
+          setFormError(validationError);
+          setSaving(false);
+          return;
         }
+
+        const payload = {
+          make: modelForm.make.trim(),
+          model: modelForm.model.trim(),
+          year_range: modelForm.year_range.trim() || null,
+          reference_photo_url: modelForm.reference_photo_url.trim() || null,
+        };
+
+        if (editingId) {
+          const { error } = await supabase
+            .from('motorcycle_models')
+            .update(payload)
+            .eq('id', editingId);
+
+          if (error) {
+            throw new Error(error.code === '23505' ? 'This make + model already exists.' : error.message);
+          }
+
+          await insertAuditLog('UPDATE_MOTORCYCLE_MODEL', 'motorcycle_models', editingId, {
+            make: payload.make,
+            model: payload.model,
+          });
+
+          setToast(`✓ ${payload.make} ${payload.model} updated`);
+        } else {
+          const { data, error } = await supabase
+            .from('motorcycle_models')
+            .insert(payload)
+            .select('id')
+            .single();
+
+          if (error) {
+            throw new Error(error.code === '23505' ? 'This make + model already exists.' : error.message);
+          }
+
+          await insertAuditLog('CREATE_MOTORCYCLE_MODEL', 'motorcycle_models', data.id, {
+            make: payload.make,
+            model: payload.model,
+          });
+
+          setToast(`✓ ${payload.make} ${payload.model} added`);
+        }
+
+        closePanel();
+        await fetchModels(false);
       }
+    } catch (err) {
+      setFormError(err.message || 'Failed to save record.');
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   }
 
-  // ── Services: toggle/delete ──
-  async function toggleActive(id, current) {
-    const { error } = await supabase.from('services').update({ is_active: !current }).eq('id', id);
-    if (error) { alert('Error updating status: ' + error.message); return; }
-    await supabase.from('audit_logs').insert({
-      action: 'TOGGLE_SERVICE_ACTIVE', entity: 'services', entity_id: id,
-      performed_by: user?.id, details: { is_active: !current },
-    });
-    fetchServices();
+  async function toggleActive(service) {
+    setTogglingId(service.id);
+
+    try {
+      const nextActive = !service.is_active;
+
+      const { error } = await supabase
+        .from('services')
+        .update({ is_active: nextActive })
+        .eq('id', service.id);
+
+      if (error) throw error;
+
+      await insertAuditLog('TOGGLE_SERVICE_ACTIVE', 'services', service.id, {
+        is_active: nextActive,
+      });
+
+      setToast(nextActive ? `✓ ${service.name} activated` : `${service.name} set inactive`);
+      await fetchServices(false);
+    } catch (err) {
+      setFetchError(err.message || 'Failed to update service status.');
+    } finally {
+      setTogglingId(null);
+    }
   }
 
-  async function deleteService(id) {
-    if (!confirm('Delete this service?')) return;
-    const { error } = await supabase.from('services').delete().eq('id', id);
-    if (error) { alert('Error deleting service: ' + error.message); return; }
-    await supabase.from('audit_logs').insert({
-      action: 'DELETE_SERVICE', entity: 'services', entity_id: id, performed_by: user?.id, details: {},
-    });
-    setToast('Deleted');
-    fetchServices();
+  async function deleteService(service) {
+    if (!confirm(`Delete "${service.name}"?`)) return;
+
+    setDeletingId(service.id);
+
+    try {
+      const { error } = await supabase
+        .from('services')
+        .delete()
+        .eq('id', service.id);
+
+      if (error) throw error;
+
+      await insertAuditLog('DELETE_SERVICE', 'services', service.id, {
+        name: service.name,
+      });
+
+      setToast(`Deleted ${service.name}`);
+      await fetchServices(false);
+    } catch (err) {
+      setFetchError(err.message || 'Failed to delete service.');
+    } finally {
+      setDeletingId(null);
+    }
   }
 
-  // ── Models: delete ──
-  async function deleteModel(id) {
-    if (!confirm('Delete this motorcycle model?')) return;
-    const { error } = await supabase.from('motorcycle_models').delete().eq('id', id);
-    if (error) { alert('Error deleting model: ' + error.message); return; }
-    await supabase.from('audit_logs').insert({
-      action: 'DELETE_MOTORCYCLE_MODEL', entity: 'motorcycle_models', entity_id: id,
-      performed_by: user?.id, details: {},
-    });
-    setToast('Deleted');
-    fetchModels();
+  async function deleteModel(model) {
+    if (!confirm(`Delete "${model.make} ${model.model}"?`)) return;
+
+    setDeletingId(model.id);
+
+    try {
+      const { error } = await supabase
+        .from('motorcycle_models')
+        .delete()
+        .eq('id', model.id);
+
+      if (error) throw error;
+
+      await insertAuditLog('DELETE_MOTORCYCLE_MODEL', 'motorcycle_models', model.id, {
+        make: model.make,
+        model: model.model,
+      });
+
+      setToast(`Deleted ${model.make} ${model.model}`);
+      await fetchModels(false);
+    } catch (err) {
+      setFetchError(err.message || 'Failed to delete motorcycle model.');
+    } finally {
+      setDeletingId(null);
+    }
   }
+
+  const filteredServices = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+
+    return services.filter((service) => {
+      const name = String(service.name || '').toLowerCase();
+      const description = String(service.description || '').toLowerCase();
+      const id = String(service.id || '').toLowerCase();
+
+      return !query || name.includes(query) || description.includes(query) || id.includes(query);
+    });
+  }, [services, searchQuery]);
+
+  const filteredModels = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+
+    return models.filter((model) => {
+      const make = String(model.make || '').toLowerCase();
+      const modelName = String(model.model || '').toLowerCase();
+      const yearRange = String(model.year_range || '').toLowerCase();
+      const id = String(model.id || '').toLowerCase();
+
+      return !query || make.includes(query) || modelName.includes(query) || yearRange.includes(query) || id.includes(query);
+    });
+  }, [models, searchQuery]);
+
+  const serviceStats = useMemo(() => {
+    const active = services.filter((service) => service.is_active);
+    const averagePrice =
+      active.length > 0
+        ? active.reduce((sum, service) => sum + (Number(service.base_price) || 0), 0) / active.length
+        : 0;
+
+    const averageDuration =
+      active.length > 0
+        ? Math.round(
+            active.reduce(
+              (sum, service) => sum + (Number(service.estimated_duration_minutes) || 0),
+              0
+            ) / active.length
+          )
+        : 0;
+
+    return {
+      total: services.length,
+      active: active.length,
+      inactive: services.filter((service) => !service.is_active).length,
+      averagePrice,
+      averageDuration,
+    };
+  }, [services]);
+
+  const modelStats = useMemo(() => {
+    const makes = [...new Set(models.map((model) => model.make).filter(Boolean))];
+
+    return {
+      total: models.length,
+      makes: makes.length,
+      withPhotos: models.filter((model) => model.reference_photo_url).length,
+    };
+  }, [models]);
+
+  const loading = activeTab === 'services' ? loadingServices : loadingModels;
+  const currentCount = activeTab === 'services' ? filteredServices.length : filteredModels.length;
+  const totalCount = activeTab === 'services' ? services.length : models.length;
 
   return (
-    <div className="min-h-[calc(100vh-65px)] bg-dark-900 text-white px-6 py-10">
-      <div className="max-w-5xl mx-auto">
-
+    <div className="min-h-[calc(100vh-65px)] bg-gray-50 px-4 py-8 text-gray-900 dark:bg-dark-900 dark:text-white sm:px-6 lg:py-10">
+      <div className="mx-auto max-w-6xl">
         {/* Header */}
-        <div className="flex items-start justify-between flex-wrap gap-4 mb-8">
-          <div>
-            <h1 className="text-3xl font-bold mb-1">Catalog Management</h1>
-            <p className="text-gray-400">Manage services and motorcycle models offered by your shop.</p>
-          </div>
-          <button
-            onClick={openAddPanel}
-            className="bg-primary-600 hover:bg-primary-700 px-5 py-2.5 rounded-lg font-medium transition text-sm flex items-center gap-2"
-          >
-            <span className="text-lg leading-none">+</span> {activeTab === 'services' ? 'Add Service' : 'Add Model'}
-          </button>
-        </div>
+        <div className="mb-8 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
+          <div className="relative p-6 sm:p-8">
+            <div className="absolute -right-8 -top-14 h-36 w-36 rounded-full bg-primary-500/10 blur-3xl" />
+            <div className="absolute -bottom-16 left-10 h-36 w-36 rounded-full bg-accent-500/10 blur-3xl" />
 
-        {/* Navigation & Search Actions Row */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-          <div className="flex gap-2 flex-wrap">
-            <button
-              onClick={() => handleTabChange('services')}
-              className={`px-4 py-1.5 rounded-full text-sm font-medium transition ${
-                activeTab === 'services' ? 'bg-primary-600 text-white' : 'bg-dark-800 text-gray-400 hover:text-white'
-              }`}
-            >
-              🛠️ Services <span className="opacity-60">({services.length})</span>
-            </button>
-            <button
-              onClick={() => handleTabChange('motorcycles')}
-              className={`px-4 py-1.5 rounded-full text-sm font-medium transition ${
-                activeTab === 'motorcycles' ? 'bg-primary-600 text-white' : 'bg-dark-800 text-gray-400 hover:text-white'
-              }`}
-            >
-              🏍️ Motorcycle Models <span className="opacity-60">({models.length})</span>
-            </button>
-          </div>
-
-          <div className="w-full md:w-72 relative">
-            <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500 text-sm">
-              🔍
-            </span>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={`Search ${activeTab}...`}
-              className="w-full pl-9 pr-8 py-1.5 rounded-lg bg-dark-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 placeholder-gray-500"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-gray-500 hover:text-white text-xs"
-              >
-                ✕
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* ───────────── SERVICES TAB ───────────── */}
-        {activeTab === 'services' && (
-          <>
-            {loadingServices ? (
-              <SkeletonStack />
-            ) : filteredServices.length === 0 ? (
-              <div className="bg-dark-800 rounded-xl p-10 text-center">
-                <p className="text-4xl mb-3">🔍</p>
-                <p className="text-gray-400 mb-2">
-                  {searchQuery ? `No records found matching "${searchQuery}"` : "No services yet."}
+            <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <p className="mb-2 text-xs font-black uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
+                  MotoFix Admin
                 </p>
-                {!searchQuery && (
-                  <button onClick={openAddPanel} className="text-primary-400 text-sm hover:underline">
-                    Add your first service →
-                  </button>
+                <h1 className="text-3xl font-black tracking-tight text-gray-950 dark:text-white md:text-4xl">
+                  Catalog Management
+                </h1>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
+                  Manage repair services and motorcycle model references used across the system.
+                </p>
+                {lastUpdated && (
+                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    Last updated: {formatDateTime(lastUpdated)}
+                  </p>
                 )}
               </div>
+
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    fetchServices(false);
+                    fetchModels(false);
+                  }}
+                  className="rounded-2xl border border-gray-200 px-5 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
+                >
+                  Refresh
+                </button>
+
+                <button
+                  type="button"
+                  onClick={openAddPanel}
+                  className="rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 active:scale-[0.99]"
+                >
+                  + {activeTab === 'services' ? 'Add Service' : 'Add Model'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {fetchError && (
+          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+            {fetchError}
+          </div>
+        )}
+
+        {/* Stats */}
+        {activeTab === 'services' ? (
+          <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="Total Services" value={serviceStats.total} icon="🛠️" tone="primary" />
+            <StatCard label="Active" value={serviceStats.active} icon="✅" tone="green" />
+            <StatCard label="Average Base Price" value={formatPeso(serviceStats.averagePrice)} icon="💰" tone="accent" />
+            <StatCard label="Average Duration" value={formatDuration(serviceStats.averageDuration)} icon="⏱️" />
+          </div>
+        ) : (
+          <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="Total Models" value={modelStats.total} icon="🏍️" tone="primary" />
+            <StatCard label="Makes" value={modelStats.makes} icon="🏷️" tone="accent" />
+            <StatCard label="With Photos" value={modelStats.withPhotos} icon="📷" tone="green" />
+            <StatCard label="Missing Photos" value={modelStats.total - modelStats.withPhotos} icon="🖼️" />
+          </div>
+        )}
+
+        {/* Navigation and Search */}
+        <div className="mb-6 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => handleTabChange('services')}
+                className={`rounded-full px-4 py-2 text-xs font-black transition ${
+                  activeTab === 'services'
+                    ? 'bg-primary-600 text-white shadow-lg shadow-primary-600/20'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-dark-900 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white'
+                }`}
+              >
+                🛠️ Services ({services.length})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTabChange('motorcycles')}
+                className={`rounded-full px-4 py-2 text-xs font-black transition ${
+                  activeTab === 'motorcycles'
+                    ? 'bg-primary-600 text-white shadow-lg shadow-primary-600/20'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-dark-900 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white'
+                }`}
+              >
+                🏍️ Motorcycle Models ({models.length})
+              </button>
+            </div>
+
+            <div className="relative w-full lg:w-96">
+              <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-sm text-gray-400">
+                🔍
+              </span>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder={`Search ${activeTab === 'services' ? 'services' : 'models'}...`}
+                className="w-full rounded-2xl border border-gray-200 bg-gray-50 py-3 pl-10 pr-10 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute inset-y-0 right-0 flex items-center pr-4 text-sm font-black text-gray-400 transition hover:text-gray-900 dark:hover:text-white"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <p className="mb-4 text-sm font-semibold text-gray-500 dark:text-gray-400">
+          Showing {currentCount} of {totalCount} {activeTab === 'services' ? 'services' : 'models'}
+        </p>
+
+        {/* Services Tab */}
+        {activeTab === 'services' && (
+          <>
+            {loading ? (
+              <SkeletonStack />
+            ) : filteredServices.length === 0 ? (
+              <EmptyState
+                icon="🔍"
+                title="No services found"
+                text={
+                  searchQuery
+                    ? `No records found matching "${searchQuery}".`
+                    : 'No services have been added yet.'
+                }
+                actionLabel={!searchQuery ? 'Add your first service →' : ''}
+                onAction={openAddPanel}
+              />
             ) : (
-              <div className="space-y-4">
-                {filteredServices.map((s) => (
-                  <div key={s.id} className="bg-dark-800 rounded-xl p-5">
-                    <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
-                      <div>
-                        <p className="font-semibold text-lg">{s.name}</p>
-                        {s.description && (
-                          <p className="text-sm text-gray-400 mt-0.5 line-clamp-2 max-w-xl">{s.description}</p>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => toggleActive(s.id, s.is_active)}
-                        className={`text-xs px-3 py-1 rounded-full capitalize font-medium transition ${
-                          s.is_active ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-gray-500/20 text-gray-400 hover:bg-gray-500/30'
-                        }`}
-                      >
-                        {s.is_active ? '✓ Active' : 'Inactive'}
-                      </button>
-                    </div>
+              <div className="grid gap-4 lg:grid-cols-2">
+                {filteredServices.map((service) => {
+                  const totalPrice =
+                    (Number(service.base_price) || 0) + (Number(service.labor_cost) || 0);
 
-                    <div className="bg-dark-900 rounded-lg p-3 grid grid-cols-2 md:grid-cols-3 gap-3 text-sm mb-4">
-                      <div>
-                        <p className="text-xs text-gray-500 mb-0.5">Base Price</p>
-                        <p className="font-medium text-white">₱{s.base_price}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500 mb-0.5">Labor Cost</p>
-                        <p className="font-medium text-white">₱{s.labor_cost || 0}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500 mb-0.5">Duration</p>
-                        <p className="font-medium text-accent-400">{s.estimated_duration_minutes} mins</p>
-                      </div>
-                    </div>
+                  return (
+                    <article
+                      key={service.id}
+                      className={`rounded-3xl border border-gray-200 bg-white p-5 shadow-sm transition hover:border-primary-100 dark:border-dark-700 dark:bg-dark-800 dark:hover:border-primary-500/30 ${
+                        !service.is_active ? 'opacity-70' : ''
+                      }`}
+                    >
+                      <div className="mb-4 flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h2 className="text-lg font-black text-gray-950 dark:text-white">
+                            {service.name}
+                          </h2>
+                          {service.description && (
+                            <p className="mt-1 line-clamp-2 text-sm leading-6 text-gray-600 dark:text-gray-400">
+                              {service.description}
+                            </p>
+                          )}
+                        </div>
 
-                    <div className="flex gap-2 flex-wrap items-center">
-                      <p className="text-xs text-gray-500 mr-1">Manage:</p>
-                      <button
-                        onClick={() => openEditPanel(s)}
-                        className="text-xs px-3 py-1.5 rounded-md transition bg-primary-500/20 text-primary-400 hover:bg-primary-500/30"
-                      >
-                        ✎ Edit
-                      </button>
-                      <button
-                        onClick={() => deleteService(s.id)}
-                        className="text-xs px-3 py-1.5 rounded-md transition bg-red-500/20 text-red-400 hover:bg-red-500/30"
-                      >
-                        🗑 Delete
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                        <button
+                          type="button"
+                          onClick={() => toggleActive(service)}
+                          disabled={togglingId === service.id}
+                          className="disabled:cursor-not-allowed disabled:opacity-50"
+                          title="Toggle active status"
+                        >
+                          <ServiceStatusBadge active={service.is_active} />
+                        </button>
+                      </div>
+
+                      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+                        <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
+                          <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                            Base
+                          </p>
+                          <p className="mt-1 text-sm font-black text-gray-950 dark:text-white">
+                            {formatPeso(service.base_price)}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
+                          <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                            Labor
+                          </p>
+                          <p className="mt-1 text-sm font-black text-gray-950 dark:text-white">
+                            {formatPeso(service.labor_cost)}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
+                          <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                            Total
+                          </p>
+                          <p className="mt-1 text-sm font-black text-accent-600 dark:text-accent-400">
+                            {formatPeso(totalPrice)}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
+                          <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                            Duration
+                          </p>
+                          <p className="mt-1 text-sm font-black text-primary-600 dark:text-primary-400">
+                            {formatDuration(service.estimated_duration_minutes)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 border-t border-gray-100 pt-4 dark:border-dark-700">
+                        <button
+                          type="button"
+                          onClick={() => openEditPanel(service)}
+                          className="rounded-2xl bg-primary-50 px-4 py-2 text-xs font-black text-primary-700 ring-1 ring-primary-100 transition hover:bg-primary-100 dark:bg-primary-500/10 dark:text-primary-400 dark:ring-primary-500/25 dark:hover:bg-primary-500/20"
+                        >
+                          ✎ Edit
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => deleteService(service)}
+                          disabled={deletingId === service.id}
+                          className="rounded-2xl bg-red-50 px-4 py-2 text-xs font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25 dark:hover:bg-red-500/20"
+                        >
+                          {deletingId === service.id ? 'Deleting...' : '🗑 Delete'}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
             )}
           </>
         )}
 
-        {/* ───────────── MOTORCYCLES TAB ───────────── */}
+        {/* Motorcycle Models Tab */}
         {activeTab === 'motorcycles' && (
           <>
-            {loadingModels ? (
+            {loading ? (
               <SkeletonStack />
             ) : filteredModels.length === 0 ? (
-              <div className="bg-dark-800 rounded-xl p-10 text-center">
-                <p className="text-4xl mb-3">🔍</p>
-                <p className="text-gray-400 mb-2">
-                  {searchQuery ? `No records found matching "${searchQuery}"` : "No motorcycle models yet."}
-                </p>
-                {!searchQuery && (
-                  <button onClick={openAddPanel} className="text-primary-400 text-sm hover:underline">
-                    Add your first model →
-                  </button>
-                )}
-              </div>
+              <EmptyState
+                icon="🔍"
+                title="No motorcycle models found"
+                text={
+                  searchQuery
+                    ? `No records found matching "${searchQuery}".`
+                    : 'No motorcycle models have been added yet.'
+                }
+                actionLabel={!searchQuery ? 'Add your first model →' : ''}
+                onAction={openAddPanel}
+              />
             ) : (
-              <div className="space-y-4">
-                {filteredModels.map((m) => (
-                  <div key={m.id} className="bg-dark-800 rounded-xl p-5">
-                    <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
-                      <div className="flex items-center gap-4">
-                        <div className="w-16 h-16 rounded-lg bg-dark-900 flex items-center justify-center overflow-hidden flex-shrink-0">
-                          {m.reference_photo_url ? (
-                            <img src={m.reference_photo_url} alt={`${m.make} ${m.model}`} className="w-full h-full object-cover" />
-                          ) : (
-                            <span className="text-2xl">🏍️</span>
-                          )}
-                        </div>
-                        <div>
-                          <p className="font-semibold text-lg">{m.make} {m.model}</p>
-                          <p className="text-sm text-gray-400 mt-0.5">{m.year_range || 'Year range not specified'}</p>
-                        </div>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {filteredModels.map((model) => (
+                  <article
+                    key={model.id}
+                    className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm transition hover:border-primary-100 dark:border-dark-700 dark:bg-dark-800 dark:hover:border-primary-500/30"
+                  >
+                    <div className="mb-4 flex items-center gap-4">
+                      <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-3xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
+                        {model.reference_photo_url ? (
+                          <img
+                            src={model.reference_photo_url}
+                            alt={`${model.make} ${model.model}`}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="grid h-full w-full place-items-center text-3xl text-gray-400">
+                            🏍️
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="min-w-0">
+                        <h2 className="truncate text-lg font-black text-gray-950 dark:text-white">
+                          {model.make} {model.model}
+                        </h2>
+                        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                          {model.year_range || 'Year range not specified'}
+                        </p>
                       </div>
                     </div>
 
-                    <div className="flex gap-2 flex-wrap items-center">
-                      <p className="text-xs text-gray-500 mr-1">Manage:</p>
+                    <div className="flex flex-wrap gap-2 border-t border-gray-100 pt-4 dark:border-dark-700">
                       <button
-                        onClick={() => openEditPanel(m)}
-                        className="text-xs px-3 py-1.5 rounded-md transition bg-primary-500/20 text-primary-400 hover:bg-primary-500/30"
+                        type="button"
+                        onClick={() => openEditPanel(model)}
+                        className="rounded-2xl bg-primary-50 px-4 py-2 text-xs font-black text-primary-700 ring-1 ring-primary-100 transition hover:bg-primary-100 dark:bg-primary-500/10 dark:text-primary-400 dark:ring-primary-500/25 dark:hover:bg-primary-500/20"
                       >
                         ✎ Edit
                       </button>
+
                       <button
-                        onClick={() => deleteModel(m.id)}
-                        className="text-xs px-3 py-1.5 rounded-md transition bg-red-500/20 text-red-400 hover:bg-red-500/30"
+                        type="button"
+                        onClick={() => deleteModel(model)}
+                        disabled={deletingId === model.id}
+                        className="rounded-2xl bg-red-50 px-4 py-2 text-xs font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25 dark:hover:bg-red-500/20"
                       >
-                        🗑 Delete
+                        {deletingId === model.id ? 'Deleting...' : '🗑 Delete'}
                       </button>
                     </div>
-                  </div>
+                  </article>
                 ))}
               </div>
             )}
@@ -454,143 +966,188 @@ export default function AdminServices() {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-[110] bg-dark-800 border border-primary-500/30 text-white text-sm px-4 py-3 rounded-xl shadow-lg">
+        <div className="fixed bottom-6 right-6 z-[110] max-w-xs rounded-3xl border border-primary-100 bg-white px-5 py-4 text-sm font-black text-gray-950 shadow-2xl dark:border-primary-500/25 dark:bg-dark-800 dark:text-white">
           {toast}
         </div>
       )}
 
-      {/* Add/Edit slide-over panel */}
+      {/* Add/Edit Panel */}
       {panelOpen && (
         <div className="fixed inset-0 z-[100] flex justify-end" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/60" onClick={closePanel} />
-          <div className="relative w-full sm:max-w-md h-full bg-dark-800 shadow-2xl overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 sticky top-0 bg-dark-800 z-10">
-              <h2 className="text-lg font-semibold">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closePanel} />
+
+          <div className="relative h-full w-full overflow-y-auto bg-white shadow-2xl dark:bg-dark-800 sm:max-w-lg">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4 dark:border-dark-700 dark:bg-dark-800">
+              <h2 className="text-lg font-black text-gray-950 dark:text-white">
                 {editingId
                   ? `Edit ${activeTab === 'services' ? 'Service' : 'Motorcycle Model'}`
                   : `Add New ${activeTab === 'services' ? 'Service' : 'Motorcycle Model'}`}
               </h2>
-              <button onClick={closePanel} className="text-gray-400 hover:text-white text-xl leading-none">✕</button>
+
+              <button
+                type="button"
+                onClick={closePanel}
+                className="grid h-10 w-10 place-items-center rounded-2xl text-xl text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white"
+              >
+                ✕
+              </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-5 p-6">
               {formError && (
-                <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg p-3">
+                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
                   {formError}
                 </div>
               )}
 
               {activeTab === 'services' ? (
                 <>
-                  <div>
-                    <label className="block text-sm text-gray-300 mb-1">Service Name *</label>
-                    <input name="name" value={serviceForm.name} onChange={handleServiceChange} required
-                      placeholder="e.g. Oil Change"
-                      className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                  </div>
+                  <TextInput
+                    label="Service Name *"
+                    name="name"
+                    value={serviceForm.name}
+                    onChange={handleServiceChange}
+                    required
+                    placeholder="e.g. Oil Change"
+                  />
 
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm text-gray-300 mb-1">Base Price (₱) *</label>
-                      <input name="base_price" type="number" step="0.01" min="0" value={serviceForm.base_price} onChange={handleServiceChange} required
-                        className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-300 mb-1">Labor Cost (₱)</label>
-                      <input name="labor_cost" type="number" step="0.01" min="0" value={serviceForm.labor_cost} onChange={handleServiceChange}
-                        className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                    </div>
+                    <TextInput
+                      label="Base Price *"
+                      name="base_price"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={serviceForm.base_price}
+                      onChange={handleServiceChange}
+                      required
+                    />
+
+                    <TextInput
+                      label="Labor Cost"
+                      name="labor_cost"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={serviceForm.labor_cost}
+                      onChange={handleServiceChange}
+                    />
                   </div>
 
-                  <div>
-                    <label className="block text-sm text-gray-300 mb-1">Duration (minutes)</label>
-                    <input name="estimated_duration_minutes" type="number" min="0" value={serviceForm.estimated_duration_minutes} onChange={handleServiceChange}
-                      className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                  </div>
+                  <TextInput
+                    label="Duration"
+                    name="estimated_duration_minutes"
+                    type="number"
+                    min="1"
+                    value={serviceForm.estimated_duration_minutes}
+                    onChange={handleServiceChange}
+                    helper="Estimated duration in minutes."
+                  />
 
                   <div>
-                    <label className="block text-sm text-gray-300 mb-1">Description</label>
-                    <textarea name="description" value={serviceForm.description} onChange={handleServiceChange} rows={3}
+                    <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                      Description
+                    </label>
+                    <textarea
+                      name="description"
+                      value={serviceForm.description}
+                      onChange={handleServiceChange}
+                      rows={4}
                       placeholder="Briefly describe what this service includes..."
-                      className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 resize-none" />
+                      className="w-full resize-none rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
+                    />
                   </div>
                 </>
               ) : (
                 <>
                   <div>
-                    <label className="block text-sm text-gray-300 mb-1">Reference Photo URL</label>
-                    <div className="flex items-center gap-3 mb-2">
-                      <div className="w-16 h-16 rounded-lg bg-dark-900 border border-gray-700 flex items-center justify-center overflow-hidden flex-shrink-0">
+                    <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                      Reference Photo URL
+                    </label>
+
+                    <div className="flex items-center gap-3">
+                      <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
                         {modelForm.reference_photo_url ? (
-                          <img src={modelForm.reference_photo_url} alt="" className="w-full h-full object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
+                          <img
+                            src={modelForm.reference_photo_url}
+                            alt=""
+                            className="h-full w-full object-cover"
+                            onError={(event) => {
+                              event.currentTarget.style.display = 'none';
+                            }}
+                          />
                         ) : (
-                          <span className="text-xl opacity-40">🏍️</span>
+                          <div className="grid h-full w-full place-items-center text-2xl text-gray-400">
+                            🏍️
+                          </div>
                         )}
                       </div>
+
                       <input
                         name="reference_photo_url"
                         value={modelForm.reference_photo_url}
                         onChange={handleModelChange}
                         placeholder="https://..."
-                        className="flex-1 px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500"
+                        className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
                       />
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm text-gray-300 mb-1">Make *</label>
-                      <input name="make" value={modelForm.make} onChange={handleModelChange} required
-                        placeholder="e.g. Yamaha"
-                        className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-300 mb-1">Model *</label>
-                      <input name="model" value={modelForm.model} onChange={handleModelChange} required
-                        placeholder="e.g. Aerox 155"
-                        className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                    </div>
+                    <TextInput
+                      label="Make *"
+                      name="make"
+                      value={modelForm.make}
+                      onChange={handleModelChange}
+                      required
+                      placeholder="e.g. Yamaha"
+                    />
+
+                    <TextInput
+                      label="Model *"
+                      name="model"
+                      value={modelForm.model}
+                      onChange={handleModelChange}
+                      required
+                      placeholder="e.g. Aerox 155"
+                    />
                   </div>
 
-                  <div>
-                    <label className="block text-sm text-gray-300 mb-1">Year Range</label>
-                    <input name="year_range" value={modelForm.year_range} onChange={handleModelChange}
-                      placeholder="e.g. 2021–2024"
-                      className="w-full px-3 py-2 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500" />
-                  </div>
+                  <TextInput
+                    label="Year Range"
+                    name="year_range"
+                    value={modelForm.year_range}
+                    onChange={handleModelChange}
+                    placeholder="e.g. 2021–2024"
+                  />
                 </>
               )}
 
-              <div className="flex gap-3 pt-2 sticky bottom-0 bg-dark-800 pb-2">
+              <div className="sticky bottom-0 flex gap-3 border-t border-gray-200 bg-white pt-5 dark:border-dark-700 dark:bg-dark-800">
                 <button
                   type="button"
                   onClick={closePanel}
-                  className="flex-1 border border-gray-700 hover:border-gray-500 py-2.5 rounded-lg text-sm transition"
+                  className="flex-1 rounded-2xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700 transition hover:border-gray-300 dark:border-dark-700 dark:text-gray-300"
                 >
                   Cancel
                 </button>
+
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex-1 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 py-2.5 rounded-lg font-medium transition text-sm"
+                  className="flex-1 rounded-2xl bg-primary-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {saving ? 'Saving...' : editingId ? 'Save Changes' : `+ Add ${activeTab === 'services' ? 'Service' : 'Model'}`}
+                  {saving
+                    ? 'Saving...'
+                    : editingId
+                    ? 'Save Changes'
+                    : `+ Add ${activeTab === 'services' ? 'Service' : 'Model'}`}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function SkeletonStack() {
-  return (
-    <div className="space-y-4">
-      {[1, 2, 3].map((i) => (
-        <div key={i} className="h-28 bg-dark-800 rounded-xl animate-pulse" />
-      ))}
     </div>
   );
 }
