@@ -10,6 +10,12 @@ const EMPTY_FORM = {
   reorder_threshold: '5',
   compatible_models: '',
   image_url: '',
+  ai_reference_url: '',
+  prompt_description: '',
+  install_area: '',
+  color: '',
+  finish: '',
+  material: '',
 };
 
 const STOCK_FILTERS = [
@@ -273,6 +279,12 @@ export default function AdminParts() {
       reorder_threshold: String(part.reorder_threshold ?? '5'),
       compatible_models: (part.compatible_models || []).join(', '),
       image_url: part.image_url || '',
+      ai_reference_url: part.ai_reference_url || '',
+      prompt_description: part.prompt_description || '',
+      install_area: part.install_area || '',
+      color: part.color || '',
+      finish: part.finish || '',
+      material: part.material || '',
     });
     setFormError('');
     setShowCategoryInput(false);
@@ -324,6 +336,12 @@ export default function AdminParts() {
       reorder_threshold: parseInt(form.reorder_threshold || '5', 10),
       compatible_models: parseCompatibleModels(form.compatible_models),
       image_url: form.image_url.trim() || null,
+      ai_reference_url: form.ai_reference_url.trim() || null,
+      prompt_description: form.prompt_description.trim() || null,
+      install_area: form.install_area.trim() || null,
+      color: form.color.trim() || null,
+      finish: form.finish.trim() || null,
+      material: form.material.trim() || null,
     };
 
     try {
@@ -566,11 +584,23 @@ export default function AdminParts() {
       const compatibleModels = (part.compatible_models || []).join(' ').toLowerCase();
       const isActive = part.is_active !== false;
 
+      const aiSearchText = [
+        part.prompt_description,
+        part.install_area,
+        part.color,
+        part.finish,
+        part.material,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
       const matchesSearch =
         !searchTerm ||
         String(part.name || '').toLowerCase().includes(searchTerm) ||
         String(part.category || '').toLowerCase().includes(searchTerm) ||
-        compatibleModels.includes(searchTerm);
+        compatibleModels.includes(searchTerm) ||
+        aiSearchText.includes(searchTerm);
 
       const matchesCategory =
         categoryFilter === 'all' || part.category === categoryFilter;
@@ -857,6 +887,20 @@ export default function AdminParts() {
                         </span>
                       )}
                       <StockBadge state={stockState} />
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-black ring-1 ${
+                          part.ai_reference_url
+                            ? 'bg-primary-50 text-primary-700 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25'
+                            : 'bg-gray-100 text-gray-500 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25'
+                        }`}
+                        title={
+                          part.ai_reference_url
+                            ? 'Has clean AI reference photo'
+                            : 'No AI reference photo yet'
+                        }
+                      >
+                        {part.ai_reference_url ? 'AI Ready' : 'No AI Ref'}
+                      </span>
                     </div>
                   </div>
 
@@ -1252,6 +1296,87 @@ export default function AdminParts() {
                     className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                  AI Reference URL
+                </label>
+
+                <div className="flex items-center gap-3">
+                  <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
+                    {form.ai_reference_url ? (
+                      <img
+                        src={form.ai_reference_url}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        onError={(event) => {
+                          event.currentTarget.style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <div className="grid h-full w-full place-items-center text-xs font-black text-gray-400">
+                        AI Ref
+                      </div>
+                    )}
+                  </div>
+
+                  <input
+                    name="ai_reference_url"
+                    value={form.ai_reference_url}
+                    onChange={handleChange}
+                    placeholder="https://... clean cropped AI reference photo"
+                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                  />
+                </div>
+
+                <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                  Use one clean photo of the exact part only. For wheels, use one cropped side-view rim, not a full photo with two wheels or background boxes.
+                </p>
+              </div>
+
+              <TextInput
+                label="AI Prompt Description"
+                name="prompt_description"
+                value={form.prompt_description}
+                onChange={handleChange}
+                placeholder="e.g. gold Enkei 3-spoke mags with glossy metallic alloy finish"
+                helper="Describe the exact shape, material, color, and finish. This helps the AI replace the real part instead of only recoloring it."
+              />
+
+              <TextInput
+                label="Install Area"
+                name="install_area"
+                value={form.install_area}
+                onChange={handleChange}
+                placeholder="e.g. front and rear wheel/rim area only"
+                helper="Tell the AI where this part should be installed on the motorcycle."
+              />
+
+              <div className="grid grid-cols-3 gap-4">
+                <TextInput
+                  label="Color"
+                  name="color"
+                  value={form.color}
+                  onChange={handleChange}
+                  placeholder="Gold"
+                />
+
+                <TextInput
+                  label="Finish"
+                  name="finish"
+                  value={form.finish}
+                  onChange={handleChange}
+                  placeholder="Gloss metallic"
+                />
+
+                <TextInput
+                  label="Material"
+                  name="material"
+                  value={form.material}
+                  onChange={handleChange}
+                  placeholder="Alloy"
+                />
               </div>
 
               <TextInput

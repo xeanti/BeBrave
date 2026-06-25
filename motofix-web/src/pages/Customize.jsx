@@ -22,6 +22,137 @@ function formatPartList(parts) {
   return parts.map((part) => part.name).join(', ');
 }
 
+function inferInstallArea(part) {
+  const text = [
+    part.name,
+    part.category,
+    part.description,
+    part.prompt_description,
+    part.install_area,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  if (
+    text.includes('wheel') ||
+    text.includes('wheels') ||
+    text.includes('rim') ||
+    text.includes('rims') ||
+    text.includes('mags') ||
+    text.includes('mag wheel')
+  ) {
+    return 'front and/or rear wheel/rim area only; replace the visible rim/spoke design, not just the color; preserve tire size, axle position, brake disc position, fork/swingarm position, and motorcycle stance';
+  }
+
+  if (
+    text.includes('exhaust') ||
+    text.includes('muffler') ||
+    text.includes('pipe') ||
+    text.includes('silencer')
+  ) {
+    return 'exhaust or muffler mounting area only; replace the exhaust body/pipe shape while preserving the side fairing, engine, frame, and body panels';
+  }
+
+  if (text.includes('seat') || text.includes('saddle')) {
+    return 'seat area only; replace the seat silhouette, cushion shape, upholstery texture, stitching, and color while preserving the tail fairing, side panels, and frame';
+  }
+
+  if (
+    text.includes('headlight') ||
+    text.includes('head light') ||
+    text.includes('lamp') ||
+    text.includes('front light')
+  ) {
+    return 'front headlight housing and lens area only; preserve the front fairing, handlebar, fork, body color, and camera angle';
+  }
+
+  if (text.includes('mirror') || text.includes('side mirror')) {
+    return 'left and/or right mirror area only; replace the mirror housing and stem while preserving the handlebar and controls';
+  }
+
+  if (
+    text.includes('fairing') ||
+    text.includes('body kit') ||
+    text.includes('body panel') ||
+    text.includes('cowling')
+  ) {
+    return 'matching body panel or fairing area only; preserve all unrelated panels, wheels, seat, background, and lighting';
+  }
+
+  if (
+    text.includes('decal') ||
+    text.includes('sticker') ||
+    text.includes('graphics') ||
+    text.includes('vinyl')
+  ) {
+    return 'body panel surface only; apply the selected decal/sticker artwork without changing the motorcycle body shape';
+  }
+
+  if (
+    text.includes('handlebar') ||
+    text.includes('handle bar') ||
+    text.includes('bar end') ||
+    text.includes('grip')
+  ) {
+    return 'handlebar area only; replace the handlebar shape/finish while preserving cables, controls, dashboard, and front fork';
+  }
+
+  if (
+    text.includes('footpeg') ||
+    text.includes('foot peg') ||
+    text.includes('rearset') ||
+    text.includes('rear set')
+  ) {
+    return 'footpeg or rearset area only; preserve the frame, side fairing, and engine area';
+  }
+
+  if (
+    text.includes('brake') ||
+    text.includes('disc') ||
+    text.includes('rotor') ||
+    text.includes('caliper')
+  ) {
+    return 'brake component area only; preserve wheel alignment, tire size, fork position, and motorcycle stance';
+  }
+
+  if (
+    text.includes('shock') ||
+    text.includes('suspension') ||
+    text.includes('fork') ||
+    text.includes('absorber')
+  ) {
+    return 'suspension or shock absorber area only; preserve frame geometry, wheel position, and motorcycle stance';
+  }
+
+  return (
+    part.install_area ||
+    'the exact normal mounting area for this selected motorcycle part'
+  );
+}
+
+function buildPreviewPartDetails(parts) {
+  return parts.map((part) => ({
+    id: part.id,
+    name: part.name,
+    category: part.category || 'General',
+    // image_url is still the normal shop/product image for display.
+    image_url: part.image_url || '',
+    // ai_reference_url is the clean single-part photo used by the Edge Function.
+    // If it is empty, the Edge Function can fall back to image_url.
+    ai_reference_url: part.ai_reference_url || part.image_url || '',
+    prompt_description:
+      part.prompt_description ||
+      part.description ||
+      `${part.name} motorcycle part. Replace the actual physical part shape and structure, not only the color.`,
+    description: part.description || '',
+    color: part.color || '',
+    finish: part.finish || '',
+    material: part.material || '',
+    install_area: part.install_area || inferInstallArea(part),
+  }));
+}
+
 function SourceCard({ active, icon, title, description, onClick }) {
   return (
     <button
@@ -83,7 +214,9 @@ function Notice({ type = 'info', children }) {
   };
 
   return (
-    <div className={`mb-4 rounded-2xl border p-4 text-sm font-semibold ${styles[type]}`}>
+    <div
+      className={`mb-4 rounded-2xl border p-4 text-sm font-semibold ${styles[type]}`}
+    >
       {children}
     </div>
   );
@@ -141,11 +274,16 @@ export default function Customize() {
   }, [uploadedPreview]);
 
   async function fetchModels() {
-    const { data } = await supabase
+    const { data, error: fetchError } = await supabase
       .from('motorcycle_models')
       .select('*')
       .order('make', { ascending: true })
       .order('model', { ascending: true });
+
+    if (fetchError) {
+      console.error(fetchError);
+      return;
+    }
 
     if (data) setModels(data);
   }
@@ -153,12 +291,18 @@ export default function Customize() {
   async function fetchAllParts(showLoader = true) {
     if (showLoader) setPageLoading(true);
 
-    const { data } = await supabase
+    const { data, error: fetchError } = await supabase
       .from('parts')
       .select('*')
       .eq('is_active', true)
       .gt('stock_quantity', 0)
       .order('name', { ascending: true });
+
+    if (fetchError) {
+      console.error(fetchError);
+      setPageLoading(false);
+      return;
+    }
 
     if (data) setParts(data);
 
@@ -232,7 +376,9 @@ export default function Customize() {
       });
 
       if (previousWithoutSameCategory.length >= MAX_PREVIEW_PARTS) {
-        setPartMessage(`You can only preview up to ${MAX_PREVIEW_PARTS} parts at a time.`);
+        setPartMessage(
+          `You can only preview up to ${MAX_PREVIEW_PARTS} parts at a time.`
+        );
         setTimeout(() => setPartMessage(''), 2500);
         return previous;
       }
@@ -244,6 +390,8 @@ export default function Customize() {
         setTimeout(() => setPartMessage(''), 2500);
       }
 
+      setResultImage(null);
+
       return [...previousWithoutSameCategory, partId];
     });
   }
@@ -254,7 +402,9 @@ export default function Customize() {
     setTimeout(() => setCartMessage(''), 2500);
   }
 
-  const selectedModel = models.find((model) => model.id === selectedModelId);
+  const selectedModel = models.find(
+    (model) => String(model.id) === String(selectedModelId)
+  );
 
   const motorcycleLabel =
     imageSource === 'reference' && selectedModel
@@ -271,9 +421,12 @@ export default function Customize() {
     return parts.filter((part) => {
       const compatibleModels = part.compatible_models || [];
 
+      if (!Array.isArray(compatibleModels) || compatibleModels.length === 0) {
+        return true;
+      }
+
       return compatibleModels.some((model) => {
         const modelText = normalizeText(model);
-
         return modelText.includes(term) || term.includes(modelText);
       });
     });
@@ -308,6 +461,7 @@ export default function Customize() {
         part.name,
         part.category,
         part.description,
+        part.prompt_description,
         ...(part.compatible_models || []),
       ]
         .filter(Boolean)
@@ -322,7 +476,10 @@ export default function Customize() {
   }, [compatibleParts, partSearch, partCategory]);
 
   const selectedPartObjects = useMemo(
-    () => selectedParts.map((id) => parts.find((part) => part.id === id)).filter(Boolean),
+    () =>
+      selectedParts
+        .map((id) => parts.find((part) => part.id === id))
+        .filter(Boolean),
     [selectedParts, parts]
   );
 
@@ -380,18 +537,24 @@ export default function Customize() {
       let photoUrl;
 
       if (imageSource === 'reference') {
-        photoUrl = selectedModel.reference_photo_url;
+        // Use the exact same motorcycle photo shown on screen.
+        // Do NOT use ai_reference_photo_url here because it can have a different body color.
+        photoUrl = selectedModel?.reference_photo_url;
 
         if (!photoUrl) {
           throw new Error('This motorcycle model has no reference photo yet.');
         }
       } else {
-        const fileExt = uploadedPhoto.name.split('.').pop();
-        const filePath = `${user.id}/${Date.now()}.${fileExt}`;
+        const fileExt = uploadedPhoto.name.split('.').pop() || 'jpg';
+        const safeExt = fileExt.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+        const filePath = `${user.id}/${crypto.randomUUID()}.${safeExt}`;
 
         const { error: uploadError } = await supabase.storage
           .from('motorcycle-photos')
-          .upload(filePath, uploadedPhoto);
+          .upload(filePath, uploadedPhoto, {
+            contentType: uploadedPhoto.type,
+            upsert: false,
+          });
 
         if (uploadError) throw uploadError;
 
@@ -402,8 +565,30 @@ export default function Customize() {
         photoUrl = urlData.publicUrl;
       }
 
-      const selectedPartDetails = parts.filter((part) => selectedParts.includes(part.id));
-      const partNames = formatPartList(selectedPartDetails);
+      const selectedPartDetails = parts.filter((part) =>
+        selectedParts.includes(part.id)
+      );
+
+      const missingAiReferenceImages = selectedPartDetails.filter(
+        (part) => !part.ai_reference_url && !part.image_url
+      );
+
+      if (missingAiReferenceImages.length > 0) {
+        throw new Error(
+          `These selected parts have no AI reference image: ${missingAiReferenceImages
+            .map((part) => part.name)
+            .join(
+              ', '
+            )}. Add an AI Reference URL or Image URL first so the AI can copy the actual shape.`
+        );
+      }
+
+      const previewPartDetails = buildPreviewPartDetails(selectedPartDetails);
+      const partNames = formatPartList(previewPartDetails);
+
+      console.log('AI preview base photo URL:', photoUrl);
+      console.log('AI preview displayed model photo URL:', selectedModel?.reference_photo_url || null);
+      console.log('Sending AI preview parts:', previewPartDetails);
 
       const { data: fnData, error: fnError } = await supabase.functions.invoke(
         'generate-preview',
@@ -411,19 +596,38 @@ export default function Customize() {
           body: {
             photoUrl,
             partNames,
-            partDetails: selectedPartDetails,
+            partDetails: previewPartDetails,
             motorcycleLabel: motorcycleLabel || 'Customer motorcycle',
             imageSource,
+            basePhotoSource: 'reference_photo_url_locked',
           },
         }
       );
 
       if (fnError) throw fnError;
-      if (!fnData?.imageUrl) throw new Error('The preview generator did not return an image URL.');
+
+      if (!fnData?.imageUrl) {
+        throw new Error('The preview generator did not return an image URL.');
+      }
+
+      console.log('AI preview debug:', fnData.debug);
+
+      const debugParts = fnData.debug?.selectedParts || [];
+      const partsWithoutReference = debugParts.filter((part) => {
+        if ('hasUsableReference' in part) return !part.hasUsableReference;
+        return !part.hasAiReferenceUrl && !part.hasImageUrl;
+      });
+
+      if (partsWithoutReference.length > 0) {
+        console.warn(
+          'Some selected parts were sent without a usable AI reference:',
+          partsWithoutReference
+        );
+      }
 
       setResultImage(fnData.imageUrl);
 
-      await supabase.from('customizations').insert({
+      const { error: saveError } = await supabase.from('customizations').insert({
         customer_id: user.id,
         part_ids: selectedParts,
         original_photo_url: photoUrl,
@@ -431,6 +635,10 @@ export default function Customize() {
         prompt_used: fnData.prompt || null,
         status: 'generated',
       });
+
+      if (saveError) {
+        console.error('Failed to save customization:', saveError);
+      }
     } catch (err) {
       console.error(err);
       setError(err.message || 'Failed to generate preview. Please try again.');
@@ -457,7 +665,9 @@ export default function Customize() {
                   AI Motorcycle Appearance Preview
                 </h1>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
-                  Upload your motorcycle or use a reference model, select up to {MAX_PREVIEW_PARTS} parts, and generate a visual preview before buying.
+                  Upload your motorcycle or use a reference model, select up to{' '}
+                  {MAX_PREVIEW_PARTS} parts, and generate a visual preview
+                  before buying.
                 </p>
               </div>
 
@@ -555,7 +765,10 @@ export default function Customize() {
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <div>
                     <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                      Make <span className="font-medium normal-case text-gray-400">(optional)</span>
+                      Make{' '}
+                      <span className="font-medium normal-case text-gray-400">
+                        (optional)
+                      </span>
                     </label>
                     <input
                       type="text"
@@ -571,7 +784,10 @@ export default function Customize() {
 
                   <div>
                     <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                      Model <span className="font-medium normal-case text-gray-400">(optional)</span>
+                      Model{' '}
+                      <span className="font-medium normal-case text-gray-400">
+                        (optional)
+                      </span>
                     </label>
                     <input
                       type="text"
@@ -587,7 +803,8 @@ export default function Customize() {
                 </div>
 
                 <p className="mt-3 rounded-2xl bg-gray-50 px-4 py-3 text-xs leading-5 text-gray-600 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:text-gray-400 dark:ring-dark-700">
-                  Adding make/model helps narrow compatible parts. Leave it blank to browse all available parts.
+                  Adding make/model helps narrow compatible parts. Leave it
+                  blank to browse all available parts.
                 </p>
               </section>
             )}
@@ -612,7 +829,8 @@ export default function Customize() {
                   <option value="">Choose a model...</option>
                   {models.map((model) => (
                     <option key={model.id} value={model.id}>
-                      {model.make} {model.model} {model.year_range ? `(${model.year_range})` : ''}
+                      {model.make} {model.model}{' '}
+                      {model.year_range ? `(${model.year_range})` : ''}
                     </option>
                   ))}
                 </select>
@@ -693,13 +911,16 @@ export default function Customize() {
                   {categories.map((item) => {
                     const active = partCategory === item.name;
                     const label = item.name === 'all' ? 'All' : item.name;
-                    const hasSelection = item.name !== 'all' && selectedCategories.has(item.name);
+                    const hasSelection =
+                      item.name !== 'all' && selectedCategories.has(item.name);
 
                     return (
                       <button
                         key={item.name}
                         type="button"
-                        onClick={() => setPartCategory(active ? 'all' : item.name)}
+                        onClick={() =>
+                          setPartCategory(active ? 'all' : item.name)
+                        }
                         className={`rounded-full px-4 py-2 text-xs font-black capitalize transition ${
                           active
                             ? 'bg-primary-600 text-white shadow-lg shadow-primary-600/20'
@@ -707,7 +928,9 @@ export default function Customize() {
                         }`}
                       >
                         {label}
-                        <span className={active ? 'ml-1 opacity-80' : 'ml-1 opacity-60'}>
+                        <span
+                          className={active ? 'ml-1 opacity-80' : 'ml-1 opacity-60'}
+                        >
                           ({item.count})
                         </span>
                         {hasSelection && (
@@ -730,7 +953,8 @@ export default function Customize() {
                 ) : compatibleParts.length === 0 ? (
                   <div className="rounded-3xl border border-dashed border-gray-300 bg-gray-50 p-8 text-center dark:border-dark-700 dark:bg-dark-900/60">
                     <p className="text-sm font-bold text-gray-700 dark:text-gray-300">
-                      No compatible parts found for {motorcycleLabel || 'your motorcycle'}.
+                      No compatible parts found for{' '}
+                      {motorcycleLabel || 'your motorcycle'}.
                     </p>
                     <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                       Try clearing the make/model field to browse all parts.
@@ -747,12 +971,15 @@ export default function Customize() {
                     {filteredParts.map((part) => {
                       const isSelected = selectedParts.includes(part.id);
                       const partCategoryName = part.category || 'General';
+                      const hasImage = Boolean(part.ai_reference_url || part.image_url);
                       const isDisabled =
                         !isSelected &&
                         selectedParts.length >= MAX_PREVIEW_PARTS &&
                         !selectedCategories.has(partCategoryName);
                       const willSwap =
-                        !isSelected && !isDisabled && selectedCategories.has(partCategoryName);
+                        !isSelected &&
+                        !isDisabled &&
+                        selectedCategories.has(partCategoryName);
 
                       return (
                         <article
@@ -773,7 +1000,9 @@ export default function Customize() {
                             <input
                               type="checkbox"
                               checked={isSelected}
-                              onChange={() => !isDisabled && togglePart(part.id)}
+                              onChange={() =>
+                                !isDisabled && togglePart(part.id)
+                              }
                               disabled={isDisabled}
                               className="mt-4 h-4 w-4 accent-primary-600"
                             />
@@ -800,10 +1029,18 @@ export default function Customize() {
                                 {partCategoryName}
                                 {willSwap && (
                                   <span className="text-accent-600 dark:text-accent-400">
-                                    {' '}· will replace current pick
+                                    {' '}
+                                    · will replace current pick
                                   </span>
                                 )}
                               </p>
+
+                              {!hasImage && (
+                                <p className="mt-1 text-[11px] font-bold text-red-500 dark:text-red-300">
+                                  Needs AI reference image
+                                </p>
+                              )}
+
                               <p className="mt-2 text-sm font-black text-accent-600 dark:text-accent-400">
                                 {formatPeso(part.price)}
                               </p>
@@ -837,9 +1074,7 @@ export default function Customize() {
                   Generating Preview...
                 </>
               ) : (
-                <>
-                  ✨ Generate AI Preview
-                </>
+                <>✨ Generate AI Preview</>
               )}
             </button>
           </div>
@@ -852,7 +1087,8 @@ export default function Customize() {
                   Preview Result
                 </h2>
                 <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                  Your generated motorcycle preview will appear here. Click the image to enlarge it.
+                  Your generated motorcycle preview will appear here. Click the
+                  image to enlarge it.
                 </p>
               </div>
 
@@ -893,7 +1129,8 @@ export default function Customize() {
                       No preview generated yet
                     </p>
                     <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                      Choose a photo source and select parts to generate a preview.
+                      Choose a photo source and select parts to generate a
+                      preview.
                     </p>
                   </div>
                 )}
@@ -912,7 +1149,10 @@ export default function Customize() {
 
                   <div className="space-y-2">
                     {selectedPartObjects.map((part) => (
-                      <div key={part.id} className="flex justify-between gap-3 text-xs">
+                      <div
+                        key={part.id}
+                        className="flex justify-between gap-3 text-xs"
+                      >
                         <span className="truncate font-semibold text-gray-600 dark:text-gray-400">
                           {part.name}
                         </span>
