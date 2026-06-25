@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabaseClient';
-import { fetchPaymentsFor, summarizePayments } from '../../lib/payments';
+import { summarizePayments } from '../../lib/payments';
 
 function formatPeso(value) {
   const amount = Number(value) || 0;
@@ -147,6 +147,35 @@ function PaymentBadge({ isFullyPaid, balance }) {
     >
       {isFullyPaid ? 'Paid' : formatPeso(balance)}
     </span>
+  );
+}
+
+
+function ReceiptNumberList({ payments }) {
+  const receiptNumbers = (payments || [])
+    .map((payment) => payment.receipt_number)
+    .filter(Boolean);
+
+  if (!receiptNumbers.length) {
+    return <span className="text-xs font-semibold text-gray-400">—</span>;
+  }
+
+  return (
+    <div className="flex max-w-xs flex-wrap gap-1.5">
+      {receiptNumbers.slice(0, 3).map((receiptNumber) => (
+        <span
+          key={receiptNumber}
+          className="rounded-full bg-primary-50 px-2.5 py-1 font-mono text-[11px] font-black text-primary-700 ring-1 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25"
+        >
+          {receiptNumber}
+        </span>
+      ))}
+      {receiptNumbers.length > 3 && (
+        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-black text-gray-500 ring-1 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25">
+          +{receiptNumbers.length - 3} more
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -396,37 +425,32 @@ export default function AdminReports() {
       setOrders(orderRows);
       setAuditLogs(auditResult.data || []);
 
-      if (bookingRows.length) {
-        const allBookingPayments = await fetchPaymentsFor({
-          bookingIds: bookingRows.map((booking) => booking.id),
-        });
+      const allPayments = await fetchReportPayments({
+        bookingIds: bookingRows.map((booking) => booking.id),
+        orderIds: orderRows.map((order) => order.id),
+      });
 
-        const grouped = {};
-        (allBookingPayments || []).forEach((payment) => {
-          if (!grouped[payment.booking_id]) grouped[payment.booking_id] = [];
-          grouped[payment.booking_id].push(payment);
-        });
+      const groupedBookingPayments = {};
+      const groupedOrderPayments = {};
 
-        setBookingPayments(grouped);
-      } else {
-        setBookingPayments({});
-      }
+      (allPayments || []).forEach((payment) => {
+        if (payment.booking_id) {
+          if (!groupedBookingPayments[payment.booking_id]) {
+            groupedBookingPayments[payment.booking_id] = [];
+          }
+          groupedBookingPayments[payment.booking_id].push(payment);
+        }
 
-      if (orderRows.length) {
-        const allOrderPayments = await fetchPaymentsFor({
-          orderIds: orderRows.map((order) => order.id),
-        });
+        if (payment.order_id) {
+          if (!groupedOrderPayments[payment.order_id]) {
+            groupedOrderPayments[payment.order_id] = [];
+          }
+          groupedOrderPayments[payment.order_id].push(payment);
+        }
+      });
 
-        const grouped = {};
-        (allOrderPayments || []).forEach((payment) => {
-          if (!grouped[payment.order_id]) grouped[payment.order_id] = [];
-          grouped[payment.order_id].push(payment);
-        });
-
-        setOrderPayments(grouped);
-      } else {
-        setOrderPayments({});
-      }
+      setBookingPayments(groupedBookingPayments);
+      setOrderPayments(groupedOrderPayments);
 
       setLastUpdated(new Date());
     } catch (err) {
@@ -449,6 +473,39 @@ export default function AdminReports() {
     });
   }
 
+  async function fetchReportPayments({ bookingIds = [], orderIds = [] }) {
+    const selectFields = `
+      *,
+      profiles!payments_processed_by_fkey(first_name, last_name, email, role)
+    `;
+
+    const results = [];
+
+    if (bookingIds.length) {
+      const { data, error } = await supabase
+        .from('payments')
+        .select(selectFields)
+        .in('booking_id', bookingIds)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      results.push(...(data || []));
+    }
+
+    if (orderIds.length) {
+      const { data, error } = await supabase
+        .from('payments')
+        .select(selectFields)
+        .in('order_id', orderIds)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      results.push(...(data || []));
+    }
+
+    return results;
+  }
+
   function getPaymentInfo(records, recordId, total) {
     const list = records[recordId] || [];
     const { totalPaid } = summarizePayments(list);
@@ -462,11 +519,25 @@ export default function AdminReports() {
       ? 'System'
       : '—';
 
+    const receiptNumbers = list
+      .map((payment) => payment.receipt_number)
+      .filter(Boolean);
+
+    const receiptSummary = receiptNumbers.length ? receiptNumbers.join(', ') : '—';
+    const lastReceiptNumber = last?.receipt_number || '—';
+    const lastReceiptStatus = last?.receipt_status || '—';
+    const lastReceiptIssuedAt = last?.receipt_issued_at || last?.created_at || null;
+
     return {
       totalPaid,
       balance,
       isFullyPaid,
       lastProcessedBy,
+      receiptNumbers,
+      receiptSummary,
+      lastReceiptNumber,
+      lastReceiptStatus,
+      lastReceiptIssuedAt,
     };
   }
 
@@ -570,6 +641,9 @@ export default function AdminReports() {
             total_paid: info.totalPaid.toFixed(2),
             balance: info.balance.toFixed(2),
             payment_status: info.isFullyPaid ? 'Fully Paid' : 'Partial/Unpaid',
+            receipt_numbers: info.receiptSummary,
+            last_receipt_number: info.lastReceiptNumber,
+            last_receipt_issued_at: info.lastReceiptIssuedAt ? formatDateTime(info.lastReceiptIssuedAt) : '',
             processed_by: info.lastProcessedBy,
           };
         }),
@@ -595,6 +669,9 @@ export default function AdminReports() {
             total_paid: info.totalPaid.toFixed(2),
             balance: info.balance.toFixed(2),
             payment_status: info.isFullyPaid ? 'Fully Paid' : 'Partial/Unpaid',
+            receipt_numbers: info.receiptSummary,
+            last_receipt_number: info.lastReceiptNumber,
+            last_receipt_issued_at: info.lastReceiptIssuedAt ? formatDateTime(info.lastReceiptIssuedAt) : '',
             processed_by: info.lastProcessedBy,
             date: formatDate(order.created_at),
           };
@@ -669,6 +746,7 @@ export default function AdminReports() {
     status: (booking) => booking.status || '',
     total: (booking) => getBookingTotal(booking),
     paid: (booking) => getPaymentInfo(bookingPayments, booking.id, getBookingTotal(booking)).totalPaid,
+    receipt: (booking) => getPaymentInfo(bookingPayments, booking.id, getBookingTotal(booking)).receiptSummary,
     balance: (booking) => getPaymentInfo(bookingPayments, booking.id, getBookingTotal(booking)).balance,
     processed_by: (booking) => getPaymentInfo(bookingPayments, booking.id, getBookingTotal(booking)).lastProcessedBy,
   };
@@ -677,6 +755,7 @@ export default function AdminReports() {
     customer: (order) => getCustomerName(order),
     total: (order) => Number(order.total_amount) || 0,
     paid: (order) => getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0).totalPaid,
+    receipt: (order) => getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0).receiptSummary,
     balance: (order) => getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0).balance,
     status: (order) => order.status || '',
     processed_by: (order) => getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0).lastProcessedBy,
@@ -708,6 +787,8 @@ export default function AdminReports() {
         getMechanicName(booking),
         booking.status,
         info.lastProcessedBy,
+        info.receiptSummary,
+        info.lastReceiptNumber,
       ]
         .join(' ')
         .toLowerCase();
@@ -732,6 +813,8 @@ export default function AdminReports() {
         getOrderItemsLabel(order),
         order.status,
         info.lastProcessedBy,
+        info.receiptSummary,
+        info.lastReceiptNumber,
       ]
         .join(' ')
         .toLowerCase();
@@ -975,6 +1058,7 @@ export default function AdminReports() {
                         <SortHeader field="status" label="Status" />
                         <SortHeader field="total" label="Total" />
                         <SortHeader field="paid" label="Paid" />
+                        <SortHeader field="receipt" label="Receipt No." />
                         <SortHeader field="balance" label="Balance" />
                         <SortHeader field="processed_by" label="Processed By" />
                       </tr>
@@ -1020,6 +1104,9 @@ export default function AdminReports() {
                               {formatPeso(info.totalPaid)}
                             </td>
                             <td className="whitespace-nowrap px-4 py-4">
+                              <ReceiptNumberList payments={bookingPayments[booking.id] || []} />
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-4">
                               <PaymentBadge isFullyPaid={info.isFullyPaid} balance={info.balance} />
                             </td>
                             <td className="whitespace-nowrap px-4 py-4 text-xs text-gray-500 dark:text-gray-400">
@@ -1051,6 +1138,7 @@ export default function AdminReports() {
                         </th>
                         <SortHeader field="total" label="Total" />
                         <SortHeader field="paid" label="Paid" />
+                        <SortHeader field="receipt" label="Receipt No." />
                         <SortHeader field="balance" label="Balance" />
                         <SortHeader field="status" label="Status" />
                         <SortHeader field="processed_by" label="Processed By" />
@@ -1094,6 +1182,9 @@ export default function AdminReports() {
                             </td>
                             <td className="whitespace-nowrap px-4 py-4 font-black text-green-600 dark:text-green-300">
                               {formatPeso(info.totalPaid)}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-4">
+                              <ReceiptNumberList payments={orderPayments[order.id] || []} />
                             </td>
                             <td className="whitespace-nowrap px-4 py-4">
                               <PaymentBadge isFullyPaid={info.isFullyPaid} balance={info.balance} />

@@ -1,15 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
-import { fetchPaymentsFor, recordPayment, summarizePayments } from '../../lib/payments';
+import { summarizePayments } from '../../lib/payments';
 import { notifyUser } from '../../lib/notifications';
+import InvoiceReceiptModal from '../../components/InvoiceReceiptModal';
+import { generateOrSyncBookingInvoice } from '../../lib/invoices';
+import ServiceProgressManager from '../../components/ServiceProgressManager';
 
 const STATUS_OPTIONS = [
   'pending',
   'confirmed',
   'in_progress',
+  'inspection',
+  'repairing',
+  'quality_check',
+  'ready_for_pickup',
   'completed',
   'cancelled',
+  'rejected',
   'no_show',
 ];
 
@@ -106,6 +115,28 @@ function getServiceTotal(booking) {
   );
 }
 
+function getLatestPayment(paymentList = []) {
+  if (!paymentList.length) return null;
+
+  return [...paymentList].sort((a, b) => {
+    const dateA = new Date(a.receipt_issued_at || a.created_at || 0).getTime();
+    const dateB = new Date(b.receipt_issued_at || b.created_at || 0).getTime();
+
+    return dateA - dateB;
+  })[paymentList.length - 1];
+}
+
+function getReceiptNumber(payment) {
+  return payment?.receipt_number || `TEMP-${payment?.id?.slice(0, 8)?.toUpperCase() || 'RECEIPT'}`;
+}
+
+function getReceiptNumbers(paymentList = []) {
+  return paymentList
+    .map((payment) => payment.receipt_number)
+    .filter(Boolean)
+    .join(', ');
+}
+
 function getStatusNotificationMessage(status, penaltyAmount = 0) {
   if (status === 'pending') return 'Your booking is now pending.';
   if (status === 'confirmed') return 'Your booking has been confirmed.';
@@ -128,9 +159,19 @@ const STATUS_STYLES = {
     'bg-green-50 text-green-700 ring-green-200 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25',
   in_progress:
     'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/25',
+  inspection:
+    'bg-indigo-50 text-indigo-700 ring-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-300 dark:ring-indigo-500/25',
+  repairing:
+    'bg-purple-50 text-purple-700 ring-purple-200 dark:bg-purple-500/10 dark:text-purple-300 dark:ring-purple-500/25',
+  quality_check:
+    'bg-cyan-50 text-cyan-700 ring-cyan-200 dark:bg-cyan-500/10 dark:text-cyan-300 dark:ring-cyan-500/25',
+  ready_for_pickup:
+    'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/25',
   completed:
     'bg-gray-100 text-gray-700 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25',
   cancelled:
+    'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25',
+  rejected:
     'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25',
   no_show:
     'bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-500/25',
@@ -143,9 +184,19 @@ const ACTION_STYLES = {
     'bg-green-50 text-green-700 ring-green-200 hover:bg-green-100 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25 dark:hover:bg-green-500/20',
   in_progress:
     'bg-blue-50 text-blue-700 ring-blue-200 hover:bg-blue-100 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/25 dark:hover:bg-blue-500/20',
+  inspection:
+    'bg-indigo-50 text-indigo-700 ring-indigo-200 hover:bg-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-300 dark:ring-indigo-500/25 dark:hover:bg-indigo-500/20',
+  repairing:
+    'bg-purple-50 text-purple-700 ring-purple-200 hover:bg-purple-100 dark:bg-purple-500/10 dark:text-purple-300 dark:ring-purple-500/25 dark:hover:bg-purple-500/20',
+  quality_check:
+    'bg-cyan-50 text-cyan-700 ring-cyan-200 hover:bg-cyan-100 dark:bg-cyan-500/10 dark:text-cyan-300 dark:ring-cyan-500/25 dark:hover:bg-cyan-500/20',
+  ready_for_pickup:
+    'bg-emerald-50 text-emerald-700 ring-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/25 dark:hover:bg-emerald-500/20',
   completed:
     'bg-gray-100 text-gray-700 ring-gray-200 hover:bg-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25 dark:hover:bg-gray-500/20',
   cancelled:
+    'bg-red-50 text-red-700 ring-red-200 hover:bg-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25 dark:hover:bg-red-500/20',
+  rejected:
     'bg-red-50 text-red-700 ring-red-200 hover:bg-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25 dark:hover:bg-red-500/20',
   no_show:
     'bg-orange-50 text-orange-700 ring-orange-200 hover:bg-orange-100 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-500/25 dark:hover:bg-orange-500/20',
@@ -219,6 +270,7 @@ function BookingSkeleton() {
 
 export default function AdminBookings() {
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   const [bookings, setBookings] = useState([]);
   const [mechanics, setMechanics] = useState([]);
@@ -239,7 +291,18 @@ export default function AdminBookings() {
   const [paymentToast, setPaymentToast] = useState(null);
   const [expandedPayment, setExpandedPayment] = useState(null);
   const [expandedHistory, setExpandedHistory] = useState(null);
+  const [expandedProgress, setExpandedProgress] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
+
+  const [documentModal, setDocumentModal] = useState({
+    isOpen: false,
+    type: 'invoice',
+    invoice: null,
+    receipt: null,
+    booking: null,
+    payments: [],
+    customerName: 'Customer',
+  });
 
   useEffect(() => {
     fetchBookings();
@@ -379,9 +442,31 @@ export default function AdminBookings() {
 
     if (bookingRows.length > 0) {
       try {
-        const allPayments = await fetchPaymentsFor({
-          bookingIds: bookingRows.map((booking) => booking.id),
-        });
+        const { data: allPayments, error: paymentError } = await supabase
+          .from('payments')
+          .select(`
+            id,
+            booking_id,
+            order_id,
+            amount,
+            payment_type,
+            method,
+            notes,
+            created_at,
+            processed_by,
+            receipt_number,
+            receipt_status,
+            receipt_issued_at,
+            receipt_issued_by,
+            profiles!payments_processed_by_fkey(first_name, last_name, email, role)
+          `)
+          .in(
+            'booking_id',
+            bookingRows.map((booking) => booking.id)
+          )
+          .order('created_at', { ascending: true });
+
+        if (paymentError) throw paymentError;
 
         const grouped = {};
 
@@ -590,6 +675,80 @@ export default function AdminBookings() {
     }
   }
 
+  function openBookingDetails(bookingId) {
+    if (!bookingId) return;
+    navigate(`/admin/bookings/${bookingId}`);
+  }
+
+  function handleBookingCardClick(event, bookingId) {
+    const interactiveElement = event.target.closest(
+      'button, a, input, select, textarea, label, option'
+    );
+
+    if (interactiveElement) return;
+
+    openBookingDetails(bookingId);
+  }
+
+  function closeDocumentModal() {
+    setDocumentModal({
+      isOpen: false,
+      type: 'invoice',
+      invoice: null,
+      receipt: null,
+      booking: null,
+      payments: [],
+      customerName: 'Customer',
+    });
+  }
+
+  async function openBookingInvoice(booking, bookingPayments = []) {
+    if (!booking?.id) return;
+
+    setFetchError('');
+
+    try {
+      const invoice = await generateOrSyncBookingInvoice({
+        bookingId: booking.id,
+        issuedBy: user?.id || null,
+      });
+
+      await insertAuditLog('GENERATE_BOOKING_INVOICE', booking.id, {
+        invoice_id: invoice?.id || null,
+        invoice_number: invoice?.invoice_number || null,
+      });
+
+      setDocumentModal({
+        isOpen: true,
+        type: 'invoice',
+        invoice,
+        receipt: null,
+        booking,
+        payments: bookingPayments,
+        customerName: getCustomerName(booking),
+      });
+    } catch (err) {
+      setFetchError(err.message || 'Failed to generate invoice.');
+    }
+  }
+
+  function openBookingReceipt(booking, payment, bookingPayments = []) {
+    if (!payment) {
+      setFetchError('No receipt found for this booking yet.');
+      return;
+    }
+
+    setDocumentModal({
+      isOpen: true,
+      type: 'receipt',
+      invoice: null,
+      receipt: payment,
+      booking,
+      payments: bookingPayments,
+      customerName: getCustomerName(booking),
+    });
+  }
+
   async function submitPayment(bookingId) {
     const form = paymentForm[bookingId] || {
       amount: '',
@@ -608,18 +767,27 @@ export default function AdminBookings() {
     setFetchError('');
 
     try {
-      await recordPayment({
-        bookingId,
-        amount,
-        paymentType: form.payment_type || 'balance',
-        method: form.method || 'cash',
-        processedBy: user.id,
-      });
+      const { data: paymentRecord, error: paymentError } = await supabase
+        .from('payments')
+        .insert({
+          booking_id: bookingId,
+          amount,
+          payment_type: form.payment_type || 'balance',
+          method: form.method || 'cash',
+          processed_by: user.id,
+        })
+        .select(
+          'id, receipt_number, receipt_status, receipt_issued_at, amount, payment_type, method'
+        )
+        .single();
+
+      if (paymentError) throw paymentError;
 
       await insertAuditLog('RECORD_PAYMENT', bookingId, {
         amount,
         payment_type: form.payment_type || 'balance',
         method: form.method || 'cash',
+        receipt_number: paymentRecord?.receipt_number || null,
       });
 
       const booking = bookings.find((item) => item.id === bookingId);
@@ -643,10 +811,14 @@ export default function AdminBookings() {
           title: 'Payment Recorded',
           message:
             form.payment_type === 'refund'
-              ? `A refund of ${formatPeso(amount)} has been recorded for your booking.`
+              ? `A refund of ${formatPeso(amount)} has been recorded for your booking. Receipt No: ${
+                  paymentRecord?.receipt_number || 'Pending'
+                }.`
               : `Your payment of ${formatPeso(
                   amount
-                )} has been recorded. Remaining balance: ${formatPeso(newBalance)}.`,
+                )} has been recorded. Receipt No: ${
+                  paymentRecord?.receipt_number || 'Pending'
+                }. Remaining balance: ${formatPeso(newBalance)}.`,
           type: 'payment',
           relatedTable: 'bookings',
           relatedId: bookingId,
@@ -658,6 +830,8 @@ export default function AdminBookings() {
         amount,
         balance: newBalance,
         isFullyPaid: newBalance <= 0,
+        receiptNumber: paymentRecord?.receipt_number || null,
+        receiptStatus: paymentRecord?.receipt_status || 'issued',
       });
 
       setTimeout(() => setPaymentToast(null), 4000);
@@ -686,8 +860,13 @@ export default function AdminBookings() {
       pending: 0,
       confirmed: 0,
       in_progress: 0,
+      inspection: 0,
+      repairing: 0,
+      quality_check: 0,
+      ready_for_pickup: 0,
       completed: 0,
       cancelled: 0,
+      rejected: 0,
       no_show: 0,
     };
 
@@ -710,6 +889,7 @@ export default function AdminBookings() {
       const email = String(booking.profiles?.email || '').toLowerCase();
       const phone = String(booking.profiles?.phone || '').toLowerCase();
       const id = String(booking.id || '').toLowerCase();
+      const receiptNumbers = getReceiptNumbers(payments[booking.id] || []).toLowerCase();
 
       const matchesSearch =
         !searchTerm ||
@@ -717,11 +897,12 @@ export default function AdminBookings() {
         serviceName.includes(searchTerm) ||
         email.includes(searchTerm) ||
         phone.includes(searchTerm) ||
-        id.includes(searchTerm);
+        id.includes(searchTerm) ||
+        receiptNumbers.includes(searchTerm);
 
       return matchesStatus && matchesSearch;
     });
-  }, [bookings, filter, search]);
+  }, [bookings, filter, search, payments]);
 
   const paymentStats = useMemo(() => {
     return filtered.reduce(
@@ -876,11 +1057,19 @@ export default function AdminBookings() {
               };
               const isPaymentOpen = expandedPayment === booking.id;
               const isHistoryOpen = expandedHistory === booking.id;
+              const latestPayment = getLatestPayment(bookingPayments);
+              const latestReceiptNumber = latestPayment?.receipt_number;
 
               return (
                 <article
                   key={booking.id}
-                  className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800"
+                  role="button"
+                  tabIndex={0}
+                  onClick={(event) => handleBookingCardClick(event, booking.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') openBookingDetails(booking.id);
+                  }}
+                  className="cursor-pointer overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm transition hover:border-primary-300 hover:shadow-md dark:border-dark-700 dark:bg-dark-800 dark:hover:border-primary-500/40"
                 >
                   <div className="p-5 sm:p-6">
                     <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -891,6 +1080,11 @@ export default function AdminBookings() {
                           <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-mono font-black text-gray-500 dark:bg-dark-900 dark:text-gray-400">
                             #{booking.id?.slice(0, 8).toUpperCase()}
                           </span>
+                          {latestReceiptNumber && (
+                            <span className="rounded-full bg-primary-50 px-3 py-1 text-xs font-mono font-black text-primary-700 ring-1 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25">
+                              OR {latestReceiptNumber}
+                            </span>
+                          )}
                         </div>
 
                         <h2 className="text-xl font-black text-gray-950 dark:text-white">
@@ -988,11 +1182,22 @@ export default function AdminBookings() {
                       </div>
                     </div>
 
-                    <div className="mb-5 h-3 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700">
-                      <div
-                        className="h-full rounded-full bg-primary-600 transition-all"
-                        style={{ width: `${paymentPercent}%` }}
-                      />
+                    <div className="mb-5">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                          Payment Progress
+                        </p>
+                        <p className="text-[11px] font-black text-primary-600 dark:text-primary-400">
+                          {Math.round(paymentPercent)}%
+                        </p>
+                      </div>
+
+                      <div className="h-3 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700">
+                        <div
+                          className="h-full rounded-full bg-primary-600 transition-all"
+                          style={{ width: `${paymentPercent}%` }}
+                        />
+                      </div>
                     </div>
 
                     <div className="mb-5 rounded-3xl border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/60">
@@ -1081,6 +1286,36 @@ export default function AdminBookings() {
                         {isPaymentOpen ? 'Close Form' : '+ Record Payment'}
                       </button>
 
+                      <button
+                        type="button"
+                        onClick={() => openBookingInvoice(booking, bookingPayments)}
+                        className="rounded-2xl border border-primary-200 bg-primary-50 px-4 py-2 text-sm font-black text-primary-700 transition hover:bg-primary-100 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300 dark:hover:bg-primary-500/20"
+                      >
+                        Generate / View Invoice
+                      </button>
+
+                      {latestPayment && (
+                        <button
+                          type="button"
+                          onClick={() => openBookingReceipt(booking, latestPayment, bookingPayments)}
+                          className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
+                        >
+                          View Latest E-Receipt
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => setExpandedProgress(expandedProgress === booking.id ? null : booking.id)}
+                        className={`rounded-2xl px-4 py-2 text-sm font-black transition ${
+                          expandedProgress === booking.id
+                            ? 'bg-primary-600 text-white shadow-lg shadow-primary-600/20'
+                            : 'border border-gray-200 bg-gray-50 text-gray-700 hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400'
+                        }`}
+                      >
+                        {expandedProgress === booking.id ? 'Hide Service Progress' : 'Service Progress'}
+                      </button>
+
                       {bookingPayments.length > 0 && (
                         <button
                           type="button"
@@ -1092,6 +1327,16 @@ export default function AdminBookings() {
                         </button>
                       )}
                     </div>
+
+                    {expandedProgress === booking.id && (
+                      <div className="mt-5">
+                        <ServiceProgressManager
+                          booking={booking}
+                          onUpdated={() => fetchBookings(false)}
+                          compact
+                        />
+                      </div>
+                    )}
 
                     {isHistoryOpen && bookingPayments.length > 0 && (
                       <div className="mt-5 rounded-3xl border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/60">
@@ -1105,29 +1350,48 @@ export default function AdminBookings() {
                               key={payment.id}
                               className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white px-4 py-3 text-xs ring-1 ring-gray-100 dark:bg-dark-800 dark:ring-dark-700"
                             >
-                              <div>
+                              <div className="min-w-0 flex-1">
+                                <div className="mb-2 flex flex-wrap items-center gap-2">
+                                  <span className="rounded-full bg-primary-50 px-3 py-1 font-mono font-black text-primary-700 ring-1 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25">
+                                    OR {getReceiptNumber(payment)}
+                                  </span>
+                                  <span className="rounded-full bg-gray-100 px-3 py-1 font-black capitalize text-gray-600 ring-1 ring-gray-200 dark:bg-dark-900 dark:text-gray-300 dark:ring-dark-700">
+                                    {payment.receipt_status || 'issued'}
+                                  </span>
+                                </div>
+
                                 <p className="font-black capitalize text-gray-950 dark:text-white">
                                   {String(payment.payment_type || '').replace('_', ' ')} ·{' '}
-                                  {payment.method}
+                                  {String(payment.method || 'cash').replace('_', ' ')}
                                 </p>
                                 <p className="mt-1 text-gray-500 dark:text-gray-400">
-                                  {formatDateTime(payment.created_at)} · processed by{' '}
+                                  Issued {formatDateTime(payment.receipt_issued_at || payment.created_at)} · processed by{' '}
                                   {payment.profiles
                                     ? `${payment.profiles.first_name} ${payment.profiles.last_name}`
                                     : 'System'}
                                 </p>
                               </div>
 
-                              <p
-                                className={`font-black ${
-                                  payment.payment_type === 'refund'
-                                    ? 'text-red-600 dark:text-red-300'
-                                    : 'text-green-600 dark:text-green-300'
-                                }`}
-                              >
-                                {payment.payment_type === 'refund' ? '-' : ''}
-                                {formatPeso(payment.amount)}
-                              </p>
+                              <div className="flex flex-shrink-0 flex-col items-end gap-2">
+                                <p
+                                  className={`font-black ${
+                                    payment.payment_type === 'refund'
+                                      ? 'text-red-600 dark:text-red-300'
+                                      : 'text-green-600 dark:text-green-300'
+                                  }`}
+                                >
+                                  {payment.payment_type === 'refund' ? '-' : ''}
+                                  {formatPeso(payment.amount)}
+                                </p>
+
+                                <button
+                                  type="button"
+                                  onClick={() => openBookingReceipt(booking, payment, bookingPayments)}
+                                  className="rounded-xl border border-gray-200 px-3 py-1.5 text-[11px] font-black text-gray-600 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-300"
+                                >
+                                  View E-Receipt
+                                </button>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -1234,11 +1498,27 @@ export default function AdminBookings() {
         )}
       </div>
 
+      <InvoiceReceiptModal
+        isOpen={documentModal.isOpen}
+        type={documentModal.type}
+        invoice={documentModal.invoice}
+        receipt={documentModal.receipt}
+        booking={documentModal.booking}
+        payments={documentModal.payments}
+        customerName={documentModal.customerName}
+        onClose={closeDocumentModal}
+      />
+
       {paymentToast && (
         <div className="fixed bottom-6 right-6 z-50 max-w-xs rounded-3xl border border-primary-100 bg-white px-5 py-4 shadow-2xl dark:border-primary-500/25 dark:bg-dark-800">
           <p className="mb-1 text-sm font-black text-gray-950 dark:text-white">
             {formatPeso(paymentToast.amount)} payment recorded
           </p>
+          {paymentToast.receiptNumber && (
+            <p className="mb-1 font-mono text-xs font-black text-primary-600 dark:text-primary-400">
+              OR {paymentToast.receiptNumber}
+            </p>
+          )}
           <p className="text-xs leading-5 text-gray-600 dark:text-gray-400">
             {paymentToast.isFullyPaid
               ? '✓ Booking is now fully paid.'

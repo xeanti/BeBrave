@@ -2,6 +2,14 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
+import {
+  CONSENT_SOURCE_PAGES,
+  CONSENT_TYPES,
+  acceptCustomerConsent,
+  getConsentDefinitionSafe,
+  hasMyConsent,
+  revokeCustomerConsent,
+} from '../lib/consents';
 
 function formatDateTime(value) {
   if (!value) return '';
@@ -83,6 +91,12 @@ export default function Notifications() {
 
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [notificationConsent, setNotificationConsent] = useState(null);
+  const [notificationConsentAccepted, setNotificationConsentAccepted] = useState(false);
+  const [consentLoading, setConsentLoading] = useState(true);
+  const [consentSaving, setConsentSaving] = useState(false);
+  const [consentMessage, setConsentMessage] = useState('');
+  const [consentMessageType, setConsentMessageType] = useState('success');
 
   useEffect(() => {
     if (!user?.id) return;
@@ -107,6 +121,36 @@ export default function Notifications() {
 
     return () => {
       supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    let isMounted = true;
+
+    async function loadNotificationConsent() {
+      try {
+        const [definition, alreadyAccepted] = await Promise.all([
+          getConsentDefinitionSafe(CONSENT_TYPES.NOTIFICATIONS),
+          hasMyConsent(CONSENT_TYPES.NOTIFICATIONS),
+        ]);
+
+        if (!isMounted) return;
+
+        setNotificationConsent(definition);
+        setNotificationConsentAccepted(alreadyAccepted);
+      } catch (error) {
+        console.warn('Failed to load notification consent:', error);
+      } finally {
+        if (isMounted) setConsentLoading(false);
+      }
+    }
+
+    loadNotificationConsent();
+
+    return () => {
+      isMounted = false;
     };
   }, [user?.id]);
 
@@ -161,6 +205,45 @@ export default function Notifications() {
     navigate(path);
   }
 
+  async function handleNotificationConsentChange(nextValue) {
+    if (!user?.id || consentSaving) return;
+
+    setConsentSaving(true);
+    setConsentMessage('');
+
+    try {
+      if (nextValue) {
+        await acceptCustomerConsent({
+          consentType: CONSENT_TYPES.NOTIFICATIONS,
+          sourcePage: CONSENT_SOURCE_PAGES.NOTIFICATIONS,
+          metadata: {
+            enabled_from_notifications_page: true,
+            existing_notification_count: notifications.length,
+            unread_notification_count: unreadCount,
+          },
+        });
+
+        setNotificationConsentAccepted(true);
+        setConsentMessageType('success');
+        setConsentMessage('Notification consent enabled.');
+      } else {
+        await revokeCustomerConsent(CONSENT_TYPES.NOTIFICATIONS);
+
+        setNotificationConsentAccepted(false);
+        setConsentMessageType('success');
+        setConsentMessage('Notification consent disabled.');
+      }
+    } catch (error) {
+      console.error('Failed to update notification consent:', error);
+      setConsentMessageType('error');
+      setConsentMessage(
+        error.message || 'Failed to update notification consent. Please try again.'
+      );
+    } finally {
+      setConsentSaving(false);
+    }
+  }
+
   const unreadCount = notifications.filter((item) => !item.is_read).length;
 
   return (
@@ -198,6 +281,72 @@ export default function Notifications() {
             </div>
           </div>
         </div>
+
+        <section className="mb-6 rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">
+                {notificationConsent?.title || 'Notification Consent'}
+              </p>
+              <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-400">
+                {consentLoading
+                  ? 'Loading notification consent...'
+                  : notificationConsent?.consent_text ||
+                    'I agree to receive MotoFix notifications about bookings, orders, payments, invoices, e-receipts, service updates, and support messages.'}
+              </p>
+              <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                This preference is saved in your privacy consent records. You can still view existing notifications on this page.
+              </p>
+
+              {consentMessage && (
+                <div
+                  className={`mt-3 rounded-2xl border p-3 text-xs font-semibold ${
+                    consentMessageType === 'success'
+                      ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300'
+                      : 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300'
+                  }`}
+                >
+                  {consentMessage}
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                handleNotificationConsentChange(!notificationConsentAccepted)
+              }
+              disabled={consentLoading || consentSaving}
+              className={`relative h-8 w-14 flex-shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                notificationConsentAccepted
+                  ? 'bg-primary-600'
+                  : 'bg-gray-300 dark:bg-gray-600'
+              }`}
+              aria-label="Toggle notification consent"
+            >
+              <span
+                className={`absolute left-1 top-1 h-6 w-6 rounded-full bg-white shadow transition ${
+                  notificationConsentAccepted ? 'translate-x-6' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="mt-4 flex items-center justify-between rounded-2xl bg-gray-50 px-4 py-3 text-xs ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
+            <span className="font-bold text-gray-600 dark:text-gray-400">
+              Current status
+            </span>
+            <span
+              className={`rounded-full px-3 py-1 font-black ${
+                notificationConsentAccepted
+                  ? 'bg-green-50 text-green-700 ring-1 ring-green-200 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25'
+                  : 'bg-gray-100 text-gray-600 ring-1 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25'
+              }`}
+            >
+              {notificationConsentAccepted ? 'Enabled' : 'Disabled'}
+            </span>
+          </div>
+        </section>
 
         {loading ? (
           <div className="space-y-3">

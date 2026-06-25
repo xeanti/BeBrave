@@ -2,6 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import { sendMessage } from '../lib/chat';
+import {
+  CONSENT_SOURCE_PAGES,
+  CONSENT_TYPES,
+  acceptCustomerConsent,
+  getConsentDefinitionSafe,
+  hasMyConsent,
+} from '../lib/consents';
 
 function formatTime(timestamp) {
   if (!timestamp) return '';
@@ -198,6 +205,9 @@ export default function Chat() {
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState('');
+  const [agreedToChatConsent, setAgreedToChatConsent] = useState(false);
+  const [chatConsent, setChatConsent] = useState(null);
+  const [consentLoading, setConsentLoading] = useState(true);
 
   const [lastUpdated, setLastUpdated] = useState(null);
 
@@ -212,6 +222,36 @@ export default function Chat() {
   useEffect(() => {
     selectedTypeRef.current = selectedType;
   }, [selectedType]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    let isMounted = true;
+
+    async function loadChatConsent() {
+      try {
+        const [definition, alreadyAccepted] = await Promise.all([
+          getConsentDefinitionSafe(CONSENT_TYPES.CHAT_SUPPORT),
+          hasMyConsent(CONSENT_TYPES.CHAT_SUPPORT),
+        ]);
+
+        if (!isMounted) return;
+
+        setChatConsent(definition);
+        setAgreedToChatConsent(alreadyAccepted);
+      } catch (error) {
+        console.warn('Failed to load chat consent definition:', error);
+      } finally {
+        if (isMounted) setConsentLoading(false);
+      }
+    }
+
+    loadChatConsent();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id]);
 
   useEffect(() => {
     if (!user?.id || !selectedType) return;
@@ -430,12 +470,41 @@ export default function Chat() {
     messageChannelRef.current = channel;
   }
 
-  function handleChooseChat(type) {
-    setSelectedType(type);
-    setConversation(null);
-    setMessages([]);
-    setInput('');
+  async function handleChooseChat(type) {
     setFetchError('');
+
+    if (!user?.id) {
+      setFetchError('Please log in before starting a chat.');
+      return;
+    }
+
+    if (!agreedToChatConsent) {
+      setFetchError('Please agree to the chat support privacy consent before starting a chat.');
+      return;
+    }
+
+    try {
+      await acceptCustomerConsent({
+        consentType: CONSENT_TYPES.CHAT_SUPPORT,
+        sourcePage: CONSENT_SOURCE_PAGES.CHAT,
+        metadata: {
+          chat_type: type,
+          using_ai_assistant: type === 'ai',
+          using_human_support: type === 'human',
+        },
+      });
+
+      setSelectedType(type);
+      setConversation(null);
+      setMessages([]);
+      setInput('');
+      setFetchError('');
+    } catch (error) {
+      console.error('Failed to record chat consent:', error);
+      setFetchError(
+        error.message || 'Failed to record chat privacy consent. Please try again.'
+      );
+    }
   }
 
   function handleBackToChoices() {
@@ -580,6 +649,35 @@ export default function Chat() {
               Choose AI Assistant for quick automated help or talk to the MotoFix
               support team for real-person assistance.
             </p>
+          </div>
+
+          {fetchError && (
+            <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+              {fetchError}
+            </div>
+          )}
+
+          <div className="mb-6 rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+            <label className="flex cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                checked={agreedToChatConsent}
+                onChange={(event) => setAgreedToChatConsent(event.target.checked)}
+                className="mt-1 accent-primary-600"
+              />
+              <span className="text-sm leading-6 text-gray-600 dark:text-gray-400">
+                <span className="block font-black text-gray-950 dark:text-white">
+                  {chatConsent?.title || 'Chat Support Consent'}
+                </span>
+                {consentLoading
+                  ? 'Loading privacy consent...'
+                  : chatConsent?.consent_text ||
+                    'I agree that my MotoFix chat messages may be stored and reviewed by admin, staff, or mechanics for customer support and service assistance.'}
+                <span className="mt-2 block rounded-2xl bg-gray-50 px-3 py-2 text-xs text-gray-500 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:text-gray-400 dark:ring-dark-700">
+                  This applies to both AI Assistant and real-person support chat.
+                </span>
+              </span>
+            </label>
           </div>
 
           <div className="grid gap-5 md:grid-cols-2">

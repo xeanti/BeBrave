@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
-import { fetchPaymentsFor, recordPayment, summarizePayments } from '../../lib/payments';
+import { summarizePayments } from '../../lib/payments';
 import { notifyUser } from '../../lib/notifications';
+import { generateOrSyncOrderInvoice } from '../../lib/invoices';
+import InvoiceReceiptModal from '../../components/InvoiceReceiptModal';
 const STATUS_OPTIONS = ['pending', 'confirmed', 'preparing', 'ready', 'completed', 'cancelled'];
 const PAYMENT_TYPES = ['down_payment', 'balance', 'full', 'refund'];
 const PAYMENT_METHODS = ['cash', 'gcash', 'card', 'bank_transfer'];
@@ -26,6 +28,19 @@ function formatDateTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+
+function formatPaymentType(type) {
+  return String(type || 'payment').replace('_', ' ');
+}
+
+function getReceiptNumber(payment) {
+  return payment?.receipt_number || payment?.receiptNumber || `PAY-${payment?.id?.slice(0, 8)?.toUpperCase() || 'PENDING'}`;
+}
+
+function getLatestReceipt(payments = []) {
+  return [...payments].reverse().find((payment) => payment.receipt_number);
 }
 
 function getCustomerName(order) {
@@ -142,6 +157,19 @@ export default function AdminOrders() {
   const [expandedPayment, setExpandedPayment] = useState(null);
   const [expandedHistory, setExpandedHistory] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
+
+  const [invoiceModal, setInvoiceModal] = useState({
+    open: false,
+    invoice: null,
+    order: null,
+    payments: [],
+  });
+  const [receiptModal, setReceiptModal] = useState({
+    open: false,
+    receipt: null,
+    order: null,
+  });
+  const [generatingInvoice, setGeneratingInvoice] = useState(null);
 
   useEffect(() => {
     fetchOrders();
@@ -262,9 +290,19 @@ export default function AdminOrders() {
 
     if (orderRows.length > 0) {
       try {
-        const allPayments = await fetchPaymentsFor({
-          orderIds: orderRows.map((order) => order.id),
-        });
+        const { data: allPayments, error: paymentsError } = await supabase
+          .from('payments')
+          .select(`
+            *,
+            profiles!payments_processed_by_fkey(first_name, last_name, email, role)
+          `)
+          .in(
+            'order_id',
+            orderRows.map((order) => order.id)
+          )
+          .order('created_at', { ascending: true });
+
+        if (paymentsError) throw paymentsError;
 
         const grouped = {};
 
@@ -299,6 +337,47 @@ export default function AdminOrders() {
       entity_id: entityId,
       performed_by: user.id,
       details,
+    });
+  }
+
+  async function handleViewInvoice(order) {
+    if (!order?.id) return;
+
+    setGeneratingInvoice(order.id);
+    setFetchError('');
+
+    try {
+      const invoice = await generateOrSyncOrderInvoice({
+        orderId: order.id,
+        issuedBy: user?.id || null,
+      });
+
+      await insertAuditLog('GENERATE_ORDER_INVOICE', order.id, {
+        invoice_number: invoice?.invoice_number || null,
+      });
+
+      setInvoiceModal({
+        open: true,
+        invoice,
+        order,
+        payments: payments[order.id] || [],
+      });
+
+      await fetchOrders(false);
+    } catch (err) {
+      setFetchError(err.message || 'Failed to generate invoice.');
+    } finally {
+      setGeneratingInvoice(null);
+    }
+  }
+
+  function handleViewReceipt(order, payment) {
+    if (!order || !payment) return;
+
+    setReceiptModal({
+      open: true,
+      receipt: payment,
+      order,
     });
   }
 
@@ -382,18 +461,25 @@ const { error } = await supabase
     setFetchError('');
 
     try {
-      await recordPayment({
-        orderId,
-        amount,
-        paymentType: form.payment_type || 'balance',
-        method: form.method || 'cash',
-        processedBy: user.id,
-      });
+      const { data: paymentRecord, error: paymentError } = await supabase
+        .from('payments')
+        .insert({
+          order_id: orderId,
+          amount,
+          payment_type: form.payment_type || 'balance',
+          method: form.method || 'cash',
+          processed_by: user.id,
+        })
+        .select('id, receipt_number, receipt_status, receipt_issued_at, payment_type, method, amount')
+        .single();
+
+      if (paymentError) throw paymentError;
 
       await insertAuditLog('RECORD_ORDER_PAYMENT', orderId, {
         amount,
         payment_type: form.payment_type || 'balance',
         method: form.method || 'cash',
+        receipt_number: paymentRecord?.receipt_number || null,
       });
 
       const currentOrder = orders.find((order) => order.id === orderId);
@@ -415,24 +501,29 @@ const { error } = await supabase
       const newBalance = Math.max(total - newTotalPaid, 0);
 
       if (currentOrder?.customer_id) {
-  await notifyUser({
-    userId: currentOrder.customer_id,
-    title: 'Order Payment Recorded',
-    message:
-      form.payment_type === 'refund'
-        ? `A refund of ${formatPeso(amount)} has been recorded for your order.`
-        : `Your order payment of ${formatPeso(amount)} has been recorded. Remaining balance: ${formatPeso(newBalance)}.`,
-    type: 'payment',
-    relatedTable: 'orders',
-    relatedId: orderId,
-  });
-}
+        const receiptText = paymentRecord?.receipt_number
+          ? ` Receipt No: ${paymentRecord.receipt_number}.`
+          : '';
+
+        await notifyUser({
+          userId: currentOrder.customer_id,
+          title: 'Order Payment Recorded',
+          message:
+            form.payment_type === 'refund'
+              ? `A refund of ${formatPeso(amount)} has been recorded for your order.${receiptText}`
+              : `Your order payment of ${formatPeso(amount)} has been recorded. Remaining balance: ${formatPeso(newBalance)}.${receiptText}`,
+          type: 'payment',
+          relatedTable: 'orders',
+          relatedId: orderId,
+        });
+      }
 
       setPaymentToast({
         orderId,
         amount,
         balance: newBalance,
         isFullyPaid: newBalance <= 0,
+        receiptNumber: paymentRecord?.receipt_number || null,
       });
 
       setTimeout(() => setPaymentToast(null), 4000);
@@ -488,6 +579,10 @@ const { error } = await supabase
         .map((item) => item.parts?.name || '')
         .join(' ')
         .toLowerCase();
+      const receiptNumbers = (payments[order.id] || [])
+        .map((payment) => payment.receipt_number || '')
+        .join(' ')
+        .toLowerCase();
 
       const matchesSearch =
         !searchTerm ||
@@ -495,11 +590,12 @@ const { error } = await supabase
         email.includes(searchTerm) ||
         phone.includes(searchTerm) ||
         id.includes(searchTerm) ||
-        partNames.includes(searchTerm);
+        partNames.includes(searchTerm) ||
+        receiptNumbers.includes(searchTerm);
 
       return matchesStatus && matchesSearch;
     });
-  }, [orders, filter, search]);
+  }, [orders, filter, search, payments]);
 
   const paymentStats = useMemo(() => {
     return filtered.reduce(
@@ -628,6 +724,7 @@ const { error } = await supabase
             {filtered.map((order) => {
               const total = Number(order.total_amount) || 0;
               const orderPayments = payments[order.id] || [];
+              const latestReceipt = getLatestReceipt(orderPayments);
               const { totalPaid } = summarizePayments(orderPayments);
               const balance = Math.max(total - totalPaid, 0);
               const isFullyPaid = total > 0 && balance <= 0;
@@ -655,6 +752,11 @@ const { error } = await supabase
                           <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-mono font-black text-gray-500 dark:bg-dark-900 dark:text-gray-400">
                             #{order.id?.slice(0, 8).toUpperCase()}
                           </span>
+                          {latestReceipt && (
+                            <span className="rounded-full bg-primary-50 px-3 py-1 text-xs font-mono font-black text-primary-700 ring-1 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25">
+                              OR {getReceiptNumber(latestReceipt)}
+                            </span>
+                          )}
                         </div>
 
                         <h2 className="text-xl font-black text-gray-950 dark:text-white">
@@ -823,6 +925,25 @@ const { error } = await supabase
                     <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
+                        onClick={() => handleViewInvoice(order)}
+                        disabled={generatingInvoice === order.id}
+                        className="rounded-2xl bg-accent-500 px-4 py-2 text-sm font-black text-white shadow-lg shadow-accent-500/20 transition hover:bg-accent-600 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {generatingInvoice === order.id ? 'Generating...' : '🧾 Generate / View Invoice'}
+                      </button>
+
+                      {latestReceipt && (
+                        <button
+                          type="button"
+                          onClick={() => handleViewReceipt(order, latestReceipt)}
+                          className="rounded-2xl border border-green-200 bg-green-50 px-4 py-2 text-sm font-black text-green-700 transition hover:bg-green-100 dark:border-green-500/25 dark:bg-green-500/10 dark:text-green-300 dark:hover:bg-green-500/20"
+                        >
+                          View Latest E-Receipt
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
                         onClick={() => setExpandedPayment(isPaymentOpen ? null : order.id)}
                         className={`rounded-2xl px-4 py-2 text-sm font-black transition ${
                           isPaymentOpen
@@ -857,28 +978,56 @@ const { error } = await supabase
                               key={payment.id}
                               className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white px-4 py-3 text-xs ring-1 ring-gray-100 dark:bg-dark-800 dark:ring-dark-700"
                             >
-                              <div>
+                              <div className="min-w-0 flex-1">
+                                <div className="mb-1 flex flex-wrap items-center gap-2">
+                                  <span className="rounded-full bg-primary-50 px-3 py-1 font-mono text-[11px] font-black text-primary-700 ring-1 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25">
+                                    OR {getReceiptNumber(payment)}
+                                  </span>
+                                  <span className="rounded-full bg-gray-100 px-3 py-1 text-[11px] font-black capitalize text-gray-600 ring-1 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25">
+                                    {formatPaymentType(payment.payment_type)}
+                                  </span>
+                                  {payment.receipt_status && (
+                                    <span className="rounded-full bg-green-50 px-3 py-1 text-[11px] font-black capitalize text-green-700 ring-1 ring-green-200 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25">
+                                      {payment.receipt_status}
+                                    </span>
+                                  )}
+                                </div>
+
                                 <p className="font-black capitalize text-gray-950 dark:text-white">
-                                  {String(payment.payment_type || '').replace('_', ' ')} · {payment.method}
+                                  {payment.method || 'cash'}
                                 </p>
                                 <p className="mt-1 text-gray-500 dark:text-gray-400">
-                                  {formatDateTime(payment.created_at)} · processed by{' '}
+                                  Issued {formatDateTime(payment.receipt_issued_at || payment.created_at)} · processed by{' '}
                                   {payment.profiles
                                     ? `${payment.profiles.first_name} ${payment.profiles.last_name}`
                                     : 'System'}
                                 </p>
+                                {payment.notes && (
+                                  <p className="mt-1 text-gray-500 dark:text-gray-400">
+                                    Note: {payment.notes}
+                                  </p>
+                                )}
                               </div>
 
-                              <p
-                                className={`font-black ${
-                                  payment.payment_type === 'refund'
-                                    ? 'text-red-600 dark:text-red-300'
-                                    : 'text-green-600 dark:text-green-300'
-                                }`}
-                              >
-                                {payment.payment_type === 'refund' ? '-' : ''}
-                                {formatPeso(payment.amount)}
-                              </p>
+                              <div className="flex flex-col items-end gap-2">
+                                <p
+                                  className={`font-black ${
+                                    payment.payment_type === 'refund'
+                                      ? 'text-red-600 dark:text-red-300'
+                                      : 'text-green-600 dark:text-green-300'
+                                  }`}
+                                >
+                                  {payment.payment_type === 'refund' ? '-' : ''}
+                                  {formatPeso(payment.amount)}
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => handleViewReceipt(order, payment)}
+                                  className="rounded-xl border border-gray-200 px-3 py-1.5 text-[11px] font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
+                                >
+                                  View E-Receipt
+                                </button>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -988,11 +1137,48 @@ const { error } = await supabase
         )}
       </div>
 
+      <InvoiceReceiptModal
+        isOpen={invoiceModal.open}
+        type="invoice"
+        invoice={invoiceModal.invoice}
+        payments={invoiceModal.payments}
+        order={invoiceModal.order}
+        customerName={invoiceModal.order ? getCustomerName(invoiceModal.order) : ''}
+        onClose={() =>
+          setInvoiceModal({
+            open: false,
+            invoice: null,
+            order: null,
+            payments: [],
+          })
+        }
+      />
+
+      <InvoiceReceiptModal
+        isOpen={receiptModal.open}
+        type="receipt"
+        receipt={receiptModal.receipt}
+        order={receiptModal.order}
+        customerName={receiptModal.order ? getCustomerName(receiptModal.order) : ''}
+        onClose={() =>
+          setReceiptModal({
+            open: false,
+            receipt: null,
+            order: null,
+          })
+        }
+      />
+
       {paymentToast && (
         <div className="fixed bottom-6 right-6 z-50 max-w-xs rounded-3xl border border-primary-100 bg-white px-5 py-4 shadow-2xl dark:border-primary-500/25 dark:bg-dark-800">
           <p className="mb-1 text-sm font-black text-gray-950 dark:text-white">
             {formatPeso(paymentToast.amount)} payment recorded
           </p>
+          {paymentToast.receiptNumber && (
+            <p className="mb-1 font-mono text-xs font-black text-primary-600 dark:text-primary-400">
+              OR {paymentToast.receiptNumber}
+            </p>
+          )}
           <p className="text-xs leading-5 text-gray-600 dark:text-gray-400">
             {paymentToast.isFullyPaid
               ? '✓ Order invoice is fully settled.'

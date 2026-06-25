@@ -5,6 +5,12 @@ import { getDownPaymentPercent } from '../lib/settings';
 import { supabase } from '../lib/supabaseClient';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { notifyRole, notifyUser } from '../lib/notifications';
+import {
+  CONSENT_SOURCE_PAGES,
+  CONSENT_TYPES,
+  acceptCustomerConsent,
+  getConsentDefinitionSafe,
+} from '../lib/consents';
 
 const GCASH_QR_IMAGE = 'https://wcqqduuimpjipwvwzyzx.supabase.co/storage/v1/object/public/motorcycle-photos/MISCS/GCASH%20(1).jpg';
 
@@ -116,6 +122,9 @@ export default function Booking() {
   const [messageType, setMessageType] = useState('success');
   const [loading, setLoading] = useState(false);
   const [downPaymentRate, setDownPaymentRate] = useState(0.15);
+  const [agreedToBookingConsent, setAgreedToBookingConsent] = useState(false);
+  const [bookingConsent, setBookingConsent] = useState(null);
+  const [consentLoading, setConsentLoading] = useState(true);
 
   useEffect(() => {
     fetchServices();
@@ -129,6 +138,30 @@ export default function Booking() {
       setForm((f) => ({ ...f, service_id: location.state.service_id }));
     }
   }, [location.state?.service_id]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadBookingConsent() {
+      try {
+        const definition = await getConsentDefinitionSafe(
+          CONSENT_TYPES.BOOKING_PROCESSING
+        );
+
+        if (isMounted) setBookingConsent(definition);
+      } catch (error) {
+        console.warn('Failed to load booking consent definition:', error);
+      } finally {
+        if (isMounted) setConsentLoading(false);
+      }
+    }
+
+    loadBookingConsent();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   async function fetchServices() {
     const { data, error } = await supabase
@@ -239,26 +272,55 @@ export default function Booking() {
       return;
     }
 
+    if (!agreedToBookingConsent) {
+      setMessage('Please agree to the booking privacy consent before submitting.');
+      setMessageType('error');
+      return;
+    }
+
     setMessage('');
     setLoading(true);
 
     try {
-const { data: booking, error } = await supabase
-  .from('bookings')
-  .insert({
-    customer_id: user.id,
-    service_id: form.service_id || null,
-    mechanic_id: selectedMechanic || null,
-    booking_date: form.booking_date,
-    booking_time: form.booking_time,
-    notes: form.notes,
-    status: 'pending',
-    down_payment: Number(downpayment) || 0,
-  })
-  .select('id')
-  .single();
+      await acceptCustomerConsent({
+        consentType: CONSENT_TYPES.BOOKING_PROCESSING,
+        sourcePage: CONSENT_SOURCE_PAGES.BOOKING,
+        metadata: {
+          service_id: form.service_id,
+          booking_date: form.booking_date,
+          booking_time: form.booking_time,
+          mechanic_selected: Boolean(selectedMechanic),
+          include_cart_parts: includeCartParts,
+          cart_item_count: includeCartParts ? cartQuantity : 0,
+          estimated_total: grandTotalEstimate,
+          down_payment: Number(downpayment) || 0,
+        },
+      });
 
-if (error) throw error;
+const { data: booking, error } = await supabase.rpc(
+  'create_booking_with_conflict_check',
+  {
+    p_service_id: form.service_id || null,
+    p_mechanic_id: selectedMechanic || null,
+    p_booking_date: form.booking_date,
+    p_booking_time: form.booking_time,
+    p_notes: form.notes,
+    p_down_payment: Number(downpayment) || 0,
+  }
+);
+
+if (error) {
+  if (
+    error.message?.toLowerCase().includes('booking conflict') ||
+    error.code === '23505'
+  ) {
+    throw new Error(
+      'This mechanic already has a booking that overlaps with your selected time. Please choose another time or mechanic.'
+    );
+  }
+
+  throw error;
+}
 
 await notifyUser({
   userId: user.id,
@@ -864,6 +926,26 @@ if (selectedMechanic) {
                   <strong>{formatPeso(downpayment)}</strong> is required to confirm your booking.
                 </div>
               )}
+
+              <div className="mt-5 rounded-2xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/70">
+                <label className="flex cursor-pointer items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={agreedToBookingConsent}
+                    onChange={(event) => setAgreedToBookingConsent(event.target.checked)}
+                    className="mt-1 accent-primary-600"
+                  />
+                  <span className="text-xs leading-5 text-gray-600 dark:text-gray-400">
+                    <span className="block font-black text-gray-900 dark:text-white">
+                      {bookingConsent?.title || 'Booking Privacy Consent'}
+                    </span>
+                    {consentLoading
+                      ? 'Loading privacy consent...'
+                      : bookingConsent?.consent_text ||
+                        'I agree that MotoFix may use my booking details, motorcycle/service information, contact details, preferred schedule, notes, and assigned mechanic information to process my service request.'}
+                  </span>
+                </label>
+              </div>
 
               <button
                 type="submit"

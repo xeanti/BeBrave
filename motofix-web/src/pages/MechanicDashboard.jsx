@@ -2,8 +2,19 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
+import ServiceProgressManager from '../components/ServiceProgressManager';
 
-const STATUS_FLOW = ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'];
+const STATUS_FLOW = [
+  'pending',
+  'confirmed',
+  'in_progress',
+  'inspection',
+  'repairing',
+  'quality_check',
+  'ready_for_pickup',
+  'completed',
+  'cancelled',
+];
 
 const STATUS_CONFIG = {
   pending: {
@@ -26,6 +37,34 @@ const STATUS_CONFIG = {
     classes:
       'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/25',
     dot: 'bg-blue-500',
+  },
+  inspection: {
+    label: 'Inspection',
+    icon: '🔍',
+    classes:
+      'bg-indigo-50 text-indigo-700 ring-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-300 dark:ring-indigo-500/25',
+    dot: 'bg-indigo-500',
+  },
+  repairing: {
+    label: 'Repairing',
+    icon: '🛠️',
+    classes:
+      'bg-purple-50 text-purple-700 ring-purple-200 dark:bg-purple-500/10 dark:text-purple-300 dark:ring-purple-500/25',
+    dot: 'bg-purple-500',
+  },
+  quality_check: {
+    label: 'Quality Check',
+    icon: '☑️',
+    classes:
+      'bg-cyan-50 text-cyan-700 ring-cyan-200 dark:bg-cyan-500/10 dark:text-cyan-300 dark:ring-cyan-500/25',
+    dot: 'bg-cyan-500',
+  },
+  ready_for_pickup: {
+    label: 'Ready for Pickup',
+    icon: '🏁',
+    classes:
+      'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/25',
+    dot: 'bg-emerald-500',
   },
   completed: {
     label: 'Completed',
@@ -647,7 +686,7 @@ export default function MechanicDashboard() {
   );
 }
 
-function BookingCard({ booking, updatingId, onUpdateStatus }) {
+function BookingCard({ booking, updatingId, onUpdateStatus, onProgressUpdated }) {
   const [expanded, setExpanded] = useState(false);
 
   const isUpdating = updatingId === booking.id;
@@ -724,7 +763,7 @@ function BookingCard({ booking, updatingId, onUpdateStatus }) {
 
           <div>
             <p className="mb-3 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
-              Update Status
+              Quick Status Update
             </p>
 
             <div className="flex flex-wrap gap-2">
@@ -751,6 +790,14 @@ function BookingCard({ booking, updatingId, onUpdateStatus }) {
                 </span>
               )}
             </div>
+          </div>
+
+          <div className="mt-5">
+            <ServiceProgressManager
+              booking={booking}
+              onUpdated={onProgressUpdated}
+              compact
+            />
           </div>
         </div>
       )}

@@ -2,9 +2,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDownPaymentPercent } from '../lib/settings';
 import { notifyRole, notifyUser } from '../lib/notifications';
+import { adjustPartStock } from '../lib/inventory';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../lib/supabaseClient';
+import {
+  CONSENT_SOURCE_PAGES,
+  CONSENT_TYPES,
+  acceptMultipleCustomerConsents,
+  getConsentDefinitionSafe,
+} from '../lib/consents';
 
 const GCASH_QR_IMAGE =
   'https://wcqqduuimpjipwvwzyzx.supabase.co/storage/v1/object/public/motorcycle-photos/MISCS/GCASH%20(1).jpg';
@@ -32,6 +39,10 @@ export default function Checkout() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [downPaymentRate, setDownPaymentRate] = useState(0.15);
+  const [agreedToOrderConsent, setAgreedToOrderConsent] = useState(false);
+  const [orderConsent, setOrderConsent] = useState(null);
+  const [invoiceConsent, setInvoiceConsent] = useState(null);
+  const [consentLoading, setConsentLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
@@ -43,6 +54,34 @@ export default function Checkout() {
       .catch(() => {
         if (mounted) setDownPaymentRate(0.15);
       });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadCheckoutConsents() {
+      try {
+        const [orderDefinition, invoiceDefinition] = await Promise.all([
+          getConsentDefinitionSafe(CONSENT_TYPES.ORDER_PAYMENT_PROCESSING),
+          getConsentDefinitionSafe(CONSENT_TYPES.INVOICE_RECEIPT),
+        ]);
+
+        if (!mounted) return;
+
+        setOrderConsent(orderDefinition);
+        setInvoiceConsent(invoiceDefinition);
+      } catch (err) {
+        console.warn('Failed to load checkout consent definitions:', err);
+      } finally {
+        if (mounted) setConsentLoading(false);
+      }
+    }
+
+    loadCheckoutConsents();
 
     return () => {
       mounted = false;
@@ -68,10 +107,31 @@ export default function Checkout() {
 
     if (cart.length === 0 || submitting) return;
 
+    if (!agreedToOrderConsent) {
+      setError('Please agree to the order/payment privacy consent before placing your order.');
+      return;
+    }
+
     setSubmitting(true);
     setError('');
 
     try {
+      await acceptMultipleCustomerConsents({
+        consentTypes: [
+          CONSENT_TYPES.ORDER_PAYMENT_PROCESSING,
+          CONSENT_TYPES.INVOICE_RECEIPT,
+        ],
+        sourcePage: CONSENT_SOURCE_PAGES.CHECKOUT,
+        metadata: {
+          cart_item_count: itemCount,
+          cart_total: total,
+          down_payment: Number(downPayment) || 0,
+          remaining_balance: Number(remainingBalance) || 0,
+          payment_method_hint: 'gcash',
+          notes_provided: Boolean(notes.trim()),
+        },
+      });
+
       const { data: order, error: orderError } = await supabase
         .from('orders')
         .insert({
@@ -102,12 +162,13 @@ export default function Checkout() {
       if (itemsError) throw itemsError;
 
       for (const item of cart) {
-        const { error: stockError } = await supabase.rpc('decrement_stock', {
-          part_id: item.id,
-          qty: item.quantity,
+        await adjustPartStock({
+          partId: item.id,
+          movementType: 'sold_order',
+          quantity: item.quantity,
+          reason: 'Part sold through customer checkout',
+          relatedOrderId: order.id,
         });
-
-        if (stockError) throw stockError;
       }
 
       await notifyUser({
@@ -458,6 +519,37 @@ export default function Checkout() {
                     {formatPeso(total)}
                   </span>
                 </div>
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/70">
+                <label className="flex cursor-pointer items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={agreedToOrderConsent}
+                    onChange={(event) => setAgreedToOrderConsent(event.target.checked)}
+                    className="mt-1 accent-primary-600"
+                  />
+                  <span className="text-xs leading-5 text-gray-600 dark:text-gray-400">
+                    <span className="block font-black text-gray-900 dark:text-white">
+                      Order, Payment, Invoice & E-Receipt Privacy Consent
+                    </span>
+
+                    {consentLoading ? (
+                      'Loading privacy consent...'
+                    ) : (
+                      <>
+                        <span className="block">
+                          {orderConsent?.consent_text ||
+                            'I agree that MotoFix may use my order, cart, payment, contact, and transaction information to process parts orders, payment records, invoices, and e-receipts.'}
+                        </span>
+                        <span className="mt-2 block">
+                          {invoiceConsent?.consent_text ||
+                            'I agree that MotoFix may generate and store invoices, official receipt numbers, e-receipts, and payment history for my orders and bookings.'}
+                        </span>
+                      </>
+                    )}
+                  </span>
+                </label>
               </div>
 
               <button

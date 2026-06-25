@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../lib/supabaseClient';
+import {
+  CONSENT_SOURCE_PAGES,
+  CONSENT_TYPES,
+  acceptCustomerConsent,
+  getConsentDefinitionSafe,
+} from '../lib/consents';
 
 const MAX_PREVIEW_PARTS = 3;
 
@@ -248,6 +254,9 @@ export default function Customize() {
   const [pageLoading, setPageLoading] = useState(true);
   const [error, setError] = useState('');
   const [cartMessage, setCartMessage] = useState('');
+  const [agreedToAiConsent, setAgreedToAiConsent] = useState(false);
+  const [aiPhotoConsent, setAiPhotoConsent] = useState(null);
+  const [consentLoading, setConsentLoading] = useState(true);
 
   useEffect(() => {
     fetchModels();
@@ -264,6 +273,30 @@ export default function Customize() {
 
     return () => {
       supabase.removeChannel(channel);
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadAiPhotoConsent() {
+      try {
+        const definition = await getConsentDefinitionSafe(
+          CONSENT_TYPES.AI_PHOTO_PROCESSING
+        );
+
+        if (isMounted) setAiPhotoConsent(definition);
+      } catch (error) {
+        console.warn('Failed to load AI photo consent definition:', error);
+      } finally {
+        if (isMounted) setConsentLoading(false);
+      }
+    }
+
+    loadAiPhotoConsent();
+
+    return () => {
+      isMounted = false;
     };
   }, []);
 
@@ -331,6 +364,7 @@ export default function Customize() {
     setUploadedPreview(null);
     setOwnMake('');
     setOwnModel('');
+    setAgreedToAiConsent(false);
     resetDownstream();
   }
 
@@ -350,6 +384,7 @@ export default function Customize() {
     setUploadedPhoto(file);
     setUploadedPreview(URL.createObjectURL(file));
     setResultImage(null);
+    setAgreedToAiConsent(false);
     setError('');
   }
 
@@ -530,10 +565,29 @@ export default function Customize() {
       return;
     }
 
+    if (!agreedToAiConsent) {
+      setError('Please agree to the AI photo processing consent before generating a preview.');
+      return;
+    }
+
     setLoading(true);
     setResultImage(null);
 
     try {
+      await acceptCustomerConsent({
+        consentType: CONSENT_TYPES.AI_PHOTO_PROCESSING,
+        sourcePage: CONSENT_SOURCE_PAGES.CUSTOMIZE,
+        metadata: {
+          image_source: imageSource,
+          uploaded_own_photo: imageSource === 'own',
+          selected_model_id: imageSource === 'reference' ? selectedModelId : null,
+          motorcycle_label: motorcycleLabel || 'Customer motorcycle',
+          selected_part_count: selectedParts.length,
+          selected_part_ids: selectedParts,
+          selected_part_names: selectedPartObjects.map((part) => part.name),
+        },
+      });
+
       let photoUrl;
 
       if (imageSource === 'reference') {
@@ -1059,6 +1113,31 @@ export default function Customize() {
                     })}
                   </div>
                 )}
+              </section>
+            )}
+
+            {readyForParts && (
+              <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+                <label className="flex cursor-pointer items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={agreedToAiConsent}
+                    onChange={(event) => setAgreedToAiConsent(event.target.checked)}
+                    className="mt-1 accent-primary-600"
+                  />
+                  <span className="text-xs leading-5 text-gray-600 dark:text-gray-400">
+                    <span className="block text-sm font-black text-gray-950 dark:text-white">
+                      {aiPhotoConsent?.title || 'AI Photo Processing Consent'}
+                    </span>
+                    {consentLoading
+                      ? 'Loading privacy consent...'
+                      : aiPhotoConsent?.consent_text ||
+                        'I agree that MotoFix may process my uploaded motorcycle photo only for generating the customization preview.'}
+                    <span className="mt-2 block rounded-2xl bg-gray-50 px-3 py-2 text-[11px] text-gray-500 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:text-gray-400 dark:ring-dark-700">
+                      MotoFix will use the selected motorcycle photo, selected parts, and AI reference images only to generate your preview.
+                    </span>
+                  </span>
+                </label>
               </section>
             )}
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
+import { adjustPartStock } from '../../lib/inventory';
 
 const EMPTY_FORM = {
   name: '',
@@ -328,11 +329,12 @@ export default function AdminParts() {
       return;
     }
 
+    const stockQuantity = parseInt(form.stock_quantity, 10);
+
     const payload = {
       name: form.name.trim(),
       category: form.category.trim() || null,
       price: parseFloat(form.price),
-      stock_quantity: parseInt(form.stock_quantity, 10),
       reorder_threshold: parseInt(form.reorder_threshold || '5', 10),
       compatible_models: parseCompatibleModels(form.compatible_models),
       image_url: form.image_url.trim() || null,
@@ -346,6 +348,9 @@ export default function AdminParts() {
 
     try {
       if (editingId) {
+        const currentPart = parts.find((part) => part.id === editingId);
+        const currentStock = Number(currentPart?.stock_quantity) || 0;
+
         const { error } = await supabase
           .from('parts')
           .update(payload)
@@ -353,13 +358,34 @@ export default function AdminParts() {
 
         if (error) throw error;
 
-        await insertAuditLog('UPDATE_PART', editingId, payload);
+        if (stockQuantity !== currentStock) {
+          const difference = Math.abs(stockQuantity - currentStock);
+          const movementType = stockQuantity > currentStock ? 'stock_in' : 'stock_out';
+
+          await adjustPartStock({
+            partId: editingId,
+            movementType,
+            quantity: difference,
+            reason:
+              stockQuantity > currentStock
+                ? 'Stock increased from edit part form'
+                : 'Stock decreased from edit part form',
+          });
+        }
+
+        await insertAuditLog('UPDATE_PART', editingId, {
+          ...payload,
+          previous_stock_quantity: currentStock,
+          new_stock_quantity: stockQuantity,
+        });
+
         setToast(`✓ ${payload.name} updated`);
       } else {
         const { data, error } = await supabase
           .from('parts')
           .insert({
             ...payload,
+            stock_quantity: 0,
             is_active: true,
           })
           .select('id')
@@ -367,10 +393,19 @@ export default function AdminParts() {
 
         if (error) throw error;
 
+        if (stockQuantity > 0) {
+          await adjustPartStock({
+            partId: data.id,
+            movementType: 'stock_in',
+            quantity: stockQuantity,
+            reason: 'Initial stock when part was created',
+          });
+        }
+
         await insertAuditLog('CREATE_PART', data.id, {
           name: payload.name,
           price: payload.price,
-          stock_quantity: payload.stock_quantity,
+          stock_quantity: stockQuantity,
         });
 
         setToast(`✓ ${payload.name} added to inventory`);
@@ -410,8 +445,17 @@ export default function AdminParts() {
     }
   }
 
-  async function updateStock(id, qty) {
+  async function updateStock(id, qty, reason = 'Manual stock adjustment') {
     if (Number.isNaN(qty) || qty < 0) return;
+
+    const currentPart = parts.find((part) => part.id === id);
+    if (!currentPart) return;
+
+    const currentStock = Number(currentPart.stock_quantity) || 0;
+    if (qty === currentStock) return;
+
+    const quantity = Math.abs(qty - currentStock);
+    const movementType = qty > currentStock ? 'stock_in' : 'stock_out';
 
     setUpdatingStockId(id);
     const previous = parts;
@@ -421,16 +465,15 @@ export default function AdminParts() {
     );
 
     try {
-      const { error } = await supabase
-        .from('parts')
-        .update({ stock_quantity: qty })
-        .eq('id', id);
-
-      if (error) throw error;
-
-      await insertAuditLog('UPDATE_PART_STOCK', id, {
-        new_stock_quantity: qty,
+      await adjustPartStock({
+        partId: id,
+        movementType,
+        quantity,
+        reason,
       });
+
+      setToast(`✓ Stock updated: ${currentStock} → ${qty}`);
+      await fetchParts(false);
     } catch (err) {
       setParts(previous);
       setToast(`❌ ${err.message || 'Failed to update stock.'}`);
@@ -440,8 +483,16 @@ export default function AdminParts() {
   }
 
   function adjustStock(part, delta) {
-    const next = Math.max(0, (Number(part.stock_quantity) || 0) + delta);
-    updateStock(part.id, next);
+    const currentStock = Number(part.stock_quantity) || 0;
+    const next = Math.max(0, currentStock + delta);
+
+    updateStock(
+      part.id,
+      next,
+      delta > 0
+        ? 'Stock increased with quick add button'
+        : 'Stock decreased with quick subtract button'
+    );
   }
 
   function commitStockInput(part) {
@@ -452,7 +503,7 @@ export default function AdminParts() {
     const qty = parseInt(raw, 10);
 
     if (!Number.isNaN(qty) && qty >= 0 && qty !== part.stock_quantity) {
-      updateStock(part.id, qty);
+      updateStock(part.id, qty, 'Stock adjusted from manual stock input');
     }
 
     setStockEdits((previous) => {

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
-import { fetchPaymentsFor, summarizePayments } from '../lib/payments';
+import { summarizePayments } from '../lib/payments';
 
 function formatPeso(value) {
   const amount = Number(value) || 0;
@@ -225,9 +225,26 @@ export default function MyOrders() {
 
     if (orderData.length > 0) {
       try {
-        const allPayments = await fetchPaymentsFor({
-          orderIds: orderData.map((order) => order.id),
-        });
+        const orderIds = orderData.map((order) => order.id);
+
+        const { data: allPayments, error: paymentsError } = await supabase
+          .from('payments')
+          .select(`
+            id,
+            order_id,
+            amount,
+            payment_type,
+            method,
+            created_at,
+            receipt_number,
+            receipt_status,
+            receipt_issued_at,
+            profiles!payments_processed_by_fkey(first_name, last_name)
+          `)
+          .in('order_id', orderIds)
+          .order('created_at', { ascending: true });
+
+        if (paymentsError) throw paymentsError;
 
         const grouped = {};
 
@@ -586,28 +603,54 @@ export default function MyOrders() {
                             {orderPayments.map((payment) => (
                               <div
                                 key={payment.id}
-                                className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-white px-3 py-2 text-xs ring-1 ring-gray-100 dark:bg-dark-800 dark:ring-dark-700"
+                                className="rounded-2xl bg-white px-3 py-3 text-xs ring-1 ring-gray-100 dark:bg-dark-800 dark:ring-dark-700"
                               >
-                                <div>
-                                  <p className="font-black text-gray-950 dark:text-white">
-                                    {formatPeso(payment.amount)}
-                                  </p>
-                                  <p className="mt-0.5 text-gray-500 dark:text-gray-400">
-                                    {formatDate(payment.created_at)} ·{' '}
-                                    <span className="capitalize">
-                                      {String(payment.payment_type || '').replace('_', ' ')}
-                                    </span>
-                                  </p>
+                                <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                                  <div>
+                                    <p className="font-black text-gray-950 dark:text-white">
+                                      {formatPeso(payment.amount)}
+                                    </p>
+                                    <p className="mt-0.5 text-gray-500 dark:text-gray-400">
+                                      {formatDate(payment.created_at)} ·{' '}
+                                      <span className="capitalize">
+                                        {String(payment.payment_type || '').replace('_', ' ')}
+                                      </span>
+                                      {payment.method && (
+                                        <>
+                                          {' '}·{' '}
+                                          <span className="uppercase">{payment.method}</span>
+                                        </>
+                                      )}
+                                    </p>
+                                  </div>
+
+                                  <div className="text-right">
+                                    <p className="text-[10px] font-black uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                                      Receipt No.
+                                    </p>
+                                    <p className="font-black text-primary-700 dark:text-primary-300">
+                                      {payment.receipt_number || 'Pending'}
+                                    </p>
+                                  </div>
                                 </div>
 
-                                {payment.profiles && (
-                                  <p className="text-right text-gray-500 dark:text-gray-400">
-                                    Processed by{' '}
+                                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-2 dark:border-dark-700">
+                                  <p className="text-gray-500 dark:text-gray-400">
+                                    Issued:{' '}
                                     <span className="font-bold text-gray-700 dark:text-gray-300">
-                                      {payment.profiles.first_name} {payment.profiles.last_name}
+                                      {formatDateTime(payment.receipt_issued_at || payment.created_at)}
                                     </span>
                                   </p>
-                                )}
+
+                                  {payment.profiles && (
+                                    <p className="text-right text-gray-500 dark:text-gray-400">
+                                      Processed by{' '}
+                                      <span className="font-bold text-gray-700 dark:text-gray-300">
+                                        {payment.profiles.first_name} {payment.profiles.last_name}
+                                      </span>
+                                    </p>
+                                  )}
+                                </div>
                               </div>
                             ))}
                           </div>

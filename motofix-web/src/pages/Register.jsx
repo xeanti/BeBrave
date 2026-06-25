@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import {
+  CONSENT_SOURCE_PAGES,
+  CONSENT_TYPES,
+  acceptMultipleCustomerConsents,
+  getConsentDefinitionSafe,
+} from '../lib/consents';
 
 function greeting() {
   const h = new Date().getHours();
@@ -98,6 +104,37 @@ export default function Register() {
   const [showDPA, setShowDPA] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [accountConsent, setAccountConsent] = useState(null);
+  const [invoiceConsent, setInvoiceConsent] = useState(null);
+  const [consentLoading, setConsentLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadConsentDefinitions() {
+      try {
+        const [accountDefinition, invoiceDefinition] = await Promise.all([
+          getConsentDefinitionSafe(CONSENT_TYPES.ACCOUNT_REGISTRATION),
+          getConsentDefinitionSafe(CONSENT_TYPES.INVOICE_RECEIPT),
+        ]);
+
+        if (!isMounted) return;
+
+        setAccountConsent(accountDefinition);
+        setInvoiceConsent(invoiceDefinition);
+      } catch (err) {
+        console.warn('Failed to load registration consent definitions:', err);
+      } finally {
+        if (isMounted) setConsentLoading(false);
+      }
+    }
+
+    loadConsentDefinitions();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   function handleChange(e) {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -134,6 +171,44 @@ export default function Register() {
         lastName: form.lastName,
         phone: form.phone,
       });
+
+      const registrationConsentTypes = [
+        CONSENT_TYPES.ACCOUNT_REGISTRATION,
+        CONSENT_TYPES.INVOICE_RECEIPT,
+      ];
+
+      try {
+        await acceptMultipleCustomerConsents({
+          consentTypes: registrationConsentTypes,
+          sourcePage: CONSENT_SOURCE_PAGES.REGISTER,
+          metadata: {
+            email: form.email,
+            phone_provided: Boolean(form.phone),
+            accepted_terms_and_conditions: true,
+            accepted_data_privacy_act_notice: true,
+          },
+        });
+      } catch (consentErr) {
+        console.warn('Account created, but registration consent could not be recorded yet:', consentErr);
+
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(
+            'motofix_pending_registration_consents',
+            JSON.stringify({
+              consentTypes: registrationConsentTypes,
+              sourcePage: CONSENT_SOURCE_PAGES.REGISTER,
+              metadata: {
+                email: form.email,
+                phone_provided: Boolean(form.phone),
+                accepted_terms_and_conditions: true,
+                accepted_data_privacy_act_notice: true,
+              },
+              createdAt: new Date().toISOString(),
+            })
+          );
+        }
+      }
+
       setSuccess(true);
       setTimeout(() => navigate('/login'), 2000);
     } catch (err) {
@@ -372,6 +447,31 @@ export default function Register() {
                     .
                   </span>
                 </label>
+
+                <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3 text-xs leading-relaxed text-gray-500 dark:border-white/10 dark:bg-dark-800 dark:text-gray-400">
+                  <p className="mb-2 font-semibold text-gray-700 dark:text-gray-200">
+                    Privacy consent records that will be saved:
+                  </p>
+
+                  {consentLoading ? (
+                    <p>Loading privacy consent details...</p>
+                  ) : (
+                    <ul className="list-disc space-y-2 pl-4">
+                      <li>
+                        <span className="font-semibold text-gray-700 dark:text-gray-200">
+                          {accountConsent?.title || 'Account Registration Privacy Consent'}:
+                        </span>{' '}
+                        {accountConsent?.consent_text}
+                      </li>
+                      <li>
+                        <span className="font-semibold text-gray-700 dark:text-gray-200">
+                          {invoiceConsent?.title || 'Invoice and E-Receipt Consent'}:
+                        </span>{' '}
+                        {invoiceConsent?.consent_text}
+                      </li>
+                    </ul>
+                  )}
+                </div>
               </div>
 
               <button

@@ -5,6 +5,8 @@ import CustomerPicker from '../../components/CustomerPicker';
 import ReceiptModal from '../../components/ReceiptModal';
 import { fetchPaymentsFor, summarizePayments } from '../../lib/payments';
 import { getDownPaymentPercent } from '../../lib/settings';
+import { adjustPartStock } from '../../lib/inventory';
+import ServiceProgressManager from '../../components/ServiceProgressManager';
 
 const SHOP_OPEN = 8;
 const SHOP_CLOSE = 17;
@@ -188,6 +190,7 @@ export default function StaffDashboard() {
     { id: 'booking', label: 'Walk-in Booking', icon: '📅' },
     { id: 'pos', label: 'Parts POS', icon: '🧾' },
     { id: 'pending', label: 'Pending Payments', icon: '💰' },
+    { id: 'progress', label: 'Service Progress', icon: '🔧' },
   ];
 
   useEffect(() => {
@@ -268,6 +271,7 @@ export default function StaffDashboard() {
         {tab === 'booking' && <WalkInBooking staffId={user?.id} onReceipt={setReceipt} />}
         {tab === 'pos' && <WalkInPOS staffId={user?.id} onReceipt={setReceipt} />}
         {tab === 'pending' && <PendingPayments staffId={user?.id} onReceipt={setReceipt} />}
+        {tab === 'progress' && <StaffServiceProgress />}
       </div>
 
       <ReceiptModal receipt={receipt} onClose={() => setReceipt(null)} />
@@ -420,16 +424,23 @@ function WalkInBooking({ staffId, onReceipt }) {
 
       if (error) throw error;
 
+      let paymentRecord = null;
+
       if (downPayment > 0) {
-        const { error: paymentError } = await supabase.from('payments').insert({
-          booking_id: data.id,
-          amount: downPayment,
-          payment_type: 'down_payment',
-          method: 'cash',
-          processed_by: staffId,
-        });
+        const { data: paymentData, error: paymentError } = await supabase
+          .from('payments')
+          .insert({
+            booking_id: data.id,
+            amount: downPayment,
+            payment_type: 'down_payment',
+            method: 'cash',
+            processed_by: staffId,
+          })
+          .select('id, receipt_number, receipt_issued_at, payment_type, method, amount')
+          .single();
 
         if (paymentError) throw paymentError;
+        paymentRecord = paymentData;
       }
 
       await supabase.from('audit_logs').insert({
@@ -448,10 +459,13 @@ function WalkInBooking({ staffId, onReceipt }) {
       onReceipt({
         customerName: getCustomerName(customer),
         type: 'booking',
+        paymentType: paymentRecord?.payment_type || 'down_payment',
         items: [{ label: selectedService?.name || 'Service', amount: total }],
         total,
-        amountPaid: downPayment,
-        paymentMethod: 'cash',
+        amountPaid: paymentRecord?.amount ?? downPayment,
+        paymentMethod: paymentRecord?.method || 'cash',
+        receiptNumber: paymentRecord?.receipt_number,
+        issuedAt: paymentRecord?.receipt_issued_at,
         referenceId: data.id.slice(0, 8).toUpperCase(),
       });
 
@@ -821,12 +835,13 @@ function WalkInPOS({ staffId, onReceipt }) {
       if (itemsError) throw itemsError;
 
       for (const item of cart) {
-        const { error: stockError } = await supabase.rpc('decrement_stock', {
-          part_id: item.id,
-          qty: item.quantity,
+        await adjustPartStock({
+          partId: item.id,
+          movementType: 'sold_order',
+          quantity: item.quantity,
+          reason: 'Part sold through staff POS',
+          relatedOrderId: order.id,
         });
-
-        if (stockError) throw stockError;
       }
 
       await supabase.from('audit_logs').insert({
@@ -1014,6 +1029,231 @@ function WalkInPOS({ staffId, onReceipt }) {
   );
 }
 
+
+function StaffServiceProgress() {
+  const [bookings, setBookings] = useState([]);
+  const [search, setSearch] = useState('');
+  const [expandedBooking, setExpandedBooking] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  useEffect(() => {
+    fetchServiceBookings();
+
+    const channel = supabase
+      .channel('staff-service-progress-bookings')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'bookings',
+        },
+        () => fetchServiceBookings(false)
+      )
+      .subscribe();
+
+    const progressChannel = supabase
+      .channel('staff-service-progress-events')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'service_progress_events',
+        },
+        () => fetchServiceBookings(false)
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+      supabase.removeChannel(progressChannel);
+    };
+  }, []);
+
+  async function fetchServiceBookings(showLoader = true) {
+    if (showLoader) setLoading(true);
+
+    setError('');
+
+    const { data, error: fetchError } = await supabase
+      .from('bookings')
+      .select(
+        '*, services(name, base_price, labor_cost, estimated_duration_minutes), profiles!bookings_customer_id_fkey(first_name, last_name, phone, email, profile_photo_url), mechanic:profiles!bookings_mechanic_id_fkey(first_name, last_name)'
+      )
+      .in('status', [
+        'confirmed',
+        'in_progress',
+        'inspection',
+        'repairing',
+        'quality_check',
+        'ready_for_pickup',
+      ])
+      .order('booking_date', { ascending: true })
+      .order('booking_time', { ascending: true });
+
+    if (fetchError) {
+      setError(fetchError.message || 'Failed to load service progress bookings.');
+      setBookings([]);
+    } else {
+      setBookings(data || []);
+      setLastUpdated(new Date());
+    }
+
+    setLoading(false);
+  }
+
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) return bookings;
+
+    return bookings.filter((booking) => {
+      const haystack = [
+        booking.id,
+        getCustomerName(booking),
+        booking.profiles?.email,
+        booking.profiles?.phone,
+        booking.services?.name,
+        booking.status,
+        booking.booking_date,
+        booking.booking_time,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      return haystack.includes(query);
+    });
+  }, [bookings, search]);
+
+  if (loading) {
+    return (
+      <Section>
+        <div className="flex items-center justify-center py-16">
+          <div className="text-center">
+            <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
+            <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
+              Loading service progress...
+            </p>
+          </div>
+        </div>
+      </Section>
+    );
+  }
+
+  return (
+    <div>
+      {error && <Banner message={`Error: ${error}`} />}
+
+      <div className="mb-6 grid gap-3 sm:grid-cols-3">
+        <StatCard label="Active Services" value={bookings.length} icon="🔧" tone="primary" />
+        <StatCard
+          label="Visible Records"
+          value={filtered.length}
+          icon="📋"
+          tone="green"
+        />
+        <StatCard
+          label="Last Updated"
+          value={lastUpdated ? formatDateTime(lastUpdated) : '—'}
+          icon="🕒"
+          tone="accent"
+        />
+      </div>
+
+      <Section>
+        <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">
+              Service Progress
+            </p>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              Update timeline events for active customer service bookings.
+            </p>
+          </div>
+
+          <input
+            type="text"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search customer, service, status, or booking ID..."
+            className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white lg:w-96"
+          />
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="rounded-3xl border border-dashed border-gray-300 bg-gray-50 p-10 text-center dark:border-dark-700 dark:bg-dark-900/70">
+            <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-3xl bg-primary-50 text-3xl ring-1 ring-primary-100 dark:bg-primary-500/10 dark:ring-primary-500/20">
+              🔧
+            </div>
+            <p className="text-sm font-black text-gray-950 dark:text-white">
+              No active service bookings found
+            </p>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              Confirmed and in-progress bookings will appear here.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {filtered.map((booking) => {
+              const isOpen = expandedBooking === booking.id;
+
+              return (
+                <article
+                  key={booking.id}
+                  className="overflow-hidden rounded-3xl border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-900/70"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setExpandedBooking(isOpen ? null : booking.id)}
+                    className="w-full p-4 text-left transition hover:bg-white dark:hover:bg-dark-800"
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="text-sm font-black text-gray-950 dark:text-white">
+                          {getCustomerName(booking)}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {booking.services?.name || 'Service'} · {formatTime(booking.booking_time)} · {booking.status?.replace('_', ' ')}
+                        </p>
+                        <p className="mt-1 text-[11px] font-mono font-bold text-gray-400">
+                          #{booking.id?.slice(0, 8).toUpperCase()}
+                        </p>
+                      </div>
+
+                      <div className="text-right">
+                        <p className="text-xs font-black text-primary-600 dark:text-primary-400">
+                          {booking.booking_date}
+                        </p>
+                        <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                          {isOpen ? 'Hide progress ▲' : 'Update progress ▼'}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+
+                  {isOpen && (
+                    <div className="border-t border-gray-200 p-4 dark:border-dark-700">
+                      <ServiceProgressManager
+                        booking={booking}
+                        onUpdated={() => fetchServiceBookings(false)}
+                        compact
+                      />
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </Section>
+    </div>
+  );
+}
+
 function PendingPayments({ staffId, onReceipt }) {
   const [bookings, setBookings] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -1163,16 +1403,23 @@ function PendingPayments({ staffId, onReceipt }) {
     const isFullPayment = paidAmount >= due;
 
     try {
+      let paymentRecord = null;
+
       if (type === 'booking') {
-        const { error: paymentError } = await supabase.from('payments').insert({
-          booking_id: record.id,
-          amount: paidAmount,
-          payment_type: isFullPayment ? 'full' : 'balance',
-          method,
-          processed_by: staffId,
-        });
+        const { data: paymentData, error: paymentError } = await supabase
+          .from('payments')
+          .insert({
+            booking_id: record.id,
+            amount: paidAmount,
+            payment_type: isFullPayment ? 'full' : 'balance',
+            method,
+            processed_by: staffId,
+          })
+          .select('id, receipt_number, receipt_issued_at, payment_type, method, amount')
+          .single();
 
         if (paymentError) throw paymentError;
+        paymentRecord = paymentData;
 
         if (isFullPayment) {
           const { error: updateError } = await supabase
@@ -1186,15 +1433,20 @@ function PendingPayments({ staffId, onReceipt }) {
           if (updateError) throw updateError;
         }
       } else {
-        const { error: paymentError } = await supabase.from('payments').insert({
-          order_id: record.id,
-          amount: paidAmount,
-          payment_type: isFullPayment ? 'full' : 'balance',
-          method,
-          processed_by: staffId,
-        });
+        const { data: paymentData, error: paymentError } = await supabase
+          .from('payments')
+          .insert({
+            order_id: record.id,
+            amount: paidAmount,
+            payment_type: isFullPayment ? 'full' : 'balance',
+            method,
+            processed_by: staffId,
+          })
+          .select('id, receipt_number, receipt_issued_at, payment_type, method, amount')
+          .single();
 
         if (paymentError) throw paymentError;
+        paymentRecord = paymentData;
 
         if (isFullPayment) {
           const { error: updateError } = await supabase
@@ -1228,13 +1480,16 @@ function PendingPayments({ staffId, onReceipt }) {
       onReceipt({
         customerName: getCustomerName(record),
         type,
+        paymentType: paymentRecord?.payment_type || (isFullPayment ? 'full' : 'balance'),
         items:
           type === 'booking'
             ? [{ label: record.services?.name || 'Service', amount: total }]
             : [{ label: 'Parts order', amount: Number(record.total_amount) || 0 }],
         total,
-        amountPaid: paidAmount,
-        paymentMethod: method,
+        amountPaid: paymentRecord?.amount ?? paidAmount,
+        paymentMethod: paymentRecord?.method || method,
+        receiptNumber: paymentRecord?.receipt_number,
+        issuedAt: paymentRecord?.receipt_issued_at,
         referenceId: record.id.slice(0, 8).toUpperCase(),
       });
 

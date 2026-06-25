@@ -41,6 +41,7 @@ import AdminReports from './pages/admin/AdminReports';
 import AdminAssessments from './pages/admin/AdminAssessments';
 import AdminSettings from './pages/admin/AdminSettings';
 import AdminUsers from './pages/admin/AdminUsers';
+import AdminInventoryMovements from './pages/admin/AdminInventoryMovements';
 
 import StaffDashboard from './pages/staff/StaffDashboard';
 
@@ -293,6 +294,15 @@ export default function App() {
               element={
                 <ProtectedRoute allowedRoles={['admin']}>
                   <AdminParts />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/admin/inventory-movements"
+              element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <AdminInventoryMovements />
                 </ProtectedRoute>
               }
             />
