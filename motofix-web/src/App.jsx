@@ -26,13 +26,17 @@ import OrderConfirmation from './pages/OrderConfirmation';
 import BookingConfirmation from './pages/BookingConfirmation';
 import MechanicRatings from './pages/MechanicRatings';
 import Notifications from './pages/Notifications';
+import BookingDetails from './pages/BookingDetails';
+import OrderDetails from './pages/OrderDetails';
 
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminBookings from './pages/admin/AdminBookings';
+import AdminBookingDetails from './pages/admin/AdminBookingDetails';
 import AdminParts from './pages/admin/AdminParts';
 import AdminServices from './pages/admin/AdminServices';
 import AdminChat from './pages/admin/AdminChat';
 import AdminOrders from './pages/admin/AdminOrders';
+import AdminOrderDetails from './pages/admin/AdminOrderDetails';
 import AdminReports from './pages/admin/AdminReports';
 import AdminAssessments from './pages/admin/AdminAssessments';
 import AdminSettings from './pages/admin/AdminSettings';
@@ -111,6 +115,15 @@ export default function App() {
             />
 
             <Route
+              path="/appointments/:bookingId"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <BookingDetails />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
               path="/chat"
               element={
                 <ProtectedRoute allowedRoles={['customer']}>
@@ -142,6 +155,15 @@ export default function App() {
               element={
                 <ProtectedRoute allowedRoles={['customer']}>
                   <MyOrders />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/my-orders/:orderId"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <OrderDetails />
                 </ProtectedRoute>
               }
             />
@@ -188,6 +210,24 @@ export default function App() {
               element={
                 <ProtectedRoute allowedRoles={['staff', 'admin']}>
                   <StaffDashboard />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/staff/bookings/:bookingId"
+              element={
+                <ProtectedRoute allowedRoles={['staff', 'admin']}>
+                  <AdminBookingDetails />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/staff/orders/:orderId"
+              element={
+                <ProtectedRoute allowedRoles={['staff', 'admin']}>
+                  <AdminOrderDetails />
                 </ProtectedRoute>
               }
             />
@@ -240,6 +280,15 @@ export default function App() {
             />
 
             <Route
+              path="/admin/bookings/:bookingId"
+              element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <AdminBookingDetails />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
               path="/admin/parts"
               element={
                 <ProtectedRoute allowedRoles={['admin']}>
@@ -286,6 +335,15 @@ export default function App() {
             />
 
             <Route
+              path="/admin/orders/:orderId"
+              element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <AdminOrderDetails />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
               path="/admin/reports"
               element={
                 <ProtectedRoute allowedRoles={['admin']}>
@@ -321,6 +379,9 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
+            {/* Fallback */}
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </CartProvider>
       </AuthProvider>

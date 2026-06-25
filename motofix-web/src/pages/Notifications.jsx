@@ -28,6 +28,7 @@ function getIcon(type) {
 function getNotificationPath(notification, profile) {
   const role = profile?.role;
   const relatedTable = notification.related_table;
+  const relatedId = notification.related_id;
   const type = notification.type;
 
   if (type === 'message') {
@@ -35,15 +36,32 @@ function getNotificationPath(notification, profile) {
   }
 
   if (relatedTable === 'bookings') {
-    if (role === 'admin') return '/admin/bookings';
-    if (role === 'mechanic') return '/mechanic-dashboard';
-    if (role === 'staff') return '/staff';
-    return '/appointments';
+    if (!relatedId) {
+      if (role === 'admin') return '/admin/bookings';
+      if (role === 'mechanic') return '/mechanic-dashboard';
+      if (role === 'staff') return '/staff';
+      return '/appointments';
+    }
+
+    if (role === 'admin') return `/admin/bookings/${relatedId}`;
+    if (role === 'customer') return `/appointments/${relatedId}`;
+    if (role === 'mechanic') return `/mechanic-dashboard?focus=${relatedId}`;
+    if (role === 'staff') return `/staff/bookings/${relatedId}`;
+
+    return `/appointments/${relatedId}`;
   }
 
   if (relatedTable === 'orders') {
-    if (role === 'admin' || role === 'staff') return '/admin/orders';
-    return '/my-orders';
+    if (!relatedId) {
+      if (role === 'admin' || role === 'staff') return '/admin/orders';
+      return '/my-orders';
+    }
+
+    if (role === 'admin') return `/admin/orders/${relatedId}`;
+    if (role === 'customer') return `/my-orders/${relatedId}`;
+    if (role === 'staff') return `/staff/orders/${relatedId}`;
+
+    return `/my-orders/${relatedId}`;
   }
 
   if (relatedTable === 'pre_assessments' || relatedTable === 'assessments') {
@@ -251,6 +269,17 @@ export default function Notifications() {
                       <p className="mt-1 text-sm leading-6 text-gray-600 dark:text-gray-400">
                         {notification.message}
                       </p>
+
+                      {notification.related_id && (
+                        <p className="mt-2 text-xs font-bold text-gray-400 dark:text-gray-500">
+                          {notification.related_table === 'bookings'
+                            ? 'Appointment ID'
+                            : notification.related_table === 'orders'
+                            ? 'Order ID'
+                            : 'Reference ID'}
+                          : {notification.related_id.slice(0, 8).toUpperCase()}
+                        </p>
+                      )}
 
                       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                         <span>{formatDateTime(notification.created_at)}</span>

@@ -444,6 +444,15 @@ export default function MyOrders() {
                         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                           Ordered on {formatDateTime(order.created_at)}
                         </p>
+                        
+                        <div className="mt-3">
+                          <Link
+                            to={`/my-orders/${order.id}`}
+                            className="inline-block rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-center text-xs font-black text-gray-700 transition hover:bg-gray-50 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300 dark:hover:bg-dark-700"
+                          >
+                            View Details
+                          </Link>
+                        </div>
                       </div>
 
                       <div className="rounded-2xl bg-gray-50 px-4 py-3 text-right ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">

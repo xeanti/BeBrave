@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import RatingModal from '../components/RatingModal';
@@ -847,6 +848,13 @@ export default function Appointments() {
                         </div>
 
                         <div className="mt-3 flex flex-wrap gap-2 lg:flex-col">
+                          <Link
+                            to={`/appointments/${booking.id}`}
+                            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-center text-xs font-black text-gray-700 transition hover:bg-gray-50 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300 dark:hover:bg-dark-700 lg:flex-none"
+                          >
+                            View Details
+                          </Link>
+
                           {booking.status === 'pending' && (
                             <>
                               <button
