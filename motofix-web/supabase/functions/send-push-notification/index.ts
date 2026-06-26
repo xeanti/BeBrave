@@ -1,215 +1,126 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-push-secret',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
-function getServiceRoleKey() {
-  const legacyKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-
-  if (legacyKey) return legacyKey;
-
-  const secretKeysRaw = Deno.env.get('SUPABASE_SECRET_KEYS');
-
-  if (!secretKeysRaw) return null;
-
-  try {
-    const secretKeys = JSON.parse(secretKeysRaw);
-    return secretKeys.default || null;
-  } catch {
-    return null;
-  }
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
-
+serve(async (req) => {
   try {
-    if (req.method !== 'POST') {
-      return new Response(
-        JSON.stringify({ error: 'Method not allowed.' }),
-        {
-          status: 405,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+    if (req.method !== "POST") {
+      return jsonResponse({ error: "Method not allowed" }, 405);
     }
 
-    const pushSecret = Deno.env.get('PUSH_WEBHOOK_SECRET');
-    const requestSecret = req.headers.get('x-push-secret');
+    const expectedSecret = Deno.env.get("PUSH_SECRET") || "";
+    const requestSecret = req.headers.get("x-push-secret") || "";
 
-    if (pushSecret && requestSecret !== pushSecret) {
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized.' }),
-        {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+    if (expectedSecret && requestSecret !== expectedSecret) {
+      return jsonResponse({ error: "Unauthorized" }, 401);
     }
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const serviceRoleKey = getServiceRoleKey();
+    const payload = await req.json();
+
+    const notification = payload.record || payload;
+
+    const userId = notification.user_id;
+    const title = notification.title || "MotoFix";
+    const message = notification.message || "";
+    const type = notification.type || "general";
+    const relatedTable = notification.related_table || null;
+    const relatedId = notification.related_id || null;
+    const notificationId = notification.id || null;
+
+    if (!userId) {
+      return jsonResponse({ error: "Missing user_id" }, 400);
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (!supabaseUrl || !serviceRoleKey) {
-      return new Response(
-        JSON.stringify({ error: 'Missing Supabase environment variables.' }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
+      return jsonResponse(
+        { error: "Missing Supabase environment variables" },
+        500
       );
     }
 
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const tokenRes = await fetch(
+      `${supabaseUrl}/rest/v1/push_tokens?user_id=eq.${userId}&is_active=eq.true&select=id,expo_push_token`,
+      {
+        headers: {
+          apikey: serviceRoleKey,
+          Authorization: `Bearer ${serviceRoleKey}`,
+        },
+      }
+    );
 
-    const body = await req.json();
-
-    /*
-      This supports:
-      1. Database webhook payload: { record: {...} }
-      2. Manual test payload: { notification_id: "..." }
-    */
-    let notification = body.record || body.notification || null;
-
-    if (!notification && body.notification_id) {
-      const { data, error } = await supabase
-        .from('notifications')
-        .select('*')
-        .eq('id', body.notification_id)
-        .single();
-
-      if (error) throw error;
-
-      notification = data;
-    }
-
-    if (!notification?.user_id) {
-      return new Response(
-        JSON.stringify({ error: 'Missing notification user_id.' }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
+    if (!tokenRes.ok) {
+      const text = await tokenRes.text();
+      return jsonResponse(
+        { error: "Failed to fetch push tokens", details: text },
+        500
       );
     }
 
-    const { data: tokens, error: tokenError } = await supabase
-      .from('push_tokens')
-      .select('id, expo_push_token')
-      .eq('user_id', notification.user_id)
-      .eq('is_active', true);
+    const tokens = await tokenRes.json();
 
-    if (tokenError) throw tokenError;
-
-    if (!tokens || tokens.length === 0) {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          sent: 0,
-          message: 'No active push tokens for this user.',
-        }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+    if (!Array.isArray(tokens) || tokens.length === 0) {
+      return jsonResponse({
+        ok: true,
+        sent: 0,
+        message: "No active push tokens for this user.",
+      });
     }
 
-    const messages = tokens.map((token) => ({
-      to: token.expo_push_token,
-      sound: 'default',
-      title: notification.title || 'MotoFix Notification',
-      body: notification.message || 'You have a new update from MotoFix.',
-      priority: 'high',
-      channelId: 'default',
-      data: {
-        notificationId: notification.id,
-        type: notification.type,
-        relatedTable: notification.related_table,
-        relatedId: notification.related_id,
-      },
-    }));
+    const messages = tokens
+      .filter((row) => row.expo_push_token)
+      .map((row) => ({
+        to: row.expo_push_token,
+        sound: "default",
+        title,
+        body: message,
+        data: {
+          notificationId,
+          type,
+          relatedTable,
+          relatedId,
+        },
+      }));
 
-    const expoResponse = await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
+    if (messages.length === 0) {
+      return jsonResponse({
+        ok: true,
+        sent: 0,
+        message: "No valid Expo push tokens.",
+      });
+    }
+
+    const expoRes = await fetch(EXPO_PUSH_URL, {
+      method: "POST",
       headers: {
-        Accept: 'application/json',
-        'Accept-Encoding': 'gzip, deflate',
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
+        Accept: "application/json",
       },
       body: JSON.stringify(messages),
     });
 
-    const expoResult = await expoResponse.json();
+    const expoData = await expoRes.json();
 
-    if (!expoResponse.ok) {
-      return new Response(
-        JSON.stringify({
-          error: 'Expo push request failed.',
-          details: expoResult,
-        }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
-    }
-
-    const tickets = Array.isArray(expoResult.data)
-      ? expoResult.data
-      : [expoResult.data];
-
-    const invalidTokenIds = [];
-
-    tickets.forEach((ticket, index) => {
-      if (
-        ticket?.status === 'error' &&
-        ticket?.details?.error === 'DeviceNotRegistered' &&
-        tokens[index]?.id
-      ) {
-        invalidTokenIds.push(tokens[index].id);
-      }
+    return jsonResponse({
+      ok: expoRes.ok,
+      sent: messages.length,
+      expo: expoData,
     });
-
-    if (invalidTokenIds.length > 0) {
-      await supabase
-        .from('push_tokens')
-        .update({
-          is_active: false,
-          last_seen_at: new Date().toISOString(),
-        })
-        .in('id', invalidTokenIds);
-    }
-
-    return new Response(
-      JSON.stringify({
-        success: true,
-        sent: messages.length,
-        invalidTokensDisabled: invalidTokenIds.length,
-        expo: expoResult,
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    );
   } catch (error) {
-    console.error(error);
-
-    return new Response(
-      JSON.stringify({
-        error: error.message || 'Push notification error.',
-      }),
+    return jsonResponse(
       {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
+        error: error.message || "Unexpected push notification error",
+      },
+      500
     );
   }
 });

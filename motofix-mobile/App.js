@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Platform, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -32,6 +32,7 @@ import AppointmentDetailScreen from './screens/customer/AppointmentDetailScreen'
 import ShopScreen from './screens/customer/ShopScreen';
 import CheckoutScreen from './screens/customer/CheckoutScreen';
 import OrderHistoryScreen from './screens/customer/OrderHistoryScreen';
+import NotificationsScreen from './screens/customer/NotificationsScreen';
 
 // --- MECHANIC ---
 import JobsScreen from './screens/mechanic/JobsScreen';
@@ -108,6 +109,79 @@ function getHeaderOptions(theme) {
   };
 }
 
+function useUnreadNotificationCount() {
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    let channel = null;
+    let mounted = true;
+
+    async function fetchUnreadNotifications() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user?.id) {
+        if (mounted) setUnreadCount(0);
+        return;
+      }
+
+      const { count, error } = await supabase
+        .from('notifications')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('is_read', false);
+
+      if (!error && mounted) {
+        setUnreadCount(count || 0);
+      }
+    }
+
+    async function setupRealtime() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user?.id) return;
+
+      channel = supabase
+        .channel(`mobile-notifications-badge-${user.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'notifications',
+            filter: `user_id=eq.${user.id}`,
+          },
+          fetchUnreadNotifications
+        )
+        .subscribe();
+    }
+
+    fetchUnreadNotifications();
+    setupRealtime();
+
+    return () => {
+      mounted = false;
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, []);
+
+  return unreadCount;
+}
+
+function notificationBadgeOptions(unreadCount) {
+  return {
+    tabBarIcon: makeIcon('notifications'),
+    tabBarLabel: 'Alerts',
+    tabBarBadge:
+      unreadCount > 0 ? (unreadCount > 99 ? '99+' : unreadCount) : undefined,
+  };
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // CUSTOMER SHOP STACK
 // ════════════════════════════════════════════════════════════════════════════
@@ -143,6 +217,7 @@ function CustomerShopStack() {
 export function CustomerTabs() {
   const { theme } = useTheme();
   const { cartTotalItems } = useCart();
+  const unreadNotifications = useUnreadNotificationCount();
 
   return (
     <Tab.Navigator screenOptions={getTabOptions(theme)}>
@@ -181,6 +256,12 @@ export function CustomerTabs() {
       />
 
       <Tab.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={notificationBadgeOptions(unreadNotifications)}
+      />
+
+      <Tab.Screen
         name="Profile"
         component={ProfileScreen}
         options={{ tabBarIcon: makeIcon('person') }}
@@ -194,6 +275,7 @@ export function CustomerTabs() {
 // ════════════════════════════════════════════════════════════════════════════
 export function MechanicTabs() {
   const { theme } = useTheme();
+  const unreadNotifications = useUnreadNotificationCount();
 
   return (
     <Tab.Navigator screenOptions={getTabOptions(theme)}>
@@ -210,6 +292,12 @@ export function MechanicTabs() {
       />
 
       <Tab.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={notificationBadgeOptions(unreadNotifications)}
+      />
+
+      <Tab.Screen
         name="Profile"
         component={ProfileScreen}
         options={{ tabBarIcon: makeIcon('person') }}
@@ -223,6 +311,7 @@ export function MechanicTabs() {
 // ════════════════════════════════════════════════════════════════════════════
 export function StaffTabs() {
   const { theme } = useTheme();
+  const unreadNotifications = useUnreadNotificationCount();
 
   return (
     <Tab.Navigator screenOptions={getTabOptions(theme)}>
@@ -248,6 +337,12 @@ export function StaffTabs() {
         name="Chat"
         component={StaffChatScreen}
         options={{ tabBarIcon: makeIcon('chatbubbles') }}
+      />
+
+      <Tab.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={notificationBadgeOptions(unreadNotifications)}
       />
 
       <Tab.Screen
@@ -348,6 +443,7 @@ function AdminMoreStackNav() {
 // ════════════════════════════════════════════════════════════════════════════
 export function AdminTabs() {
   const { theme } = useTheme();
+  const unreadNotifications = useUnreadNotificationCount();
 
   return (
     <Tab.Navigator screenOptions={getTabOptions(theme)}>
@@ -367,6 +463,12 @@ export function AdminTabs() {
         name="Chat"
         component={StaffChatScreen}
         options={{ tabBarIcon: makeIcon('chatbubbles') }}
+      />
+
+      <Tab.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={notificationBadgeOptions(unreadNotifications)}
       />
 
       <Tab.Screen

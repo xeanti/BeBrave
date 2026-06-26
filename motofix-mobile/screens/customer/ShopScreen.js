@@ -19,6 +19,7 @@ import { useCart } from '../../lib/CartContext';
 
 function formatPeso(value) {
   const amount = Number(value) || 0;
+
   return `₱${amount.toLocaleString('en-PH', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -29,9 +30,13 @@ function normalize(value) {
   return String(value || '').toLowerCase().trim();
 }
 
+function getCompatibleModels(part) {
+  return Array.isArray(part.compatible_models) ? part.compatible_models : [];
+}
+
 export default function ShopScreen({ navigation }) {
   const { theme } = useTheme();
-  const { cart, cartTotalItems, addToCart } = useCart();
+  const { cart, cartTotalItems, cartTotal, addToCart } = useCart();
 
   const [parts, setParts] = useState([]);
   const [models, setModels] = useState([]);
@@ -60,7 +65,8 @@ export default function ShopScreen({ navigation }) {
     const { data: modelsData } = await supabase
       .from('motorcycle_models')
       .select('id, make, model')
-      .order('make', { ascending: true });
+      .order('make', { ascending: true })
+      .order('model', { ascending: true });
 
     if (partsError) {
       Alert.alert('Shop Error', partsError.message);
@@ -86,20 +92,20 @@ export default function ShopScreen({ navigation }) {
 
   const modelOptions = useMemo(() => {
     const fromModels = models.map((item) => `${item.make} ${item.model}`);
-    const fromParts = parts.flatMap((part) =>
-      Array.isArray(part.compatible_models) ? part.compatible_models : []
-    );
 
-    return ['all', ...new Set([...fromModels, ...fromParts].filter(Boolean).sort())];
+    const fromParts = parts.flatMap((part) => getCompatibleModels(part));
+
+    return [
+      'all',
+      ...new Set([...fromModels, ...fromParts].filter(Boolean).sort()),
+    ];
   }, [models, parts]);
 
   const filteredParts = useMemo(() => {
     const query = normalize(search);
 
     return parts.filter((part) => {
-      const compatibleModels = Array.isArray(part.compatible_models)
-        ? part.compatible_models
-        : [];
+      const compatibleModels = getCompatibleModels(part);
 
       const searchable = [
         part.name,
@@ -111,10 +117,15 @@ export default function ShopScreen({ navigation }) {
         .join(' ');
 
       const matchSearch = !query || normalize(searchable).includes(query);
-      const matchCategory = category === 'all' || (part.category || 'General') === category;
+
+      const matchCategory =
+        category === 'all' || (part.category || 'General') === category;
+
       const matchModel =
         selectedModel === 'all' ||
-        compatibleModels.some((model) => normalize(model) === normalize(selectedModel));
+        compatibleModels.some(
+          (model) => normalize(model) === normalize(selectedModel)
+        );
 
       return matchSearch && matchCategory && matchModel;
     });
@@ -124,16 +135,57 @@ export default function ShopScreen({ navigation }) {
     return cart.find((item) => item.id === partId)?.quantity || 0;
   }
 
+  function clearFilters() {
+    setSearch('');
+    setCategory('all');
+    setSelectedModel('all');
+  }
+
   function handleAdd(part) {
     const alreadyInCart = cartQty(part.id);
     const stock = Number(part.stock_quantity) || 0;
 
+    if (stock <= 0) {
+      Alert.alert('Out of Stock', `${part.name} is currently unavailable.`);
+      return;
+    }
+
     if (alreadyInCart >= stock) {
-      Alert.alert('Stock limit', `You already added all available stock for ${part.name}.`);
+      Alert.alert(
+        'Stock Limit',
+        `You already added all available stock for ${part.name}.`
+      );
       return;
     }
 
     addToCart(part, 1);
+  }
+
+  function renderCompatibility(part) {
+    const compatibleModels = getCompatibleModels(part);
+
+    if (compatibleModels.length === 0) {
+      return (
+        <Text style={s.compatibilityText} numberOfLines={1}>
+          Fits: Universal / Not specified
+        </Text>
+      );
+    }
+
+    if (selectedModel !== 'all') {
+      return (
+        <Text style={s.compatibilityText} numberOfLines={1}>
+          ✓ Fits {selectedModel}
+        </Text>
+      );
+    }
+
+    return (
+      <Text style={s.compatibilityText} numberOfLines={1}>
+        Fits: {compatibleModels.slice(0, 2).join(', ')}
+        {compatibleModels.length > 2 ? ` +${compatibleModels.length - 2}` : ''}
+      </Text>
+    );
   }
 
   if (loading) {
@@ -148,10 +200,12 @@ export default function ShopScreen({ navigation }) {
   return (
     <View style={s.container}>
       <View style={s.header}>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={s.kicker}>MotoFix Parts Shop</Text>
           <Text style={s.title}>Shop</Text>
-          <Text style={s.subtitle}>Browse motorcycle parts and checkout your order.</Text>
+          <Text style={s.subtitle}>
+            Browse compatible motorcycle parts and checkout your order.
+          </Text>
         </View>
 
         <TouchableOpacity
@@ -164,13 +218,20 @@ export default function ShopScreen({ navigation }) {
 
       <View style={s.searchRow}>
         <Ionicons name="search" size={18} color={theme.textMuted} />
+
         <TextInput
           value={search}
           onChangeText={setSearch}
-          placeholder="Search parts..."
+          placeholder="Search parts, category, or model..."
           placeholderTextColor={theme.textMuted}
           style={s.searchInput}
         />
+
+        {search ? (
+          <TouchableOpacity onPress={() => setSearch('')}>
+            <Ionicons name="close-circle" size={18} color={theme.textMuted} />
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <ScrollView
@@ -202,12 +263,26 @@ export default function ShopScreen({ navigation }) {
             style={[s.chip, selectedModel === item && s.modelChipActive]}
             onPress={() => setSelectedModel(item)}
           >
-            <Text style={[s.chipText, selectedModel === item && s.chipTextActive]}>
+            <Text
+              style={[s.chipText, selectedModel === item && s.chipTextActive]}
+            >
               {item === 'all' ? 'All Models' : item}
             </Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
+
+      {(search || category !== 'all' || selectedModel !== 'all') && (
+        <View style={s.filterInfoRow}>
+          <Text style={s.filterInfoText}>
+            Showing {filteredParts.length} of {parts.length} part(s)
+          </Text>
+
+          <TouchableOpacity onPress={clearFilters}>
+            <Text style={s.clearFiltersText}>Clear filters</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <FlatList
         data={filteredParts}
@@ -216,26 +291,52 @@ export default function ShopScreen({ navigation }) {
         columnWrapperStyle={s.gridRow}
         contentContainerStyle={s.list}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primaryLight} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.primaryLight}
+          />
         }
         ListEmptyComponent={
           <View style={s.emptyCard}>
             <Ionicons name="cube-outline" size={38} color={theme.textMuted} />
             <Text style={s.emptyTitle}>No parts found</Text>
-            <Text style={s.emptyText}>Try another search, category, or model filter.</Text>
+            <Text style={s.emptyText}>
+              Try another search, category, or motorcycle model filter.
+            </Text>
+
+            <TouchableOpacity style={s.clearButton} onPress={clearFilters}>
+              <Text style={s.clearButtonText}>Clear Filters</Text>
+            </TouchableOpacity>
           </View>
         }
         renderItem={({ item }) => {
           const inCart = cartQty(item.id);
           const stock = Number(item.stock_quantity) || 0;
+          const lowStock = stock > 0 && stock <= 5;
+          const canAdd = inCart < stock;
 
           return (
             <View style={s.card}>
               <View style={s.imageBox}>
                 {item.image_url ? (
-                  <Image source={{ uri: item.image_url }} style={s.image} resizeMode="cover" />
+                  <Image
+                    source={{ uri: item.image_url }}
+                    style={s.image}
+                    resizeMode="cover"
+                  />
                 ) : (
-                  <Ionicons name="image-outline" size={30} color={theme.textMuted} />
+                  <Ionicons
+                    name="image-outline"
+                    size={30}
+                    color={theme.textMuted}
+                  />
+                )}
+
+                {lowStock && (
+                  <View style={s.lowStockBadge}>
+                    <Text style={s.lowStockText}>Low Stock</Text>
+                  </View>
                 )}
               </View>
 
@@ -245,18 +346,31 @@ export default function ShopScreen({ navigation }) {
 
               <Text style={s.categoryText}>{item.category || 'General'}</Text>
 
+              {renderCompatibility(item)}
+
               <Text style={s.price}>{formatPeso(item.price)}</Text>
 
               <Text style={s.stock}>
-                {inCart > 0 ? `${inCart} in cart · ${stock} stock` : `${stock} stock`}
+                {inCart > 0
+                  ? `${inCart} in cart · ${stock} stock`
+                  : `${stock} stock`}
               </Text>
 
               <TouchableOpacity
-                style={[s.addButton, inCart > 0 && s.addButtonAdded]}
+                style={[
+                  s.addButton,
+                  inCart > 0 && s.addButtonAdded,
+                  !canAdd && s.addButtonDisabled,
+                ]}
                 onPress={() => handleAdd(item)}
+                disabled={!canAdd}
               >
                 <Text style={s.addButtonText}>
-                  {inCart > 0 ? 'Add More' : 'Add to Cart'}
+                  {!canAdd
+                    ? 'Stock Limit'
+                    : inCart > 0
+                      ? 'Add More'
+                      : 'Add to Cart'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -265,11 +379,15 @@ export default function ShopScreen({ navigation }) {
       />
 
       {cartTotalItems > 0 && (
-        <TouchableOpacity style={s.cartBar} onPress={() => navigation.navigate('Checkout')}>
+        <TouchableOpacity
+          style={s.cartBar}
+          onPress={() => navigation.navigate('Checkout')}
+        >
           <View>
             <Text style={s.cartTitle}>{cartTotalItems} item(s) in cart</Text>
-            <Text style={s.cartSub}>Review and checkout</Text>
+            <Text style={s.cartSub}>{formatPeso(cartTotal)} · Review checkout</Text>
           </View>
+
           <Ionicons name="arrow-forward" size={22} color="#fff" />
         </TouchableOpacity>
       )}
@@ -286,7 +404,10 @@ const styles = (theme) =>
       justifyContent: 'center',
       backgroundColor: theme.bg,
     },
-    loadingText: { color: theme.textSub, marginTop: 10 },
+    loadingText: {
+      color: theme.textSub || theme.textMuted,
+      marginTop: 10,
+    },
     header: {
       paddingHorizontal: 18,
       paddingTop: 20,
@@ -294,6 +415,7 @@ const styles = (theme) =>
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'flex-start',
+      gap: 12,
     },
     kicker: {
       color: theme.primaryLight,
@@ -302,8 +424,18 @@ const styles = (theme) =>
       textTransform: 'uppercase',
       letterSpacing: 1,
     },
-    title: { color: theme.text, fontSize: 28, fontWeight: '900', marginTop: 3 },
-    subtitle: { color: theme.textSub, fontSize: 13, marginTop: 3, maxWidth: 260 },
+    title: {
+      color: theme.text,
+      fontSize: 28,
+      fontWeight: '900',
+      marginTop: 3,
+    },
+    subtitle: {
+      color: theme.textSub || theme.textMuted,
+      fontSize: 13,
+      marginTop: 3,
+      maxWidth: 280,
+    },
     historyButton: {
       width: 44,
       height: 44,
@@ -325,8 +457,17 @@ const styles = (theme) =>
       flexDirection: 'row',
       alignItems: 'center',
     },
-    searchInput: { flex: 1, paddingVertical: 12, marginLeft: 8, color: theme.text },
-    chips: { paddingHorizontal: 16, gap: 8, paddingBottom: 8 },
+    searchInput: {
+      flex: 1,
+      paddingVertical: 12,
+      marginLeft: 8,
+      color: theme.text,
+    },
+    chips: {
+      paddingHorizontal: 16,
+      gap: 8,
+      paddingBottom: 8,
+    },
     chip: {
       borderWidth: 1,
       borderColor: theme.border,
@@ -336,10 +477,38 @@ const styles = (theme) =>
       paddingVertical: 8,
       marginRight: 8,
     },
-    chipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
-    modelChipActive: { backgroundColor: theme.primaryLight, borderColor: theme.primaryLight },
-    chipText: { color: theme.textSub, fontSize: 12, fontWeight: '700' },
+    chipActive: {
+      backgroundColor: theme.primary,
+      borderColor: theme.primary,
+    },
+    modelChipActive: {
+      backgroundColor: theme.primaryLight,
+      borderColor: theme.primaryLight,
+    },
+    chipText: {
+      color: theme.textSub || theme.textMuted,
+      fontSize: 12,
+      fontWeight: '700',
+    },
     chipTextActive: { color: '#fff' },
+    filterInfoRow: {
+      marginHorizontal: 16,
+      marginBottom: 6,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 12,
+    },
+    filterInfoText: {
+      color: theme.textMuted,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    clearFiltersText: {
+      color: theme.primaryLight,
+      fontSize: 12,
+      fontWeight: '900',
+    },
     list: { paddingHorizontal: 12, paddingBottom: 110 },
     gridRow: { gap: 10 },
     card: {
@@ -359,12 +528,52 @@ const styles = (theme) =>
       justifyContent: 'center',
       overflow: 'hidden',
       marginBottom: 10,
+      position: 'relative',
     },
     image: { width: '100%', height: '100%' },
-    partName: { color: theme.text, fontSize: 14, fontWeight: '800', minHeight: 36 },
-    categoryText: { color: theme.textMuted, fontSize: 11, marginTop: 4 },
-    price: { color: theme.primaryLight, fontSize: 15, fontWeight: '900', marginTop: 8 },
-    stock: { color: theme.textSub, fontSize: 11, marginTop: 3 },
+    lowStockBadge: {
+      position: 'absolute',
+      top: 7,
+      left: 7,
+      backgroundColor: theme.warning || '#f59e0b',
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    lowStockText: {
+      color: '#111827',
+      fontSize: 9,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+    },
+    partName: {
+      color: theme.text,
+      fontSize: 14,
+      fontWeight: '800',
+      minHeight: 36,
+    },
+    categoryText: {
+      color: theme.textMuted,
+      fontSize: 11,
+      marginTop: 4,
+    },
+    compatibilityText: {
+      color: theme.textSub || theme.textMuted,
+      fontSize: 10,
+      marginTop: 4,
+      fontWeight: '600',
+    },
+    price: {
+      color: theme.primaryLight,
+      fontSize: 15,
+      fontWeight: '900',
+      marginTop: 8,
+    },
+    stock: {
+      color: theme.textSub || theme.textMuted,
+      fontSize: 11,
+      marginTop: 3,
+    },
     addButton: {
       backgroundColor: theme.primary,
       borderRadius: 12,
@@ -372,8 +581,18 @@ const styles = (theme) =>
       alignItems: 'center',
       marginTop: 12,
     },
-    addButtonAdded: { backgroundColor: theme.success || theme.primary },
-    addButtonText: { color: '#fff', fontWeight: '900', fontSize: 12 },
+    addButtonAdded: {
+      backgroundColor: theme.success || theme.primary,
+    },
+    addButtonDisabled: {
+      backgroundColor: theme.textMuted,
+      opacity: 0.7,
+    },
+    addButtonText: {
+      color: '#fff',
+      fontWeight: '900',
+      fontSize: 12,
+    },
     emptyCard: {
       margin: 18,
       padding: 28,
@@ -383,8 +602,29 @@ const styles = (theme) =>
       borderColor: theme.border,
       alignItems: 'center',
     },
-    emptyTitle: { color: theme.text, fontWeight: '900', fontSize: 16, marginTop: 10 },
-    emptyText: { color: theme.textSub, textAlign: 'center', marginTop: 4 },
+    emptyTitle: {
+      color: theme.text,
+      fontWeight: '900',
+      fontSize: 16,
+      marginTop: 10,
+    },
+    emptyText: {
+      color: theme.textSub || theme.textMuted,
+      textAlign: 'center',
+      marginTop: 4,
+    },
+    clearButton: {
+      marginTop: 14,
+      backgroundColor: theme.primary,
+      borderRadius: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+    },
+    clearButtonText: {
+      color: '#fff',
+      fontWeight: '900',
+      fontSize: 12,
+    },
     cartBar: {
       position: 'absolute',
       left: 16,
@@ -397,6 +637,15 @@ const styles = (theme) =>
       justifyContent: 'space-between',
       alignItems: 'center',
     },
-    cartTitle: { color: '#fff', fontWeight: '900', fontSize: 15 },
-    cartSub: { color: '#fff', opacity: 0.85, fontSize: 12, marginTop: 2 },
+    cartTitle: {
+      color: '#fff',
+      fontWeight: '900',
+      fontSize: 15,
+    },
+    cartSub: {
+      color: '#fff',
+      opacity: 0.85,
+      fontSize: 12,
+      marginTop: 2,
+    },
   });

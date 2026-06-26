@@ -7,6 +7,7 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { supabase } from '../../lib/supabase';
 import { notifyRole, notifyUser } from '../../lib/notifications';
+import { CONSENT_TYPES, requireCustomerConsent } from '../../lib/consents';
 import { useTheme } from '../../lib/ThemeContext';
 
 const SHOP_OPEN = 8;
@@ -69,11 +70,11 @@ export default function BookingScreen({ route, navigation }) {
     fetchData();
   }, []);
 
-  useEffect(() => {
-    if (step === 4 && bookingDate && bookingTime) {
-      fetchMechanicAvailability();
-    }
-  }, [step]);
+useEffect(() => {
+  if (step === 4 && bookingDate && bookingTime && selectedService) {
+    fetchMechanicAvailability();
+  }
+}, [step, bookingDate, bookingTime, selectedService]);
 
   async function viewCertificates(mechanic) {
     setCertModal(mechanic);
@@ -98,8 +99,15 @@ export default function BookingScreen({ route, navigation }) {
       .from('bookings')
       .select('mechanic_id, booking_time, services(estimated_duration_minutes)')
       .eq('booking_date', dateStr)
-      .in('status', ['pending', 'confirmed', 'in_progress'])
-      .not('mechanic_id', 'is', null);
+        .in('status', [
+          'pending',
+          'confirmed',
+          'in_progress',
+          'inspection',
+          'repairing',
+          'quality_check',
+          'ready_for_pickup',
+        ])      .not('mechanic_id', 'is', null);
 
     if (!error && data) {
       const newStart = timeToMinutes(bookingTime);
@@ -191,6 +199,35 @@ export default function BookingScreen({ route, navigation }) {
     }
   }
 
+  async function requireBookingConsents() {
+  const acceptedTerms = await requireCustomerConsent({
+    consentType: CONSENT_TYPES.TERMS,
+    title: 'Terms and Conditions',
+    message:
+      'Before booking, please accept MotoFix Terms and Conditions, including booking rules, cancellation rules, and shop policies.',
+  });
+
+  if (!acceptedTerms) return false;
+
+  const acceptedPrivacy = await requireCustomerConsent({
+    consentType: CONSENT_TYPES.DATA_PRIVACY,
+    title: 'Data Privacy Consent',
+    message:
+      'MotoFix will collect and process your account details, motorcycle details, booking information, and service records for booking and repair management.',
+  });
+
+  if (!acceptedPrivacy) return false;
+
+  const acceptedBookingPolicy = await requireCustomerConsent({
+    consentType: CONSENT_TYPES.BOOKING_POLICY,
+    title: 'Booking Policy',
+    message:
+      'Please accept the booking policy. The shop may apply confirmation rules, cancellation rules, down payment requirements, and no-show penalties.',
+  });
+
+  return acceptedBookingPolicy;
+}
+
   async function handleSubmit() {
     if (!bookingDate) {
       Alert.alert('Error', 'Please select a booking date.');
@@ -204,11 +241,25 @@ export default function BookingScreen({ route, navigation }) {
 
     setSubmitting(true);
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+const {
+  data: { user },
+} = await supabase.auth.getUser();
 
-    const bookingDateStr = toISODateString(bookingDate);
+if (!user?.id) {
+  setSubmitting(false);
+  Alert.alert('Login Required', 'Please login before booking a service.');
+  navigation.navigate('Login');
+  return;
+}
+
+const consentsAccepted = await requireBookingConsents();
+
+if (!consentsAccepted) {
+  setSubmitting(false);
+  return;
+}
+
+const bookingDateStr = toISODateString(bookingDate);
 
     if (selectedMechanic) {
       const { data: existingBookings } = await supabase
@@ -216,7 +267,15 @@ export default function BookingScreen({ route, navigation }) {
         .select('booking_time, services(estimated_duration_minutes)')
         .eq('mechanic_id', selectedMechanic.id)
         .eq('booking_date', bookingDateStr)
-        .in('status', ['pending', 'confirmed', 'in_progress']);
+        .in('status', [
+            'pending',
+            'confirmed',
+            'in_progress',
+            'inspection',
+            'repairing',
+            'quality_check',
+            'ready_for_pickup',
+          ]);
 
       const newStart = timeToMinutes(bookingTime);
       const newDuration = selectedService?.estimated_duration_minutes || 30;
@@ -266,26 +325,55 @@ export default function BookingScreen({ route, navigation }) {
       return;
     }
 
-    const { data: booking, error: bookingError } = await supabase
-      .from('bookings')
-      .insert({
-        customer_id: user.id,
-        service_id: selectedService.id,
-        mechanic_id: selectedMechanic?.id || null,
-        booking_date: bookingDateStr,
-        booking_time: bookingTime,
-        status: 'pending',
-        notes,
-        total_amount: selectedService.base_price,
-      })
-      .select('id')
-      .single();
+const { data: rpcBooking, error: bookingError } = await supabase.rpc(
+  'create_booking_with_conflict_check',
+  {
+    p_customer_id: user.id,
+    p_service_id: selectedService.id,
+    p_mechanic_id: selectedMechanic?.id || null,
+    p_booking_date: bookingDateStr,
+    p_booking_time: bookingTime,
+    p_notes: notes || null,
+    p_total_amount: selectedService.base_price,
+  }
+);
 
-    if (bookingError) {
-      setSubmitting(false);
-      Alert.alert('Error', bookingError.message);
-      return;
-    }
+if (bookingError) {
+  setSubmitting(false);
+
+  const message = String(bookingError.message || '').toLowerCase();
+
+  if (
+    message.includes('conflict') ||
+    message.includes('occupied') ||
+    message.includes('unavailable') ||
+    message.includes('already booked')
+  ) {
+    Alert.alert(
+      'Schedule Not Available',
+      'The selected mechanic or time slot is no longer available. Please choose another mechanic or schedule.'
+    );
+    setStep(4);
+    fetchMechanicAvailability();
+    return;
+  }
+
+  Alert.alert('Error', bookingError.message);
+  return;
+}
+
+const booking = Array.isArray(rpcBooking)
+  ? rpcBooking[0]
+  : rpcBooking;
+
+if (!booking?.id) {
+  setSubmitting(false);
+  Alert.alert(
+    'Booking Error',
+    'Booking was processed but no booking ID was returned. Please check the database RPC return value.'
+  );
+  return;
+}
 
     await notifyUser({
       userId: user.id,
@@ -305,6 +393,15 @@ export default function BookingScreen({ route, navigation }) {
       relatedId: booking.id,
     });
 
+    await notifyRole({
+  role: 'staff',
+  title: 'New Booking Request',
+  message: 'A customer submitted a new service booking request from the mobile app.',
+  type: 'booking',
+  relatedTable: 'bookings',
+  relatedId: booking.id,
+});
+
     if (selectedMechanic?.id) {
       await notifyUser({
         userId: selectedMechanic.id,
@@ -318,11 +415,11 @@ export default function BookingScreen({ route, navigation }) {
 
     setSubmitting(false);
 
-    Alert.alert(
-      'Booking Confirmed!',
-      'Your booking has been submitted.\nWe will confirm shortly.',
-      [{ text: 'OK', onPress: () => navigation.goBack() }]
-    );
+Alert.alert(
+  'Booking Submitted!',
+  'Your booking request has been submitted.\nPlease wait for shop confirmation.',
+  [{ text: 'OK', onPress: () => navigation.goBack() }]
+);
   }
 
   function handleNext() {

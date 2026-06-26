@@ -51,7 +51,7 @@ export default function ProtectedRoute({ children, allowedRoles }) {
             <path
               className="opacity-90"
               fill="currentColor"
-              d="M4 12a8 8v8z"
+              d="M4 12a8 8 0 018-8v8z"
             />
           </svg>
 
