@@ -75,29 +75,34 @@ export function AuthProvider({ children }) {
     if (session?.user) await fetchProfile(session.user.id);
   }
 
-  async function signUp({ email, password, firstName, lastName, phone }) {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { first_name: firstName, last_name: lastName, phone },
-      },
-    });
-    if (error) throw error;
-
-    if (data.user) {
-      await supabase.from('profiles').insert({
-        id: data.user.id,
+async function signUp({
+  email,
+  password,
+  firstName,
+  lastName,
+  phone,
+  emailRedirectTo,
+}) {
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      emailRedirectTo,
+      data: {
         first_name: firstName,
         last_name: lastName,
-        email,
         phone,
         role: 'customer',
-      });
-    }
+      },
+    },
+  });
 
-    return data;
-  }
+  if (error) throw error;
+
+  await supabase.auth.signOut();
+
+  return data;
+}
 
   async function signIn({ email, password }) {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });

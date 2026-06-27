@@ -266,6 +266,7 @@ export default function AdminDashboard() {
     ['/admin/orders', 'Manage Orders', '📦'],
     ['/admin/parts', 'Manage Parts', '⚙️'],
     ['/admin/services', 'Manage Services', '🛠️'],
+    ['/admin/chatbot-templates', 'Chatbot Templates', '🤖'],
     ['/admin/assessments', 'Assessments', '📋'],
     ['/admin/chat', 'Customer Chats', '💬'],
     ['/admin/users', 'Manage Users', '👥'],

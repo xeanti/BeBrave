@@ -26,7 +26,6 @@ function normalizeCartRow(row) {
     part_id: row.part_id,
     name: part.name || 'Part',
     category: part.category || 'General',
-    description: part.description || '',
     image_url: part.image_url || null,
     price: money(part.price),
     stock_quantity: stock,
@@ -51,22 +50,24 @@ export function CartProvider({ children }) {
 
     const { data, error } = await supabase
       .from('cart_items')
-      .select(`
+      .select(
+        `
         id,
         user_id,
         part_id,
         quantity,
+        created_at,
         parts (
           id,
           name,
           category,
-          description,
           image_url,
           price,
           stock_quantity,
           compatible_models
         )
-      `)
+      `
+      )
       .eq('user_id', uid)
       .order('created_at', { ascending: true });
 
@@ -81,8 +82,8 @@ export function CartProvider({ children }) {
   }, []);
 
   const refreshCart = useCallback(async () => {
-    const { data } = await supabase.auth.getUser();
-    const uid = data?.user?.id || null;
+    const { data } = await supabase.auth.getSession();
+    const uid = data?.session?.user?.id || null;
 
     setUserId(uid);
     await fetchCart(uid);
@@ -92,8 +93,8 @@ export function CartProvider({ children }) {
     let mounted = true;
 
     async function initCart() {
-      const { data } = await supabase.auth.getUser();
-      const uid = data?.user?.id || null;
+      const { data } = await supabase.auth.getSession();
+      const uid = data?.session?.user?.id || null;
 
       if (!mounted) return;
 
@@ -170,8 +171,12 @@ export function CartProvider({ children }) {
   async function updateQuantity(partId, quantity) {
     if (!userId) return;
 
-    const item = cart.find((cartItem) => cartItem.id === partId);
+    if (Number(quantity) < 1) {
+      await removeFromCart(partId);
+      return;
+    }
 
+    const item = cart.find((cartItem) => cartItem.id === partId);
     if (!item) return;
 
     const qty = Math.max(1, Number(quantity) || 1);

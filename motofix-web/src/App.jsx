@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
+import AuthCallback from './pages/AuthCallback';
 
 import Navbar from './components/Navbar';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -42,6 +43,7 @@ import AdminAssessments from './pages/admin/AdminAssessments';
 import AdminSettings from './pages/admin/AdminSettings';
 import AdminUsers from './pages/admin/AdminUsers';
 import AdminInventoryMovements from './pages/admin/AdminInventoryMovements';
+import AdminChatbotTemplates from './pages/admin/AdminChatbotTemplates';
 
 import StaffDashboard from './pages/staff/StaffDashboard';
 
@@ -58,6 +60,7 @@ export default function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/mechanics" element={<Mechanics />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
 
             {/* Shared Protected */}
             <Route
@@ -306,6 +309,15 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
+            <Route
+  path="/admin/chatbot-templates"
+  element={
+    <ProtectedRoute allowedRoles={['admin']}>
+      <AdminChatbotTemplates />
+    </ProtectedRoute>
+  }
+/>
 
             <Route
               path="/admin/services"

@@ -69,9 +69,17 @@ export default function HomeScreen({ navigation }) {
       <View style={s.banner}>
         <Text style={s.bannerTitle}>🏍️ Book a Service</Text>
         <Text style={s.bannerSub}>Fast, reliable motorcycle servicing at your fingertips</Text>
-        <TouchableOpacity style={s.bannerButton} onPress={() => navigation.navigate('Booking')}>
-          <Text style={s.bannerButtonText}>Book Now →</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <TouchableOpacity style={s.bannerButton} onPress={() => navigation.navigate('Booking')}>
+            <Text style={s.bannerButtonText}>Book Now →</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={s.bannerButton}
+            onPress={() => navigation.navigate('PreAssessment')}
+          >
+            <Text style={s.bannerButtonText}>Get Estimate →</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Recent Bookings */}

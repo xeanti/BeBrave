@@ -24,6 +24,7 @@ import StaffChatScreen from './screens/shared/StaffChatScreen';
 // --- CUSTOMER ---
 import HomeScreen from './screens/customer/HomeScreen';
 import BookingScreen from './screens/customer/BookingScreen';
+import PreAssessmentScreen from './screens/customer/PreAssessmentScreen';
 import AppointmentsScreen from './screens/customer/AppointmentsScreen';
 import ChatScreen from './screens/customer/ChatScreen';
 import CustomizeScreen from './screens/customer/CustomizeScreen';
@@ -50,6 +51,11 @@ import AdminOrdersScreen from './screens/admin/OrdersScreen';
 import ReportsScreen from './screens/admin/ReportsScreen';
 import AdminUsersScreen from './screens/admin/AdminUsersScreen';
 import AdminMotorcycleModelsScreen from './screens/admin/AdminMotorcycleModelsScreen';
+import AdminServicesScreen from './screens/admin/AdminServicesScreen';
+import AdminSettingsScreen from './screens/admin/AdminSettingsScreen';
+import AdminPreAssessmentsScreen from './screens/admin/AdminPreAssessmentsScreen';
+import AdminAuditLogsScreen from './screens/admin/AdminAuditLogsScreen';
+import AdminChatbotTemplatesScreen from './screens/admin/AdminChatbotTemplatesScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -360,13 +366,18 @@ export function StaffTabs() {
 function AdminMoreScreen({ navigation }) {
   const { theme } = useTheme();
 
-  const items = [
-    { label: 'Orders', icon: 'cart', screen: 'AdminOrders' },
-    { label: 'Inventory', icon: 'cube', screen: 'AdminInv' },
-    { label: 'Models', icon: 'bicycle', screen: 'AdminModels' },
-    { label: 'Users', icon: 'people', screen: 'AdminUsers' },
-    { label: 'Reports', icon: 'analytics', screen: 'AdminReports' },
-  ];
+const items = [
+  { label: 'Orders', icon: 'cart', screen: 'AdminOrders' },
+  { label: 'Services', icon: 'construct', screen: 'AdminServices' },
+  { label: 'Booking Rules / Settings', icon: 'settings', screen: 'AdminSettings' },
+  { label: 'Pre-Assessments', icon: 'clipboard', screen: 'AdminPreAssessments' },
+  { label: 'Chatbot Templates', icon: 'sparkles', screen: 'AdminChatbotTemplates' },
+  { label: 'Parts & Inventory', icon: 'cube', screen: 'AdminInv' },
+  { label: 'Models', icon: 'bicycle', screen: 'AdminModels' },
+  { label: 'Users / Mechanics', icon: 'people', screen: 'AdminUsers' },
+  { label: 'Audit Logs', icon: 'shield-checkmark', screen: 'AdminAuditLogs' },
+  { label: 'Reports', icon: 'analytics', screen: 'AdminReports' },
+];
 
   return (
     <View style={[styles.moreContainer, { backgroundColor: theme.bg }]}>
@@ -412,9 +423,39 @@ function AdminMoreStackNav() {
       />
 
       <AdminMoreStack.Screen
+        name="AdminServices"
+        component={AdminServicesScreen}
+        options={{ title: 'Services' }}
+      />
+
+      <AdminMoreStack.Screen
+  name="AdminAuditLogs"
+  component={AdminAuditLogsScreen}
+  options={{ title: 'Audit Logs' }}
+/>
+
+      <AdminMoreStack.Screen
+  name="AdminSettings"
+  component={AdminSettingsScreen}
+  options={{ title: 'Booking Rules' }}
+/>
+
+<AdminMoreStack.Screen
+  name="AdminChatbotTemplates"
+  component={AdminChatbotTemplatesScreen}
+  options={{ title: 'Chatbot Templates' }}
+/>
+
+<AdminMoreStack.Screen
+  name="AdminPreAssessments"
+  component={AdminPreAssessmentsScreen}
+  options={{ title: 'Pre-Assessments' }}
+/>
+
+      <AdminMoreStack.Screen
         name="AdminInv"
         component={InventoryScreen}
-        options={{ title: 'Inventory' }}
+        options={{ title: 'Parts & Inventory' }}
       />
 
       <AdminMoreStack.Screen
@@ -492,10 +533,10 @@ export function AdminTabs() {
 // ════════════════════════════════════════════════════════════════════════════
 // ROLE-GUARDED WRAPPERS
 // ════════════════════════════════════════════════════════════════════════════
-function MechanicMainGuarded({ navigation }) {
+function CustomerMainGuarded({ navigation }) {
   return (
-    <RoleGuard allowedRoles={['mechanic']} navigation={navigation}>
-      <MechanicTabs />
+    <RoleGuard allowedRoles={['customer']} navigation={navigation}>
+      <CustomerTabs />
     </RoleGuard>
   );
 }
@@ -508,9 +549,17 @@ function AdminMainGuarded({ navigation }) {
   );
 }
 
+function MechanicMainGuarded({ navigation }) {
+  return (
+    <RoleGuard allowedRoles={['mechanic']} navigation={navigation}>
+      <MechanicTabs />
+    </RoleGuard>
+  );
+}
+
 function StaffMainGuarded({ navigation }) {
   return (
-    <RoleGuard allowedRoles={['staff', 'admin']} navigation={navigation}>
+    <RoleGuard allowedRoles={['staff', 'cashier']} navigation={navigation}>
       <StaffTabs />
     </RoleGuard>
   );
@@ -575,7 +624,7 @@ export function RootNav() {
 
       <Stack.Screen name="Register" component={RegisterScreen} />
 
-      <Stack.Screen name="Main" component={CustomerTabs} />
+      <Stack.Screen name="Main" component={CustomerMainGuarded} />
 
       <Stack.Screen name="AdminMain" component={AdminMainGuarded} />
 
@@ -589,6 +638,16 @@ export function RootNav() {
         options={{
           headerShown: true,
           title: 'Book a Service',
+          ...sharedHeader,
+        }}
+      />
+
+      <Stack.Screen
+        name="PreAssessment"
+        component={PreAssessmentScreen}
+        options={{
+          headerShown: true,
+          title: 'Pre-Assessment',
           ...sharedHeader,
         }}
       />

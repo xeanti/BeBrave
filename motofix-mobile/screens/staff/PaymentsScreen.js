@@ -108,6 +108,14 @@ export default function PaymentsScreen() {
         .order('created_at', { ascending: false }),
     ]);
 
+    if (b.error) {
+      Alert.alert('Bookings Error', b.error.message);
+    }
+
+    if (o.error) {
+      Alert.alert('Orders Error', o.error.message);
+    }
+
     const bookingsData = b.data || [];
     const ordersData = o.data || [];
 
@@ -172,7 +180,14 @@ export default function PaymentsScreen() {
     setMethod('cash');
   }
 
-  async function tryCreateInvoice({ type, record, total, paidAmount, receiptNumber, isFullPayment }) {
+  async function tryCreateInvoice({
+    type,
+    record,
+    total,
+    paidAmount,
+    receiptNumber,
+    isFullPayment,
+  }) {
     try {
       const payload = {
         total_amount: total,
@@ -228,7 +243,6 @@ export default function PaymentsScreen() {
           amount: paidAmount,
           payment_type: isFullPayment ? 'full' : 'balance',
           method,
-          payment_method: method,
           receipt_number: receiptNumber,
           processed_by: staffId,
         });
@@ -249,7 +263,6 @@ export default function PaymentsScreen() {
           amount: paidAmount,
           payment_type: isFullPayment ? 'full' : 'balance',
           method,
-          payment_method: method,
           receipt_number: receiptNumber,
           processed_by: staffId,
         });

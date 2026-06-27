@@ -164,13 +164,14 @@ export default function Register() {
 
     setLoading(true);
     try {
-      await signUp({
-        email: form.email,
-        password: form.password,
-        firstName: form.firstName,
-        lastName: form.lastName,
-        phone: form.phone,
-      });
+await signUp({
+  email: form.email,
+  password: form.password,
+  firstName: form.firstName,
+  lastName: form.lastName,
+  phone: form.phone,
+  emailRedirectTo: `${window.location.origin}/auth/callback`,
+});
 
       const registrationConsentTypes = [
         CONSENT_TYPES.ACCOUNT_REGISTRATION,

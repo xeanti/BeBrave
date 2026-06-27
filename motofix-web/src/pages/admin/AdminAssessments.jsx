@@ -244,7 +244,6 @@ export default function AdminAssessments() {
         .from('pre_assessments')
         .update({
           status,
-          updated_at: new Date().toISOString(),
         })
         .eq('id', id);
 

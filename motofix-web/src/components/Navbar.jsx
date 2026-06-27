@@ -285,13 +285,13 @@ export default function Navbar() {
     { to: '/admin/chat', label: 'Messages', icon: '💬' },
   ];
 
-  const adminSecondary = [
-    { to: '/admin/services', label: 'Services', icon: '🔨' },
-    { to: '/admin/users', label: 'Users', icon: '👥' },
-    { to: '/admin/reports', label: 'Reports', icon: '📈' },
-    { to: '/admin/inventory-movements', label: 'Inventory History', icon: '📜' },
-    { to: '/admin/settings', label: 'Settings', icon: '⚙️' },
-  ];
+const adminSecondary = [
+  { to: '/admin/services', label: 'Services', icon: '' },
+  { to: '/admin/chatbot-templates', label: 'Chatbot Templates', icon: '🤖' },
+  { to: '/admin/users', label: 'Users', icon: '' },
+  { to: '/admin/reports', label: 'Reports', icon: '' },
+  { to: '/admin/settings', label: 'Settings', icon: '⚙️' },
+];
 
   const navLinks =
     profile?.role === 'admin'

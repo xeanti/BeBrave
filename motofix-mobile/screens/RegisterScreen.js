@@ -151,13 +151,25 @@ export default function RegisterScreen({ navigation }) {
     }
 
     setLoading(true);
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { first_name: firstName, last_name: lastName, phone, role: 'customer' },
-      },
-    });
+const { error } = await supabase.auth.signUp({
+  email,
+  password,
+  options: {
+    emailRedirectTo: 'https://motofix.store/auth/callback',
+    data: {
+      first_name: firstName,
+      last_name: lastName,
+      phone,
+      role: 'customer',
+    },
+  },
+});
+
+await supabase.auth.signOut();
+
+await supabase.auth.signOut();
+
+await supabase.auth.signOut();
     setLoading(false);
 
     if (error) {
