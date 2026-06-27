@@ -36,6 +36,8 @@ import OrderHistoryScreen from './screens/customer/OrderHistoryScreen';
 import NotificationsScreen from './screens/customer/NotificationsScreen';
 import OrderDetailsScreen from './screens/customer/OrderDetailsScreen';
 import MechanicsScreen from './screens/customer/MechanicsScreen';
+import BookingConfirmationScreen from './screens/customer/BookingConfirmationScreen';
+import OrderConfirmationScreen from './screens/customer/OrderConfirmationScreen';
 
 // --- MECHANIC ---
 import JobsScreen from './screens/mechanic/JobsScreen';
@@ -47,6 +49,7 @@ import WalkInsScreen from './screens/staff/WalkInsScreen';
 import PaymentsScreen from './screens/staff/PaymentsScreen';
 import InventoryScreen from './screens/staff/InventoryScreen';
 import InventoryMovementsScreen from './screens/staff/InventoryMovementsScreen';
+import StaffDashboardScreen from './screens/staff/StaffDashboardScreen';
 
 // --- ADMIN ---
 import AdminDashboardScreen from './screens/admin/DashboardScreen';
@@ -225,6 +228,14 @@ function CustomerShopStack() {
         component={OrderDetailsScreen}
         options={{ title: 'Order Details' }}
       />
+
+      <ShopStack.Screen
+  name="OrderConfirmation"
+  component={OrderConfirmationScreen}
+  options={{ title: 'Order Submitted' }}
+/>
+
+
     </ShopStack.Navigator>
   );
 }
@@ -339,6 +350,13 @@ export function StaffTabs() {
 
   return (
     <Tab.Navigator screenOptions={getTabOptions(theme)}>
+
+      <Tab.Screen
+  name="Dashboard"
+  component={StaffDashboardScreen}
+  options={{ tabBarIcon: makeIcon('speedometer') }}
+/>
+
       <Tab.Screen
         name="Walk-ins"
         component={WalkInsScreen}
@@ -665,16 +683,34 @@ export function RootNav() {
 
       <Stack.Screen name="StaffMain" component={StaffMainGuarded} />
 
-      <Stack.Screen
+<Stack.Screen
   name="AdminBookingDetails"
   component={AdminBookingDetailsScreen}
-  options={{ title: 'Booking Details' }}
+  options={{
+    headerShown: true,
+    title: 'Booking Details',
+    ...sharedHeader,
+  }}
 />
 
 <Stack.Screen
   name="AdminOrderDetails"
   component={AdminOrderDetailsScreen}
-  options={{ title: 'Order Details' }}
+  options={{
+    headerShown: true,
+    title: 'Order Details',
+    ...sharedHeader,
+  }}
+/>
+
+<Stack.Screen
+  name="BookingConfirmation"
+  component={BookingConfirmationScreen}
+  options={{
+    headerShown: true,
+    title: 'Booking Submitted',
+    ...sharedHeader,
+  }}
 />
 
 <Stack.Screen

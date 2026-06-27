@@ -325,18 +325,20 @@ const bookingDateStr = toISODateString(bookingDate);
       return;
     }
 
-const { data: rpcBooking, error: bookingError } = await supabase.rpc(
-  'create_booking_with_conflict_check',
-  {
-    p_customer_id: user.id,
-    p_service_id: selectedService.id,
-    p_mechanic_id: selectedMechanic?.id || null,
-    p_booking_date: bookingDateStr,
-    p_booking_time: bookingTime,
-    p_notes: notes || null,
-    p_total_amount: selectedService.base_price,
-  }
-);
+const { data: booking, error: bookingError } = await supabase
+  .from('bookings')
+  .insert({
+    customer_id: user.id,
+    service_id: selectedService.id,
+    mechanic_id: selectedMechanic?.id || null,
+    booking_date: bookingDateStr,
+    booking_time: bookingTime,
+    status: 'pending',
+    notes: notes || null,
+    total_amount: selectedService.base_price,
+  })
+  .select()
+  .single();
 
 if (bookingError) {
   setSubmitting(false);
@@ -344,6 +346,7 @@ if (bookingError) {
   const message = String(bookingError.message || '').toLowerCase();
 
   if (
+    message.includes('duplicate') ||
     message.includes('conflict') ||
     message.includes('occupied') ||
     message.includes('unavailable') ||
@@ -359,19 +362,6 @@ if (bookingError) {
   }
 
   Alert.alert('Error', bookingError.message);
-  return;
-}
-
-const booking = Array.isArray(rpcBooking)
-  ? rpcBooking[0]
-  : rpcBooking;
-
-if (!booking?.id) {
-  setSubmitting(false);
-  Alert.alert(
-    'Booking Error',
-    'Booking was processed but no booking ID was returned. Please check the database RPC return value.'
-  );
   return;
 }
 
@@ -415,11 +405,18 @@ if (!booking?.id) {
 
     setSubmitting(false);
 
-Alert.alert(
-  'Booking Submitted!',
-  'Your booking request has been submitted.\nPlease wait for shop confirmation.',
-  [{ text: 'OK', onPress: () => navigation.goBack() }]
-);
+    navigation.replace('BookingConfirmation', {
+      bookingId: booking.id,
+      serviceName: selectedService?.name,
+      motorcycle: `${motorcycleMake} ${motorcycleModel} ${motorcycleYear}`.trim(),
+      bookingDate: bookingDateStr,
+      bookingTime,
+      mechanicName: selectedMechanic
+        ? `${selectedMechanic.first_name || ''} ${selectedMechanic.last_name || ''}`.trim()
+        : 'No preference / auto-assigned',
+      totalAmount: selectedService?.base_price,
+      status: 'pending',
+    });
   }
 
   function handleNext() {

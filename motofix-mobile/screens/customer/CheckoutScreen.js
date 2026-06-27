@@ -180,13 +180,38 @@ const {
         }),
       ]);
 
+      const submittedItems = cart.map((item) => ({
+        id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price,
+        unit_price: Number(item.price) || 0,
+        subtotal: (Number(item.price) || 0) * item.quantity,
+        parts: {
+          id: item.id,
+          name: item.name,
+          image_url: item.image_url,
+          category: item.category,
+        },
+      }));
+
       clearCart();
 
-      Alert.alert(
-        'Order Submitted',
-        'Your parts order has been submitted.\nPlease wait for admin or staff confirmation.',
-        [{ text: 'OK', onPress: () => navigation.replace('OrderHistory') }]
-      );
+      navigation.replace('OrderConfirmation', {
+        orderId: order.id,
+        order: {
+          ...order,
+          order_items: submittedItems,
+        },
+        items: submittedItems,
+        itemCount: submittedItems.reduce(
+          (sum, item) => sum + (Number(item.quantity) || 0),
+          0
+        ),
+        totalAmount: cartTotal,
+        status: 'pending',
+        receiptStatus: 'Pending shop confirmation',
+      });
     } catch (error) {
       Alert.alert('Checkout Failed', error.message || 'Unable to submit order.');
     } finally {
