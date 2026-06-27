@@ -8,6 +8,8 @@ import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../lib/ThemeContext';
 import { supabase } from '../../lib/supabase';
+import { unregisterPushToken } from '../../lib/pushNotifications';
+
 
 export default function ProfileScreen({ navigation }) {
   const { theme, isDark, toggleTheme } = useTheme();
@@ -178,10 +180,22 @@ export default function ProfileScreen({ navigation }) {
     }
   }
 
-  async function handleLogout() {
+async function handleLogout() {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    await unregisterPushToken(user?.id);
+    await supabase.auth.signOut();
+
+    navigation.replace('Login');
+  } catch (error) {
+    console.log('Logout error:', error.message);
     await supabase.auth.signOut();
     navigation.replace('Login');
   }
+}
 
   async function pickCertFile() {
     try {

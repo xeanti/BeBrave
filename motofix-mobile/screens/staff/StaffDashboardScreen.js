@@ -177,7 +177,6 @@ export default function StaffDashboardScreen({ navigation }) {
         id,
         status,
         total_amount,
-        payment_status,
         is_walkin,
         created_at,
         profiles!orders_customer_id_fkey (
@@ -359,8 +358,8 @@ export default function StaffDashboardScreen({ navigation }) {
       (sum, payment) => sum + (Number(payment.amount) || 0),
       0
     );
-    const walkInBookings = bookings.filter((item) => item.is_walkin).length;
-    const walkInOrders = orders.filter((item) => item.is_walkin).length;
+    const walkInBookings = bookings.filter((item) => item.is_walkin === true).length;
+    const walkInOrders = orders.filter((item) => item.is_walkin === true).length;
 
     return {
       todayBookings: todayBookings.length,

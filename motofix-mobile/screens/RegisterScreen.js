@@ -12,9 +12,12 @@ import {
   ActivityIndicator,
   ScrollView,
   Modal,
+  Image,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../lib/ThemeContext';
+
+const APP_ICON = require('../assets/favicon.png');
 
 // ─── Terms Content ────────────────────────────────────────────────────────────
 const TERMS_SECTIONS = [
@@ -168,8 +171,6 @@ const { error } = await supabase.auth.signUp({
 await supabase.auth.signOut();
 
 await supabase.auth.signOut();
-
-await supabase.auth.signOut();
     setLoading(false);
 
     if (error) {
@@ -200,7 +201,7 @@ await supabase.auth.signOut();
         {/* Logo */}
         <View style={s.logoBlock}>
           <View style={s.logoIconWrap}>
-            <Text style={s.logoIcon}>🏍️</Text>
+            <Image source={APP_ICON} style={s.logoImage} resizeMode="contain" />
           </View>
           <Text style={s.logoText}>MotoFix</Text>
           <Text style={s.tagline}>Create your account</Text>
@@ -418,7 +419,11 @@ const styles = (theme) => StyleSheet.create({
     borderWidth: 1, borderColor: theme.primary + '40',
     justifyContent: 'center', alignItems: 'center', marginBottom: 12,
   },
-  logoIcon: { fontSize: 34 },
+  logoImage: {
+    width: 52,
+    height: 52,
+    borderRadius: 12,
+  },
   logoText: { fontSize: 26, fontWeight: '800', color: theme.primaryLight, letterSpacing: -0.5, marginBottom: 4 },
   tagline: { fontSize: 13, color: theme.textMuted },
 

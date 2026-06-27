@@ -14,6 +14,35 @@ Notifications.setNotificationHandler({
   }),
 });
 
+function getProjectId() {
+  return (
+    Constants?.expoConfig?.extra?.eas?.projectId ||
+    Constants?.easConfig?.projectId
+  );
+}
+
+async function getCurrentExpoPushToken() {
+  try {
+    if (!Device.isDevice) return null;
+
+    const projectId = getProjectId();
+
+    if (!projectId) {
+      console.log('Missing EAS projectId. Run eas init or add projectId in app.json.');
+      return null;
+    }
+
+    const tokenResponse = await Notifications.getExpoPushTokenAsync({
+      projectId,
+    });
+
+    return tokenResponse.data;
+  } catch (error) {
+    console.log('Get current Expo push token error:', error.message);
+    return null;
+  }
+}
+
 export async function registerForPushNotifications(userId) {
   if (!userId) return null;
 
@@ -46,20 +75,9 @@ export async function registerForPushNotifications(userId) {
       return null;
     }
 
-    const projectId =
-      Constants?.expoConfig?.extra?.eas?.projectId ||
-      Constants?.easConfig?.projectId;
+    const expoPushToken = await getCurrentExpoPushToken();
 
-    if (!projectId) {
-      console.log('Missing EAS projectId. Run eas init or add projectId in app.json.');
-      return null;
-    }
-
-    const tokenResponse = await Notifications.getExpoPushTokenAsync({
-      projectId,
-    });
-
-    const expoPushToken = tokenResponse.data;
+    if (!expoPushToken) return null;
 
     const { error } = await supabase.from('push_tokens').upsert(
       {
@@ -86,6 +104,31 @@ export async function registerForPushNotifications(userId) {
   } catch (error) {
     console.log('Push notification registration error:', error.message);
     return null;
+  }
+}
+
+export async function unregisterPushToken(userId) {
+  try {
+    if (!userId) return;
+
+    const expoPushToken = await getCurrentExpoPushToken();
+
+    if (!expoPushToken) return;
+
+    const { error } = await supabase
+      .from('push_tokens')
+      .delete()
+      .eq('user_id', userId)
+      .eq('expo_push_token', expoPushToken);
+
+    if (error) {
+      console.log('Failed to unregister push token:', error.message);
+      return;
+    }
+
+    console.log('Expo push token unregistered:', expoPushToken);
+  } catch (error) {
+    console.log('Unregister push token error:', error.message);
   }
 }
 

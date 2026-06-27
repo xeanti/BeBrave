@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "484255152141",
+    "project_id": "bebrave-4f6e3",
+    "storage_bucket": "bebrave-4f6e3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:484255152141:android:1647ec19a61be6cb7ebd44",
+        "android_client_info": {
+          "package_name": "com.xeanti.motofix"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCVRxYJF1sp-Uhy1jNqXgxqXpbyYNDjfMw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
