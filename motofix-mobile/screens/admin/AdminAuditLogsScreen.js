@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -73,12 +74,78 @@ function readableAction(action = '') {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function prettifyKey(key = '') {
+  return String(key)
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatAuditValue(key, value) {
+  if (value === null || value === undefined || value === '') return '—';
+
+  const lowerKey = String(key).toLowerCase();
+
+  if (
+    lowerKey.includes('amount') ||
+    lowerKey.includes('price') ||
+    lowerKey.includes('total') ||
+    lowerKey.includes('paid') ||
+    lowerKey.includes('balance')
+  ) {
+    return `₱${Number(value).toLocaleString('en-PH', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+
+  if (
+    lowerKey.includes('date') ||
+    lowerKey.includes('created_at') ||
+    lowerKey.includes('updated_at')
+  ) {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) {
+      return date.toLocaleString('en-PH', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    }
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 'Yes' : 'No';
+  }
+
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .map(([childKey, childValue]) => `${prettifyKey(childKey)}: ${formatAuditValue(childKey, childValue)}`)
+      .join('\n');
+  }
+
+  return String(value)
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 function safeDetails(details) {
   if (!details) return '';
 
   try {
-    if (typeof details === 'string') return details;
-    return JSON.stringify(details, null, 2);
+    const parsed =
+      typeof details === 'string'
+        ? JSON.parse(details)
+        : details;
+
+    if (typeof parsed !== 'object' || parsed === null) {
+      return String(parsed);
+    }
+
+    return Object.entries(parsed)
+      .map(([key, value]) => `${prettifyKey(key)}: ${formatAuditValue(key, value)}`)
+      .join('\n');
   } catch {
     return String(details);
   }

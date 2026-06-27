@@ -18,6 +18,7 @@ import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
 
 const YELLOW = '#EAB308';
+const SHOP_ROLES = ['admin', 'staff', 'cashier', 'mechanic'];
 
 function getThemeValue(theme, key, fallback) {
   return theme?.[key] || fallback;
@@ -28,7 +29,7 @@ function getCustomerName(conversation) {
   const last = conversation?.profiles?.last_name || '';
   const full = `${first} ${last}`.trim();
 
-  return full || 'Unknown Customer';
+  return full || conversation?.profiles?.email || 'Unknown Customer';
 }
 
 function getInitial(name) {
@@ -85,18 +86,116 @@ function shouldShowDate(current, previous) {
   );
 }
 
-function getSenderLabel(message) {
-  const role = message?.profiles?.role;
+function normalizeRole(role) {
+  const value = String(role || '').toLowerCase();
 
-  if (role === 'admin') return 'Admin';
-  if (role === 'staff' || role === 'cashier') return 'Staff';
-  if (role === 'mechanic') return 'Mechanic';
+  if (value === 'cashier') return 'staff';
+  return value;
+}
 
-  const first = message?.profiles?.first_name || '';
-  const last = message?.profiles?.last_name || '';
-  const name = `${first} ${last}`.trim();
+function humanRole(role) {
+  const value = normalizeRole(role);
 
-  return name || 'Customer';
+  if (value === 'admin') return 'Admin';
+  if (value === 'staff') return 'Staff';
+  if (value === 'mechanic') return 'Mechanic';
+  if (value === 'customer') return 'Customer';
+
+  return 'Support';
+}
+
+function getSenderName(message) {
+  const profile = message?.profiles || {};
+  const name = `${profile.first_name || ''} ${profile.last_name || ''}`.trim();
+
+  return name || humanRole(profile.role);
+}
+
+function getSenderRole(message, conversation) {
+  const role = normalizeRole(message?.profiles?.role);
+
+  if (role) return role;
+
+  if (message?.sender_id && conversation?.customer_id) {
+    return message.sender_id === conversation.customer_id ? 'customer' : 'staff';
+  }
+
+  return 'staff';
+}
+
+function isShopRole(role) {
+  return SHOP_ROLES.includes(normalizeRole(role));
+}
+
+function isShopMessage(message, conversation) {
+  const role = getSenderRole(message, conversation);
+
+  if (role === 'customer') return false;
+  if (isShopRole(role)) return true;
+
+  if (message?.sender_id && conversation?.customer_id) {
+    return message.sender_id !== conversation.customer_id;
+  }
+
+  return false;
+}
+
+function getRoleColors(role, theme) {
+  const normalized = normalizeRole(role);
+
+  if (normalized === 'admin') {
+    return {
+      bg: '#dc262622',
+      border: '#dc262666',
+      text: '#f87171',
+    };
+  }
+
+  if (normalized === 'mechanic') {
+    return {
+      bg: '#2563eb22',
+      border: '#2563eb66',
+      text: '#60a5fa',
+    };
+  }
+
+  if (normalized === 'staff') {
+    return {
+      bg: `${YELLOW}22`,
+      border: `${YELLOW}66`,
+      text: YELLOW,
+    };
+  }
+
+  return {
+    bg: getThemeValue(theme, 'bg2', '#111827'),
+    border: getThemeValue(theme, 'border', '#374151'),
+    text: getThemeValue(theme, 'textMuted', '#9ca3af'),
+  };
+}
+
+function RoleBadge({ role, theme, compact = false }) {
+  const colors = getRoleColors(role, theme);
+  const label = humanRole(role);
+  const s = styles(theme);
+
+  return (
+    <View
+      style={[
+        s.roleBadge,
+        {
+          backgroundColor: colors.bg,
+          borderColor: colors.border,
+          paddingHorizontal: compact ? 7 : 9,
+          paddingVertical: compact ? 2 : 4,
+        },
+      ]}
+    >
+      <Text style={[s.roleBadgeText, { color: colors.text }]}>
+        {label}
+      </Text>
+    </View>
+  );
 }
 
 export default function StaffChatScreen() {
@@ -104,12 +203,12 @@ export default function StaffChatScreen() {
   const s = styles(theme);
 
   const [user, setUser] = useState(null);
+  const [viewerProfile, setViewerProfile] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [selected, setSelected] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [search, setSearch] = useState('');
-
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -129,11 +228,7 @@ export default function StaffChatScreen() {
       const email = String(conversation.profiles?.email || '').toLowerCase();
       const status = String(conversation.status || '').toLowerCase();
 
-      return (
-        name.includes(query) ||
-        email.includes(query) ||
-        status.includes(query)
-      );
+      return name.includes(query) || email.includes(query) || status.includes(query);
     });
   }, [conversations, search]);
 
@@ -164,10 +259,20 @@ export default function StaffChatScreen() {
 
     setUser(currentUser || null);
 
+    if (currentUser?.id) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id, first_name, last_name, role')
+        .eq('id', currentUser.id)
+        .maybeSingle();
+
+      setViewerProfile(profile || null);
+    }
+
     await fetchConversations(currentUser);
 
     const channel = supabase
-      .channel('staff-human-chat-global')
+      .channel('role-clean-support-chat-global')
       .on(
         'postgres_changes',
         {
@@ -189,7 +294,6 @@ export default function StaffChatScreen() {
       .subscribe();
 
     globalChannelRef.current = channel;
-
     setLoading(false);
   }
 
@@ -222,6 +326,7 @@ export default function StaffChatScreen() {
       .order('updated_at', { ascending: false });
 
     if (error || !data) {
+      console.log('Fetch conversations error:', error?.message);
       setConversations([]);
       return;
     }
@@ -266,7 +371,6 @@ export default function StaffChatScreen() {
 
     await fetchMessages(conversation.id);
     subscribeToConversation(conversation.id);
-
     setMessagesLoading(false);
   }
 
@@ -288,6 +392,8 @@ export default function StaffChatScreen() {
 
     if (!error && data) {
       setMessages(data);
+    } else if (error) {
+      console.log('Fetch messages error:', error.message);
     }
 
     if (user?.id) {
@@ -297,7 +403,11 @@ export default function StaffChatScreen() {
           reader_id: user.id,
         });
       } catch {
-        // Safe fallback if RPC is unavailable.
+        await supabase
+          .from('chat_messages')
+          .update({ is_read: true })
+          .eq('conversation_id', conversationId)
+          .neq('sender_id', user.id);
       }
     }
 
@@ -315,7 +425,7 @@ export default function StaffChatScreen() {
     }
 
     const channel = supabase
-      .channel(`staff-human-chat-${conversationId}`)
+      .channel(`role-clean-support-chat-${conversationId}`)
       .on(
         'postgres_changes',
         {
@@ -354,7 +464,11 @@ export default function StaffChatScreen() {
                 reader_id: user.id,
               });
             } catch {
-              // Safe fallback if RPC is unavailable.
+              await supabase
+                .from('chat_messages')
+                .update({ is_read: true })
+                .eq('conversation_id', conversationId)
+                .neq('sender_id', user.id);
             }
           }
 
@@ -376,9 +490,7 @@ export default function StaffChatScreen() {
         (payload) => {
           setMessages((prev) =>
             prev.map((message) =>
-              message.id === payload.new.id
-                ? { ...message, ...payload.new }
-                : message
+              message.id === payload.new.id ? { ...message, ...payload.new } : message
             )
           );
         }
@@ -429,10 +541,13 @@ export default function StaffChatScreen() {
       await supabase
         .from('chat_conversations')
         .update({
+          staff_id: selected.staff_id || user.id,
           updated_at: new Date().toISOString(),
           conversation_type: selected.conversation_type || 'human',
         })
         .eq('id', selected.id);
+
+      fetchConversations(user);
     } catch (error) {
       console.log('Send chat error:', error.message);
       setInput(text);
@@ -451,10 +566,7 @@ export default function StaffChatScreen() {
       .update({ status: 'closed' })
       .eq('id', id);
 
-    setSelected((prev) =>
-      prev?.id === id ? { ...prev, status: 'closed' } : prev
-    );
-
+    setSelected((prev) => (prev?.id === id ? { ...prev, status: 'closed' } : prev));
     fetchConversations(user);
   }
 
@@ -467,10 +579,7 @@ export default function StaffChatScreen() {
       })
       .eq('id', id);
 
-    setSelected((prev) =>
-      prev?.id === id ? { ...prev, status: 'open' } : prev
-    );
-
+    setSelected((prev) => (prev?.id === id ? { ...prev, status: 'open' } : prev));
     fetchConversations(user);
   }
 
@@ -505,10 +614,7 @@ export default function StaffChatScreen() {
 
     return (
       <TouchableOpacity
-        style={[
-          s.conversationCard,
-          hasUnread && s.unreadConversationCard,
-        ]}
+        style={[s.conversationCard, hasUnread && s.unreadConversationCard]}
         onPress={() => selectConversation(item)}
         activeOpacity={0.78}
       >
@@ -541,7 +647,7 @@ export default function StaffChatScreen() {
               <Text
                 style={[
                   s.statusText,
-                  { color: isOpen ? '#22c55e' : getThemeValue(theme, 'textMuted', '#9ca3af') },
+                  { color: isOpen ? '#22c55e' : theme.textMuted },
                 ]}
               >
                 {isOpen ? 'Open' : 'Closed'}
@@ -554,11 +660,7 @@ export default function StaffChatScreen() {
           </View>
         </View>
 
-        <Ionicons
-          name="chevron-forward"
-          size={18}
-          color={getThemeValue(theme, 'textMuted', '#9ca3af')}
-        />
+        <Ionicons name="chevron-forward" size={19} color={theme.textMuted} />
       </TouchableOpacity>
     );
   }
@@ -566,51 +668,70 @@ export default function StaffChatScreen() {
   function renderMessage({ item, index }) {
     const previous = messages[index - 1];
     const showDate = shouldShowDate(item, previous);
-    const isOwn = item.sender_id === user?.id;
-    const isLastOwn = isOwn && index === messages.length - 1;
+    const role = getSenderRole(item, selected);
+    const shopMessage = isShopMessage(item, selected);
+    const isOwnSender = item.sender_id === user?.id;
+    const senderName = getSenderName(item);
+    const isLastOwnSender = isOwnSender && index === messages.length - 1;
 
     return (
-      <View>
+      <>
         {showDate && (
           <View style={s.dateDivider}>
             <Text style={s.dateDividerText}>{formatDateLabel(item.created_at)}</Text>
           </View>
         )}
 
-        <View style={[s.messageRow, isOwn ? s.myMessageRow : s.theirMessageRow]}>
-          {!isOwn && (
+        <View style={[s.messageRow, shopMessage ? s.shopMessageRow : s.customerMessageRow]}>
+          {!shopMessage && (
             <View style={s.senderAvatar}>
-              <Text style={s.senderAvatarText}>
-                {getInitial(getSenderLabel(item))}
-              </Text>
+              <Text style={s.senderAvatarText}>{getInitial(senderName)}</Text>
             </View>
           )}
 
-          <View style={[s.bubble, isOwn ? s.myBubble : s.theirBubble]}>
-            {!isOwn && (
-              <Text style={s.senderLabel}>
-                {getSenderLabel(item)}
-              </Text>
-            )}
-
-            <Text style={[s.bubbleText, isOwn && s.myBubbleText]}>
-              {item.message}
-            </Text>
-
-            <View style={s.bubbleMeta}>
-              <Text style={[s.bubbleTime, isOwn && s.myBubbleTime]}>
-                {formatTime(item.created_at)}
-              </Text>
-
-              {isLastOwn && (
-                <Text style={s.readReceipt}>
-                  {item.is_read ? 'Seen' : 'Sent'}
-                </Text>
+          <View style={[s.messageGroup, shopMessage && s.shopMessageGroup]}>
+            <View style={[s.senderLine, shopMessage && s.senderLineRight]}>
+              {shopMessage ? (
+                <>
+                  <Text style={s.senderLabel}>
+                    {isOwnSender ? 'You' : senderName}
+                  </Text>
+                  <RoleBadge role={role} theme={theme} compact />
+                </>
+              ) : (
+                <>
+                  <RoleBadge role="customer" theme={theme} compact />
+                  <Text style={s.senderLabel}>{senderName}</Text>
+                </>
               )}
             </View>
+
+            <View style={[s.bubble, shopMessage ? s.shopBubble : s.customerBubble]}>
+              <Text style={[s.bubbleText, shopMessage && s.shopBubbleText]}>
+                {item.message}
+              </Text>
+
+              <View style={s.bubbleMeta}>
+                <Text style={[s.bubbleTime, shopMessage && s.shopBubbleTime]}>
+                  {formatTime(item.created_at)}
+                </Text>
+
+                {isLastOwnSender && (
+                  <Text style={s.readReceipt}>{item.is_read ? 'Seen' : 'Sent'}</Text>
+                )}
+              </View>
+            </View>
           </View>
+
+          {shopMessage && (
+            <View style={[s.shopAvatar, { backgroundColor: getRoleColors(role, theme).bg }]}>
+              <Text style={[s.shopAvatarText, { color: getRoleColors(role, theme).text }]}>
+                {getInitial(humanRole(role))}
+              </Text>
+            </View>
+          )}
         </View>
-      </View>
+      </>
     );
   }
 
@@ -628,18 +749,18 @@ export default function StaffChatScreen() {
       <View style={s.container}>
         <StatusBar
           barStyle={isDark ? 'light-content' : 'dark-content'}
-          backgroundColor={getThemeValue(theme, 'bg', '#0f172a')}
+          backgroundColor={theme.bg}
         />
 
         <View style={s.listHeader}>
           <View style={s.headerIcon}>
-            <Ionicons name="headset" size={25} color="#111827" />
+            <Ionicons name="chatbubbles" size={24} color="#111827" />
           </View>
 
           <View style={{ flex: 1 }}>
             <Text style={s.listTitle}>Support Chats</Text>
             <Text style={s.listSub}>
-              {openCount} open · {unreadTotal} unread · Human conversations only
+              {openCount} open · {unreadTotal} unread · Role-clean shop replies
             </Text>
           </View>
 
@@ -648,32 +769,28 @@ export default function StaffChatScreen() {
             onPress={() => fetchConversations(user)}
             activeOpacity={0.8}
           >
-            <Ionicons name="refresh" size={18} color={YELLOW} />
+            <Ionicons name="refresh" size={20} color={YELLOW} />
           </TouchableOpacity>
         </View>
 
-        <View style={s.searchBox}>
-          <Ionicons
-            name="search"
-            size={18}
-            color={getThemeValue(theme, 'textMuted', '#9ca3af')}
-          />
+        <View style={s.roleLegend}>
+          <Text style={s.legendText}>Customer messages appear left.</Text>
+          <Text style={s.legendText}>Admin / Staff / Mechanic replies appear right.</Text>
+        </View>
 
+        <View style={s.searchBox}>
+          <Ionicons name="search" size={18} color={theme.textMuted} />
           <TextInput
             style={s.searchInput}
+            placeholder="Search customer, email, or status..."
+            placeholderTextColor={theme.textMuted}
             value={search}
             onChangeText={setSearch}
-            placeholder="Search customer or email..."
-            placeholderTextColor={getThemeValue(theme, 'textMuted', '#9ca3af')}
           />
 
           {!!search && (
             <TouchableOpacity onPress={() => setSearch('')}>
-              <Ionicons
-                name="close-circle"
-                size={20}
-                color={getThemeValue(theme, 'textMuted', '#9ca3af')}
-              />
+              <Ionicons name="close-circle" size={19} color={theme.textMuted} />
             </TouchableOpacity>
           )}
         </View>
@@ -696,11 +813,12 @@ export default function StaffChatScreen() {
           ListEmptyComponent={
             <View style={s.emptyState}>
               <View style={s.emptyIcon}>
-                <Ionicons name="chatbubbles-outline" size={42} color={YELLOW} />
+                <Ionicons name="chatbubble-ellipses-outline" size={34} color={theme.textMuted} />
               </View>
+
               <Text style={s.emptyTitle}>No support chats yet</Text>
               <Text style={s.emptyText}>
-                Real-person customer conversations will appear here. AI chatbot conversations are hidden from staff.
+                Real-person customer conversations will appear here. AI chatbot conversations are hidden.
               </Text>
             </View>
           }
@@ -715,17 +833,17 @@ export default function StaffChatScreen() {
   return (
     <KeyboardAvoidingView
       style={s.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 82 : 0}
     >
       <StatusBar
         barStyle={isDark ? 'light-content' : 'dark-content'}
-        backgroundColor={getThemeValue(theme, 'bg', '#0f172a')}
+        backgroundColor={theme.bg}
       />
 
       <View style={s.chatHeader}>
-        <TouchableOpacity onPress={backToList} style={s.backButton}>
-          <Ionicons name="chevron-back" size={22} color={YELLOW} />
+        <TouchableOpacity style={s.backButton} onPress={backToList}>
+          <Ionicons name="chevron-back" size={23} color={YELLOW} />
         </TouchableOpacity>
 
         <View style={s.smallAvatar}>
@@ -736,6 +854,7 @@ export default function StaffChatScreen() {
           <Text style={s.chatHeaderName} numberOfLines={1}>
             {selectedName}
           </Text>
+
           <Text style={s.chatHeaderEmail} numberOfLines={1}>
             {selected.profiles?.email || 'No email'} · {selectedOpen ? 'Open' : 'Closed'}
           </Text>
@@ -760,9 +879,16 @@ export default function StaffChatScreen() {
         )}
       </View>
 
+      <View style={s.chatNotice}>
+        <Ionicons name="information-circle-outline" size={15} color={theme.textMuted} />
+        <Text style={s.chatNoticeText}>
+          Role-clean view: customer left, all shop roles right.
+        </Text>
+      </View>
+
       {messagesLoading ? (
         <View style={s.centered}>
-          <ActivityIndicator color={YELLOW} />
+          <ActivityIndicator size="large" color={YELLOW} />
           <Text style={s.loadingText}>Loading messages...</Text>
         </View>
       ) : (
@@ -771,13 +897,8 @@ export default function StaffChatScreen() {
           data={messages}
           keyExtractor={(item) => String(item.id)}
           renderItem={renderMessage}
-          contentContainerStyle={[
-            s.messageList,
-            messages.length === 0 && s.emptyList,
-          ]}
-          onContentSizeChange={() =>
-            flatListRef.current?.scrollToEnd({ animated: true })
-          }
+          contentContainerStyle={[s.messageList, messages.length === 0 && s.emptyList]}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -788,55 +909,54 @@ export default function StaffChatScreen() {
           ListEmptyComponent={
             <View style={s.emptyState}>
               <View style={s.emptyIcon}>
-                <Ionicons name="chatbox-outline" size={42} color={YELLOW} />
+                <Ionicons name="chatbubble-outline" size={34} color={theme.textMuted} />
               </View>
+
               <Text style={s.emptyTitle}>No messages yet</Text>
-              <Text style={s.emptyText}>
-                Reply to start assisting this customer.
-              </Text>
+              <Text style={s.emptyText}>Reply to start assisting this customer.</Text>
             </View>
           }
         />
       )}
 
-      <View style={s.inputBar}>
-        {!selectedOpen ? (
+      {!selectedOpen ? (
+        <View style={s.inputBar}>
           <View style={s.closedBar}>
             <Text style={s.closedText}>Conversation is closed.</Text>
             <TouchableOpacity onPress={() => reopenConversation(selected.id)}>
               <Text style={s.reopenInlineText}>Reopen</Text>
             </TouchableOpacity>
           </View>
-        ) : (
-          <>
-            <TextInput
-              style={s.input}
-              placeholder="Reply to customer..."
-              placeholderTextColor={getThemeValue(theme, 'textMuted', '#9ca3af')}
-              value={input}
-              onChangeText={setInput}
-              multiline
-              maxLength={700}
-            />
+        </View>
+      ) : (
+        <View style={s.inputBar}>
+          <View style={s.composerRole}>
+            <RoleBadge role={viewerProfile?.role || 'staff'} theme={theme} compact />
+          </View>
 
-            <TouchableOpacity
-              style={[
-                s.sendButton,
-                (!input.trim() || sending) && s.sendButtonDisabled,
-              ]}
-              onPress={sendMessage}
-              disabled={!input.trim() || sending}
-              activeOpacity={0.8}
-            >
-              {sending ? (
-                <ActivityIndicator size="small" color="#111827" />
-              ) : (
-                <Ionicons name="send" size={18} color="#111827" />
-              )}
-            </TouchableOpacity>
-          </>
-        )}
-      </View>
+          <TextInput
+            style={s.input}
+            placeholder="Type a reply..."
+            placeholderTextColor={theme.textMuted}
+            value={input}
+            onChangeText={setInput}
+            multiline
+          />
+
+          <TouchableOpacity
+            style={[s.sendButton, (!input.trim() || sending) && s.sendButtonDisabled]}
+            onPress={sendMessage}
+            disabled={!input.trim() || sending}
+            activeOpacity={0.85}
+          >
+            {sending ? (
+              <ActivityIndicator size="small" color="#111827" />
+            ) : (
+              <Ionicons name="send" size={20} color="#111827" />
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -868,7 +988,6 @@ const styles = (theme) => {
       marginTop: 10,
       fontWeight: '700',
     },
-
     listHeader: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -908,6 +1027,19 @@ const styles = (theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
+    roleLegend: {
+      backgroundColor: bg2,
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+      paddingHorizontal: 16,
+      paddingVertical: 9,
+      gap: 2,
+    },
+    legendText: {
+      color: textMuted,
+      fontSize: 11,
+      fontWeight: '700',
+    },
     searchBox: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -925,7 +1057,6 @@ const styles = (theme) => {
       fontWeight: '700',
       paddingVertical: 8,
     },
-
     conversationList: {
       padding: 14,
       paddingBottom: 28,
@@ -1029,7 +1160,6 @@ const styles = (theme) => {
       fontSize: 10,
       fontWeight: '900',
     },
-
     chatHeader: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1100,7 +1230,22 @@ const styles = (theme) => {
       fontSize: 12,
       fontWeight: '900',
     },
-
+    chatNotice: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: bg2,
+      borderBottomWidth: 1,
+      borderBottomColor: border,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+    },
+    chatNoticeText: {
+      color: textMuted,
+      fontSize: 11,
+      fontWeight: '700',
+      flex: 1,
+    },
     messageList: {
       padding: 16,
       paddingBottom: 24,
@@ -1128,13 +1273,43 @@ const styles = (theme) => {
       flexDirection: 'row',
       alignItems: 'flex-end',
       gap: 8,
-      marginBottom: 10,
+      marginBottom: 12,
     },
-    myMessageRow: {
+    shopMessageRow: {
       justifyContent: 'flex-end',
     },
-    theirMessageRow: {
+    customerMessageRow: {
       justifyContent: 'flex-start',
+    },
+    messageGroup: {
+      maxWidth: '78%',
+    },
+    shopMessageGroup: {
+      alignItems: 'flex-end',
+    },
+    senderLine: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginBottom: 4,
+    },
+    senderLineRight: {
+      justifyContent: 'flex-end',
+    },
+    senderLabel: {
+      color: textMuted,
+      fontSize: 10,
+      fontWeight: '900',
+    },
+    roleBadge: {
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    roleBadgeText: {
+      fontSize: 9,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 0.3,
     },
     senderAvatar: {
       width: 30,
@@ -1149,27 +1324,33 @@ const styles = (theme) => {
       fontSize: 11,
       fontWeight: '900',
     },
+    shopAvatar: {
+      width: 30,
+      height: 30,
+      borderRadius: 11,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: border,
+    },
+    shopAvatarText: {
+      fontSize: 11,
+      fontWeight: '900',
+    },
     bubble: {
-      maxWidth: '78%',
       borderRadius: 18,
       paddingHorizontal: 13,
       paddingVertical: 10,
     },
-    myBubble: {
+    shopBubble: {
       backgroundColor: primary,
       borderBottomRightRadius: 5,
     },
-    theirBubble: {
+    customerBubble: {
       backgroundColor: card,
       borderWidth: 1,
       borderColor: border,
       borderBottomLeftRadius: 5,
-    },
-    senderLabel: {
-      color: textMuted,
-      fontSize: 10,
-      fontWeight: '900',
-      marginBottom: 4,
     },
     bubbleText: {
       color: text,
@@ -1177,7 +1358,7 @@ const styles = (theme) => {
       lineHeight: 21,
       fontWeight: '500',
     },
-    myBubbleText: {
+    shopBubbleText: {
       color: '#111827',
       fontWeight: '700',
     },
@@ -1193,7 +1374,7 @@ const styles = (theme) => {
       fontSize: 10,
       fontWeight: '700',
     },
-    myBubbleTime: {
+    shopBubbleTime: {
       color: 'rgba(17, 24, 39, 0.65)',
     },
     readReceipt: {
@@ -1201,7 +1382,6 @@ const styles = (theme) => {
       fontSize: 10,
       fontWeight: '900',
     },
-
     inputBar: {
       flexDirection: 'row',
       alignItems: 'flex-end',
@@ -1211,6 +1391,10 @@ const styles = (theme) => {
       borderTopColor: border,
       paddingHorizontal: 12,
       paddingVertical: 10,
+    },
+    composerRole: {
+      minHeight: 44,
+      justifyContent: 'center',
     },
     input: {
       flex: 1,
@@ -1255,7 +1439,6 @@ const styles = (theme) => {
       fontSize: 13,
       fontWeight: '900',
     },
-
     emptyState: {
       alignItems: 'center',
       paddingHorizontal: 28,

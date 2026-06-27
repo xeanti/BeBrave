@@ -381,6 +381,19 @@ export default function OrderHistoryScreen({ navigation }) {
                   <Text style={s.notesText}>{order.notes}</Text>
                 </View>
               ) : null}
+
+              <TouchableOpacity
+                style={s.viewDetailsBtn}
+                onPress={() =>
+                  navigation.navigate('OrderDetails', {
+                    orderId: order.id,
+                    order,
+                  })
+                }
+              >
+                <Text style={s.viewDetailsText}>View Details</Text>
+                <Ionicons name="chevron-forward" size={16} color={theme.primaryLight || theme.primary} />
+              </TouchableOpacity>
             </View>
           );
         })
@@ -392,20 +405,20 @@ export default function OrderHistoryScreen({ navigation }) {
 const styles = (theme) =>
   StyleSheet.create({
     backToShopButton: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 8,
-  backgroundColor: theme.primary,
-  paddingVertical: 12,
-  borderRadius: 14,
-  marginBottom: 16,
-},
-backToShopText: {
-  color: '#fff',
-  fontWeight: '900',
-  fontSize: 14,
-},
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: theme.primary,
+      paddingVertical: 12,
+      borderRadius: 14,
+      marginBottom: 16,
+    },
+    backToShopText: {
+      color: '#fff',
+      fontWeight: '900',
+      fontSize: 14,
+    },
     container: {
       flex: 1,
       backgroundColor: theme.bg,
@@ -620,5 +633,22 @@ backToShopText: {
       color: theme.textSub || theme.textMuted,
       fontSize: 12,
       lineHeight: 18,
+    },
+    viewDetailsBtn: {
+      marginTop: 12,
+      borderWidth: 1,
+      borderColor: theme.border,
+      backgroundColor: theme.bg2,
+      borderRadius: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    viewDetailsText: {
+      color: theme.text,
+      fontSize: 13,
+      fontWeight: '900',
     },
   });

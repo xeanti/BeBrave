@@ -15,6 +15,7 @@ import {
   Platform,
   Image,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
 
@@ -28,7 +29,7 @@ const EMPTY_FORM = {
   image_url: '',
 };
 
-export default function InventoryScreen() {
+export default function InventoryScreen({ navigation }) {
   const { theme, isDark } = useTheme();
   const s = styles(theme);
 
@@ -310,6 +311,27 @@ export default function InventoryScreen() {
         <View style={{ marginBottom: 16 }}>
           <Text style={s.title}>Inventory</Text>
           <Text style={s.subtitle}>Manage parts and stock levels.</Text>
+          
+          <TouchableOpacity
+            style={{
+              marginTop: 12,
+              borderWidth: 1,
+              borderColor: theme.border,
+              backgroundColor: theme.bg2,
+              borderRadius: 12,
+              paddingVertical: 12,
+              paddingHorizontal: 14,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+            onPress={() => navigation.navigate('InventoryMovements')}
+          >
+            <Text style={{ color: theme.text, fontSize: 13, fontWeight: '900' }}>
+              View Inventory History
+            </Text>
+            <Ionicons name="chevron-forward" size={16} color={theme.primaryLight || theme.primary} />
+          </TouchableOpacity>
         </View>
 
         {/* Stats Section with Horizontal Scroll */}

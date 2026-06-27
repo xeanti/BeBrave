@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Platform, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Platform, ScrollView, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { NavigationContainer } from '@react-navigation/native';
@@ -34,15 +34,19 @@ import ShopScreen from './screens/customer/ShopScreen';
 import CheckoutScreen from './screens/customer/CheckoutScreen';
 import OrderHistoryScreen from './screens/customer/OrderHistoryScreen';
 import NotificationsScreen from './screens/customer/NotificationsScreen';
+import OrderDetailsScreen from './screens/customer/OrderDetailsScreen';
+import MechanicsScreen from './screens/customer/MechanicsScreen';
 
 // --- MECHANIC ---
 import JobsScreen from './screens/mechanic/JobsScreen';
 import JobDetailScreen from './screens/mechanic/JobDetailScreen';
+import MechanicRatingsScreen from './screens/mechanic/MechanicRatingsScreen';
 
 // --- STAFF ---
 import WalkInsScreen from './screens/staff/WalkInsScreen';
 import PaymentsScreen from './screens/staff/PaymentsScreen';
 import InventoryScreen from './screens/staff/InventoryScreen';
+import InventoryMovementsScreen from './screens/staff/InventoryMovementsScreen';
 
 // --- ADMIN ---
 import AdminDashboardScreen from './screens/admin/DashboardScreen';
@@ -56,6 +60,8 @@ import AdminSettingsScreen from './screens/admin/AdminSettingsScreen';
 import AdminPreAssessmentsScreen from './screens/admin/AdminPreAssessmentsScreen';
 import AdminAuditLogsScreen from './screens/admin/AdminAuditLogsScreen';
 import AdminChatbotTemplatesScreen from './screens/admin/AdminChatbotTemplatesScreen';
+import AdminBookingDetailsScreen from './screens/admin/AdminBookingDetailsScreen';
+import AdminOrderDetailsScreen from './screens/admin/AdminOrderDetailsScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -213,6 +219,12 @@ function CustomerShopStack() {
         component={OrderHistoryScreen}
         options={{ title: 'Order History' }}
       />
+
+      <ShopStack.Screen
+        name="OrderDetails"
+        component={OrderDetailsScreen}
+        options={{ title: 'Order Details' }}
+      />
     </ShopStack.Navigator>
   );
 }
@@ -290,6 +302,12 @@ export function MechanicTabs() {
         component={JobsScreen}
         options={{ tabBarIcon: makeIcon('build') }}
       />
+
+      <Tab.Screen
+  name="Ratings"
+  component={MechanicRatingsScreen}
+  options={{ tabBarIcon: makeIcon('star') }}
+/>
 
       <Tab.Screen
         name="Chat"
@@ -373,6 +391,11 @@ const items = [
   { label: 'Pre-Assessments', icon: 'clipboard', screen: 'AdminPreAssessments' },
   { label: 'Chatbot Templates', icon: 'sparkles', screen: 'AdminChatbotTemplates' },
   { label: 'Parts & Inventory', icon: 'cube', screen: 'AdminInv' },
+  {
+  label: 'Inventory History',
+  icon: 'swap-horizontal',
+  screen: 'InventoryMovements',
+},
   { label: 'Models', icon: 'bicycle', screen: 'AdminModels' },
   { label: 'Users / Mechanics', icon: 'people', screen: 'AdminUsers' },
   { label: 'Audit Logs', icon: 'shield-checkmark', screen: 'AdminAuditLogs' },
@@ -380,7 +403,11 @@ const items = [
 ];
 
   return (
-    <View style={[styles.moreContainer, { backgroundColor: theme.bg }]}>
+    <ScrollView
+      style={[styles.moreContainer, { backgroundColor: theme.bg }]}
+      contentContainerStyle={styles.moreContent}
+      showsVerticalScrollIndicator={false}
+    >
       <Text style={[styles.moreTitle, { color: theme.text }]}>More</Text>
 
       {items.map((item) => (
@@ -401,7 +428,7 @@ const items = [
           <Ionicons name="chevron-forward" size={18} color={theme.textMuted} />
         </TouchableOpacity>
       ))}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -463,6 +490,12 @@ function AdminMoreStackNav() {
         component={AdminMotorcycleModelsScreen}
         options={{ title: 'Models' }}
       />
+
+      <AdminMoreStack.Screen
+  name="InventoryMovements"
+  component={InventoryMovementsScreen}
+  options={{ title: 'Inventory History' }}
+/>
 
       <AdminMoreStack.Screen
         name="AdminUsers"
@@ -633,6 +666,28 @@ export function RootNav() {
       <Stack.Screen name="StaffMain" component={StaffMainGuarded} />
 
       <Stack.Screen
+  name="AdminBookingDetails"
+  component={AdminBookingDetailsScreen}
+  options={{ title: 'Booking Details' }}
+/>
+
+<Stack.Screen
+  name="AdminOrderDetails"
+  component={AdminOrderDetailsScreen}
+  options={{ title: 'Order Details' }}
+/>
+
+<Stack.Screen
+  name="Mechanics"
+  component={MechanicsScreen}
+  options={{
+    headerShown: true,
+    title: 'Mechanics',
+    ...sharedHeader,
+  }}
+/>
+
+      <Stack.Screen
         name="Booking"
         component={BookingScreen}
         options={{
@@ -695,8 +750,11 @@ export default function App() {
 const styles = StyleSheet.create({
   moreContainer: {
     flex: 1,
+  },
+  moreContent: {
     paddingHorizontal: 16,
     paddingTop: 20,
+    paddingBottom: 110,
   },
   moreTitle: {
     fontSize: 22,

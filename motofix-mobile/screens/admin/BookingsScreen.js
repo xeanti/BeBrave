@@ -26,7 +26,7 @@ function formatStatus(status) {
     .join(' ');
 }
 
-export default function AdminBookingsScreen() {
+export default function AdminBookingsScreen({ navigation }) {
   const { theme, isDark } = useTheme();
   const [bookings, setBookings] = useState([]);
   const [mechanics, setMechanics] = useState([]);
@@ -156,6 +156,19 @@ export default function AdminBookingsScreen() {
             <Text style={s.chevron}>▾</Text>
           </TouchableOpacity>
         </View>
+
+        <TouchableOpacity
+          style={[s.pickerBtn, { marginTop: 8 }]}
+          onPress={() =>
+            navigation.navigate('AdminBookingDetails', {
+              bookingId: b.id,
+              booking: b,
+            })
+          }
+        >
+          <Text style={s.pickerBtnText}>View Details</Text>
+          <Text style={s.chevron}>›</Text>
+        </TouchableOpacity>
 
         <Text style={s.bookingId}>#{b.id?.slice(0, 8).toUpperCase()}</Text>
       </View>

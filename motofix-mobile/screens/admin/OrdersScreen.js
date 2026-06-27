@@ -19,7 +19,7 @@ const STATUS_COLOR_KEY = {
   cancelled: 'danger',
 };
 
-export default function AdminOrdersScreen() {
+export default function AdminOrdersScreen({ navigation }) {
   const { theme, isDark } = useTheme();
   const s = styles(theme);
 
@@ -269,6 +269,17 @@ export default function AdminOrdersScreen() {
 
                 {/* Actions */}
                 <View style={s.actionsRow}>
+                  <TouchableOpacity
+                    style={s.actionBtn}
+                    onPress={() =>
+                      navigation.navigate('AdminOrderDetails', {
+                        orderId: o.id,
+                        order: o,
+                      })
+                    }
+                  >
+                    <Text style={s.actionBtnText}>View Details</Text>
+                  </TouchableOpacity>
                   <TouchableOpacity style={s.actionBtn} onPress={() => setStatusModal(o.id)}>
                     <Text style={s.actionBtnText}>⚡ Update Status</Text>
                   </TouchableOpacity>
