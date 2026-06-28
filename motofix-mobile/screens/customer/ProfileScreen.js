@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../lib/ThemeContext';
 import { supabase } from '../../lib/supabase';
 import { unregisterPushToken } from '../../lib/pushNotifications';
+import { CommonActions } from '@react-navigation/native';
 
 
 export default function ProfileScreen({ navigation }) {
@@ -182,19 +183,22 @@ export default function ProfileScreen({ navigation }) {
 
 async function handleLogout() {
   try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    await unregisterPushToken(user?.id);
     await supabase.auth.signOut();
-
-    navigation.replace('Login');
   } catch (error) {
     console.log('Logout error:', error.message);
-    await supabase.auth.signOut();
-    navigation.replace('Login');
   }
+
+  const resetAction = CommonActions.reset({
+    index: 0,
+    routes: [{ name: 'Login' }],
+  });
+
+  const rootNavigation =
+    navigation.getParent()?.getParent() ||
+    navigation.getParent() ||
+    navigation;
+
+  rootNavigation.dispatch(resetAction);
 }
 
   async function pickCertFile() {
