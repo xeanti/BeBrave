@@ -165,10 +165,13 @@ export default function CustomizeScreen() {
         return prev;
       }
 
-      if (prev.length >= 3) {
-        Alert.alert('Limit reached', 'You can select up to 3 parts.');
-        return prev;
-      }
+      if (prev.length >= MAX_PREVIEW_PARTS) {
+  Alert.alert(
+    'Limit reached',
+    `You can select up to ${MAX_PREVIEW_PARTS} parts.`
+  );
+  return prev;
+}
 
       return [...prev, partId];
     });
@@ -645,12 +648,19 @@ export default function CustomizeScreen() {
             <View style={s.rowBetween}>
               <View>
                 <Text style={s.title}>Select Parts</Text>
-                <Text style={s.subtitle}>Up to 3 parts, one per category.</Text>
+                <Text style={s.subtitle}>
+  Up to {MAX_PREVIEW_PARTS} parts, one per category.
+</Text>
               </View>
 
-              <Text style={[s.badge, selectedParts.length >= 3 && s.badgeActive]}>
-                {selectedParts.length}/3
-              </Text>
+<Text
+  style={[
+    s.badge,
+    selectedParts.length >= MAX_PREVIEW_PARTS && s.badgeActive,
+  ]}
+>
+  {selectedParts.length}/{MAX_PREVIEW_PARTS}
+</Text>
             </View>
 
             <TextInput
@@ -700,7 +710,8 @@ export default function CustomizeScreen() {
                 const isCategoryDisabled =
                   part.category && selectedCategories.includes(part.category);
 
-                const isLimitDisabled = !isSelected && selectedParts.length >= 3;
+                const isLimitDisabled =
+  !isSelected && selectedParts.length >= MAX_PREVIEW_PARTS;
 
                 const isDisabled =
                   !isSelected && (isLimitDisabled || isCategoryDisabled);

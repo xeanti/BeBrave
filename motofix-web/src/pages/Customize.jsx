@@ -9,7 +9,7 @@ import {
   getConsentDefinitionSafe,
 } from '../lib/consents';
 
-const MAX_PREVIEW_PARTS = 3;
+const MAX_PREVIEW_PARTS = 2;
 
 function formatPeso(value) {
   const amount = Number(value) || 0;
@@ -248,6 +248,7 @@ export default function Customize() {
   const [agreedToAiConsent, setAgreedToAiConsent] = useState(false);
   const [aiPhotoConsent, setAiPhotoConsent] = useState(null);
   const [consentLoading, setConsentLoading] = useState(true);
+  const [consentPopupOpen, setConsentPopupOpen] = useState(false);
 
   useEffect(() => {
     fetchModels();
@@ -579,7 +580,7 @@ export default function Customize() {
     }
 
     if (!agreedToAiConsent) {
-      setError('Please agree to the AI photo processing consent before generating a preview.');
+      setConsentPopupOpen(true);
       return;
     }
 
@@ -1164,7 +1165,10 @@ export default function Customize() {
                   <input
                     type="checkbox"
                     checked={agreedToAiConsent}
-                    onChange={(event) => setAgreedToAiConsent(event.target.checked)}
+                    onChange={(event) => {
+                      setAgreedToAiConsent(event.target.checked);
+                      if (event.target.checked) setConsentPopupOpen(false);
+                    }}
                     className="mt-1 accent-primary-600"
                   />
                   <span className="text-xs leading-5 text-gray-600 dark:text-gray-400">
@@ -1322,6 +1326,39 @@ export default function Customize() {
           </aside>
         </div>
       </div>
+
+      {/* Consent Required Popup */}
+      {consentPopupOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm"
+          onClick={() => setConsentPopupOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-3xl border border-gray-200 bg-white p-6 text-center shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-3xl bg-red-50 text-3xl ring-1 ring-red-100 dark:bg-red-500/10 dark:ring-red-500/20">
+              ⚠️
+            </div>
+
+            <h3 className="text-lg font-black text-gray-950 dark:text-white">
+              Consent Required
+            </h3>
+
+            <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-400">
+              Please check the AI Photo Processing Consent checkbox before generating your motorcycle preview.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setConsentPopupOpen(false)}
+              className="mt-5 w-full rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/25 transition hover:bg-primary-700 active:scale-[0.99]"
+            >
+              Okay, I Understand
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Lightbox */}
       {lightboxOpen && resultImage && (
