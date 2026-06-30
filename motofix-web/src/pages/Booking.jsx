@@ -125,6 +125,7 @@ export default function Booking() {
   const [agreedToBookingConsent, setAgreedToBookingConsent] = useState(false);
   const [bookingConsent, setBookingConsent] = useState(null);
   const [consentLoading, setConsentLoading] = useState(true);
+  const [consentPopupOpen, setConsentPopupOpen] = useState(false);
 
   useEffect(() => {
     fetchServices();
@@ -273,8 +274,7 @@ export default function Booking() {
     }
 
     if (!agreedToBookingConsent) {
-      setMessage('Please agree to the booking privacy consent before submitting.');
-      setMessageType('error');
+      setConsentPopupOpen(true);
       return;
     }
 
@@ -976,6 +976,33 @@ if (selectedMechanic) {
           </aside>
         </div>
       </div>
+
+      {consentPopupOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-gray-200 bg-white p-6 text-center shadow-2xl dark:border-dark-700 dark:bg-dark-800">
+            <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-3xl bg-red-50 text-3xl ring-1 ring-red-100 dark:bg-red-500/10 dark:ring-red-500/20">
+              ⚠️
+            </div>
+
+            <h3 className="text-lg font-black text-gray-950 dark:text-white">
+              Booking Consent Required
+            </h3>
+
+            <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-400">
+              Please check the Booking Privacy Consent checkbox before submitting
+              your booking request.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setConsentPopupOpen(false)}
+              className="mt-5 w-full rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/25 transition hover:bg-primary-700 active:scale-[0.99]"
+            >
+              Okay, I Understand
+            </button>
+          </div>
+        </div>
+      )}
     </form>
   );
 }

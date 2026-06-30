@@ -220,6 +220,24 @@ export default function CustomizeScreen() {
     return matchSearch && matchCategory;
   });
 
+  function getBasePhotoContext() {
+    if (imageSource === 'own') {
+      return [
+        'Customer uploaded/captured photo.',
+        'The photo may be either a full motorcycle side profile or a closer photo of the part installation location.',
+        'If the photo is a close-up, treat the visible installation area as the locked base area and edit only the selected part location inside that close-up.',
+        'Use surrounding bolts, mounts, panels, fork, swingarm, wheel, exhaust bracket, headlight housing, or nearby body panels as alignment guides.',
+        'Do not zoom out, invent missing motorcycle areas, change the motorcycle body color, or replace the photo with a different motorcycle.',
+      ].join(' ');
+    }
+
+    return [
+      'Catalog reference full-motorcycle photo.',
+      'Treat the whole motorcycle photo as the locked base image.',
+      'Edit only the selected part locations and preserve the body color, decals, lighting, angle, and background.',
+    ].join(' ');
+  }
+
   async function handleGenerate() {
     setError('');
 
@@ -300,10 +318,26 @@ export default function CustomizeScreen() {
             partDetails: selectedPartDetails,
             motorcycleLabel: motorcycleLabel || 'Customer motorcycle',
             imageSource,
+            basePhotoSource:
+              imageSource === 'reference'
+                ? 'reference_photo_url_locked'
+                : 'customer_uploaded_or_captured_photo',
+            basePhotoContext: getBasePhotoContext(),
           },
         });
 
-      if (fnError) throw fnError;
+      if (fnError) {
+        console.error('Function invoke error:', fnError);
+        throw new Error(fnError.message || 'AI preview failed. Please try again.');
+      }
+
+      if (fnData?.success === false) {
+        throw new Error(fnData.error || 'AI preview failed. Please try again.');
+      }
+
+      if (!fnData?.imageUrl) {
+        throw new Error('The preview generator did not return an image URL.');
+      }
 
       setResultImage(fnData.imageUrl);
 
@@ -428,7 +462,7 @@ export default function CustomizeScreen() {
               <View>
                 <Text style={s.title}>Upload Your Photo</Text>
                 <Text style={s.subtitle}>
-                  Best results with a clear side-profile shot in good lighting.
+                  Use a full side-view photo for the whole bike, or take a closer photo of the exact installation area for better accuracy.
                 </Text>
 
                 <View style={[s.photoPicker, ownPhotoUri && s.photoPickerFilled]}>
@@ -486,10 +520,10 @@ export default function CustomizeScreen() {
                   <Text style={s.tipsTitle}>📸 Photo tips</Text>
 
                   {[
-                    'Use a full left or right side-view photo',
-                    'Keep the whole motorcycle inside the frame',
-                    'Use good lighting and avoid blurry shots',
-                    'Use a clean background for better AI preview',
+                    'Whole-bike preview: capture the full motorcycle from the left or right side',
+                    'Specific part preview: move closer to the installation area, such as the wheel, exhaust, headlight, mirror, or seat',
+                    'Keep nearby mounts, bolts, brackets, panels, and surrounding parts visible so the AI knows where to install the part',
+                    'Use good lighting, avoid blur, and avoid extreme close-ups that remove all surrounding reference points',
                   ].map((tip, i) => (
                     <View key={i} style={s.tipRow}>
                       <Text style={s.tipDot}>·</Text>

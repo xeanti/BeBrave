@@ -127,6 +127,7 @@ export default function Register() {
   const [showDPA, setShowDPA] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [termsPopupOpen, setTermsPopupOpen] = useState(false);
   const [accountConsent, setAccountConsent] = useState(null);
   const [invoiceConsent, setInvoiceConsent] = useState(null);
   const [consentLoading, setConsentLoading] = useState(true);
@@ -204,7 +205,7 @@ export default function Register() {
     }
 
     if (!agreedToTerms) {
-      setError('You must agree to the Terms and Conditions and Data Privacy consent before registering.');
+      setTermsPopupOpen(true);
       return;
     }
 
@@ -582,6 +583,42 @@ export default function Register() {
           </div>
         </div>
       </div>
+
+      {/* Terms/Data Privacy Required Popup */}
+      {termsPopupOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ backdropFilter: 'blur(8px)', backgroundColor: 'rgba(0,0,0,0.6)' }}
+          onClick={() => setTermsPopupOpen(false)}
+        >
+          <div
+            className="relative bg-white dark:bg-dark-800 border border-gray-200 dark:border-white/10 rounded-2xl p-6 max-w-md w-full text-center shadow-2xl transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-primary-500 to-accent-400 rounded-l-2xl" />
+
+            <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-red-500/10 text-3xl text-red-500 ring-1 ring-red-500/20">
+              ⚠️
+            </div>
+
+            <h2 className="text-lg font-bold text-gray-900 dark:text-white">
+              Consent Required
+            </h2>
+
+            <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">
+              Please check the Terms and Conditions and Data Privacy consent checkbox before creating your account.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setTermsPopupOpen(false)}
+              className="mt-5 w-full bg-primary-500 hover:bg-primary-600 text-white font-semibold py-2.5 rounded-xl shadow-md shadow-primary-500/30 transition text-sm"
+            >
+              Okay, I Understand
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Terms Modal */}
       {showTerms && (

@@ -57,11 +57,11 @@ function inferInstallArea(part) {
     text.includes('pipe') ||
     text.includes('silencer')
   ) {
-    return 'exhaust or muffler mounting area only; replace the exhaust body/pipe shape while preserving the side fairing, engine, frame, and body panels';
+    return 'exhaust or muffler mounting area only; replace the exhaust body/pipe shape while preserving the engine, frame, and body panels';
   }
 
   if (text.includes('seat') || text.includes('saddle')) {
-    return 'seat area only; replace the seat silhouette, cushion shape, upholstery texture, stitching, and color while preserving the tail fairing, side panels, and frame';
+    return 'seat area only; replace the seat silhouette, cushion shape, upholstery texture, stitching, and color while preserving the side panels and frame';
   }
 
   if (
@@ -70,20 +70,11 @@ function inferInstallArea(part) {
     text.includes('lamp') ||
     text.includes('front light')
   ) {
-    return 'front headlight housing and lens area only; preserve the front fairing, handlebar, fork, body color, and camera angle';
+    return 'front headlight housing and lens area only; preserve the handlebar, fork, body color, and camera angle';
   }
 
   if (text.includes('mirror') || text.includes('side mirror')) {
     return 'left and/or right mirror area only; replace the mirror housing and stem while preserving the handlebar and controls';
-  }
-
-  if (
-    text.includes('fairing') ||
-    text.includes('body kit') ||
-    text.includes('body panel') ||
-    text.includes('cowling')
-  ) {
-    return 'matching body panel or fairing area only; preserve all unrelated panels, wheels, seat, background, and lighting';
   }
 
   if (
@@ -110,7 +101,7 @@ function inferInstallArea(part) {
     text.includes('rearset') ||
     text.includes('rear set')
   ) {
-    return 'footpeg or rearset area only; preserve the frame, side fairing, and engine area';
+    return 'footpeg or rearset area only; preserve the frame and engine area';
   }
 
   if (
@@ -536,6 +527,24 @@ export default function Customize() {
     (imageSource === 'reference' && selectedModelId) ||
     (imageSource === 'own' && uploadedPhoto);
 
+  function getBasePhotoContext() {
+    if (imageSource === 'own') {
+      return [
+        'Customer uploaded photo.',
+        'The photo may be either a full motorcycle side profile or a closer photo of the selected part installation location.',
+        'If the photo is a close-up, treat the visible installation area as the locked base area and edit only the selected part location inside that close-up.',
+        'Use surrounding bolts, mounts, brackets, panels, fork, swingarm, wheel, exhaust bracket, headlight housing, or nearby body panels as alignment guides.',
+        'Do not zoom out, invent missing motorcycle areas, change the motorcycle body color, or replace the photo with a different motorcycle.',
+      ].join(' ');
+    }
+
+    return [
+      'Catalog reference full-motorcycle photo.',
+      'Treat the whole motorcycle photo as the locked base image.',
+      'Edit only the selected part locations and preserve the body color, decals, lighting, angle, and background.',
+    ].join(' ');
+  }
+
   async function handleGenerate() {
     setError('');
 
@@ -673,11 +682,19 @@ export default function Customize() {
               imageSource === 'reference'
                 ? 'reference_photo_url_locked'
                 : 'customer_uploaded_photo',
+            basePhotoContext: getBasePhotoContext(),
           },
         }
       );
 
-      if (fnError) throw fnError;
+      if (fnError) {
+        console.error('Function invoke error:', fnError);
+        throw new Error(fnError.message || 'AI preview failed. Please try again.');
+      }
+
+      if (fnData?.success === false) {
+        throw new Error(fnData.error || 'AI preview failed. Please try again.');
+      }
 
       if (!fnData?.imageUrl) {
         throw new Error('The preview generator did not return an image URL.');
@@ -822,6 +839,12 @@ export default function Customize() {
                   </p>
                   <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     PNG, JPG, or WebP image
+                  </p>
+                  <p className="mx-auto mt-3 max-w-xl text-xs leading-5 text-gray-500 dark:text-gray-400">
+                    For a whole-bike preview, upload a full left/right side-view photo.
+                    For a more accurate part preview, upload a closer photo of the exact installation area
+                    such as the wheel, exhaust, headlight, mirror, or seat. Keep nearby mounts,
+                    bolts, brackets, and panels visible so the AI can align the part correctly.
                   </p>
                 </label>
 
