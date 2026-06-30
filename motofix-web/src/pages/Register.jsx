@@ -80,13 +80,36 @@ function validatePassword(password) {
   return errors;
 }
 
+function formatPHPhone(value) {
+  let digits = value.replace(/\D/g, '');
+
+  // If user types 09xxxxxxxxx, remove the first 0
+  if (digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+
+  // If user types 63xxxxxxxxxx, remove 63 first
+  if (digits.startsWith('63')) {
+    digits = digits.slice(2);
+  }
+
+  // Keep only 10 digits after +63
+  digits = digits.slice(0, 10);
+
+  return digits ? `+63${digits}` : '';
+}
+
+function isValidPHPhone(phone) {
+  return /^\+639\d{9}$/.test(phone);
+}
+
 export default function Register() {
   const { signUp, user } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
     if (user) navigate('/dashboard');
-  }, [user]);
+  }, [user, navigate]);
 
   const [form, setForm] = useState({
     firstName: '',
@@ -137,7 +160,20 @@ export default function Register() {
   }, []);
 
   function handleChange(e) {
-    setForm({ ...form, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+
+    if (name === 'phone') {
+      setForm((prev) => ({
+        ...prev,
+        phone: formatPHPhone(value),
+      }));
+      return;
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
   }
 
   const strength = getPasswordStrength(form.password);
@@ -148,30 +184,41 @@ export default function Register() {
     e.preventDefault();
     setError('');
 
+    const cleanEmail = form.email.trim().toLowerCase();
+    const cleanPhone = form.phone.trim();
+
+    if (cleanPhone && !isValidPHPhone(cleanPhone)) {
+      setError('Please enter a valid Philippine mobile number, e.g. +639123456789.');
+      return;
+    }
+
     const pwErrors = validatePassword(form.password);
     if (pwErrors.length) {
       setError(`Password must contain ${pwErrors.join(', ')}.`);
       return;
     }
+
     if (form.password !== form.confirmPassword) {
       setError('Passwords do not match');
       return;
     }
+
     if (!agreedToTerms) {
       setError('You must agree to the Terms and Conditions and Data Privacy consent before registering.');
       return;
     }
 
     setLoading(true);
+
     try {
-await signUp({
-  email: form.email,
-  password: form.password,
-  firstName: form.firstName,
-  lastName: form.lastName,
-  phone: form.phone,
-  emailRedirectTo: `${window.location.origin}/auth/callback`,
-});
+      await signUp({
+        email: cleanEmail,
+        password: form.password,
+        firstName: form.firstName,
+        lastName: form.lastName,
+        phone: cleanPhone,
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
+      });
 
       const registrationConsentTypes = [
         CONSENT_TYPES.ACCOUNT_REGISTRATION,
@@ -183,8 +230,8 @@ await signUp({
           consentTypes: registrationConsentTypes,
           sourcePage: CONSENT_SOURCE_PAGES.REGISTER,
           metadata: {
-            email: form.email,
-            phone_provided: Boolean(form.phone),
+            email: cleanEmail,
+            phone_provided: Boolean(cleanPhone),
             accepted_terms_and_conditions: true,
             accepted_data_privacy_act_notice: true,
           },
@@ -199,8 +246,8 @@ await signUp({
               consentTypes: registrationConsentTypes,
               sourcePage: CONSENT_SOURCE_PAGES.REGISTER,
               metadata: {
-                email: form.email,
-                phone_provided: Boolean(form.phone),
+                email: cleanEmail,
+                phone_provided: Boolean(cleanPhone),
                 accepted_terms_and_conditions: true,
                 accepted_data_privacy_act_notice: true,
               },
@@ -228,8 +275,12 @@ await signUp({
           {/* Brand panel */}
           <div className="md:w-[40%] p-6 sm:p-7 pl-7 sm:pl-8 border-b md:border-b-0 md:border-r border-gray-200 dark:border-white/10">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-primary-500 flex items-center justify-center text-lg font-bold text-white shrink-0 shadow-md shadow-primary-500/30">
-                🏍️
+              <div className="w-12 h-12 flex items-center justify-center shrink-0 overflow-hidden">
+                <img
+                  src="/favicon.png"
+                  alt="MotoFix Logo"
+                  className="w-full h-full object-contain"
+                />
               </div>
               <div>
                 <p className="text-[11px] uppercase tracking-wide font-semibold text-accent-600 dark:text-accent-400">
@@ -240,7 +291,7 @@ await signUp({
             </div>
 
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-4 leading-relaxed">
-              Create an account to book services, track your motorcycle's history, and pay your way.
+              Create an account to book services, track your motorcycle&apos;s history, and pay your way.
             </p>
 
             <div className="mt-6 space-y-2.5">
@@ -274,6 +325,7 @@ await signUp({
                 {error}
               </div>
             )}
+
             {success && (
               <div className="bg-green-500/10 border border-green-500/30 text-green-600 dark:text-green-400 text-sm rounded-xl p-3 mb-4">
                 Account created! Redirecting to login...
@@ -286,14 +338,27 @@ await signUp({
                   <label className={labelBase}>First Name</label>
                   <div className="relative">
                     <FieldIcon>🙂</FieldIcon>
-                    <input name="firstName" required value={form.firstName} onChange={handleChange} className={inputBase} />
+                    <input
+                      name="firstName"
+                      required
+                      value={form.firstName}
+                      onChange={handleChange}
+                      className={inputBase}
+                    />
                   </div>
                 </div>
+
                 <div>
                   <label className={labelBase}>Last Name</label>
                   <div className="relative">
                     <FieldIcon>🙂</FieldIcon>
-                    <input name="lastName" required value={form.lastName} onChange={handleChange} className={inputBase} />
+                    <input
+                      name="lastName"
+                      required
+                      value={form.lastName}
+                      onChange={handleChange}
+                      className={inputBase}
+                    />
                   </div>
                 </div>
               </div>
@@ -319,13 +384,19 @@ await signUp({
                 <div className="relative">
                   <FieldIcon>📱</FieldIcon>
                   <input
+                    type="tel"
+                    inputMode="numeric"
                     name="phone"
                     value={form.phone}
                     onChange={handleChange}
                     className={inputBase}
-                    placeholder="09XX XXX XXXX"
+                    placeholder="+639XX XXX XXXX"
+                    maxLength={13}
                   />
                 </div>
+                <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                  Example: +639123456789
+                </p>
               </div>
 
               {/* Password */}
@@ -340,6 +411,7 @@ await signUp({
                     {showPassword ? 'Hide' : 'Show'}
                   </button>
                 </div>
+
                 <div className="relative">
                   <FieldIcon>🔒</FieldIcon>
                   <input
@@ -352,7 +424,6 @@ await signUp({
                   />
                 </div>
 
-                {/* Strength bar */}
                 {form.password && (
                   <div className="mt-2 space-y-1">
                     <div className="flex gap-1">
@@ -365,8 +436,11 @@ await signUp({
                         />
                       ))}
                     </div>
+
                     <div className="flex items-center justify-between">
-                      <p className="text-[11px] text-gray-400 dark:text-gray-500 leading-tight">{strength.hint}</p>
+                      <p className="text-[11px] text-gray-400 dark:text-gray-500 leading-tight">
+                        {strength.hint}
+                      </p>
                       <p
                         className={`text-[11px] font-semibold shrink-0 ml-2 ${
                           strength.score === 4
@@ -383,6 +457,7 @@ await signUp({
                     </div>
                   </div>
                 )}
+
                 {!form.password && (
                   <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
                     8+ chars, uppercase, lowercase, number, special character
@@ -402,6 +477,7 @@ await signUp({
                     {showConfirm ? 'Hide' : 'Show'}
                   </button>
                 </div>
+
                 <div className="relative">
                   <FieldIcon>🔒</FieldIcon>
                   <input
@@ -419,9 +495,11 @@ await signUp({
                     }`}
                   />
                 </div>
+
                 {passwordsMatch && (
                   <p className="mt-1 text-[11px] text-green-500 font-medium">✓ Passwords match</p>
                 )}
+
                 {passwordsMismatch && (
                   <p className="mt-1 text-[11px] text-red-400">Passwords do not match</p>
                 )}
@@ -438,11 +516,19 @@ await signUp({
                   />
                   <span className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
                     I have read and agree to the{' '}
-                    <button type="button" onClick={() => setShowTerms(true)} className="text-primary-600 dark:text-primary-500 hover:underline">
+                    <button
+                      type="button"
+                      onClick={() => setShowTerms(true)}
+                      className="text-primary-600 dark:text-primary-500 hover:underline"
+                    >
                       Terms and Conditions
                     </button>{' '}
                     and consent to the collection and processing of my personal data in accordance with the{' '}
-                    <button type="button" onClick={() => setShowDPA(true)} className="text-primary-600 dark:text-primary-500 hover:underline">
+                    <button
+                      type="button"
+                      onClick={() => setShowDPA(true)}
+                      className="text-primary-600 dark:text-primary-500 hover:underline"
+                    >
                       Data Privacy Act of 2012 (RA 10173)
                     </button>
                     .
@@ -480,7 +566,9 @@ await signUp({
                 disabled={loading}
                 className="w-full flex items-center justify-center gap-2 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl shadow-md shadow-primary-500/30 transition"
               >
-                {loading && <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />}
+                {loading && (
+                  <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                )}
                 {loading ? 'Creating account...' : 'Sign Up'}
               </button>
             </form>
@@ -507,24 +595,60 @@ await signUp({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-primary-500 to-accent-400 rounded-l-2xl" />
+
             <div className="flex items-center justify-between mb-4 pl-2">
               <h2 className="text-lg font-bold">Terms and Conditions</h2>
-              <button onClick={() => setShowTerms(false)} className="text-gray-400 hover:text-gray-700 dark:hover:text-white text-xl">✕</button>
+              <button
+                onClick={() => setShowTerms(false)}
+                className="text-gray-400 hover:text-gray-700 dark:hover:text-white text-xl"
+              >
+                ✕
+              </button>
             </div>
+
             <div className="text-sm text-gray-500 dark:text-gray-400 space-y-3 leading-relaxed pl-2">
-              <p><strong className="text-gray-900 dark:text-white">1. Acceptance of Terms</strong><br />
-                By registering, you agree to be bound by these Terms and Conditions.</p>
-              <p><strong className="text-gray-900 dark:text-white">2. Services</strong><br />
-                MotoFix provides motorcycle service booking, parts ordering, and AI appearance preview services. All bookings are subject to shop availability and confirmation.</p>
-              <p><strong className="text-gray-900 dark:text-white">3. Down Payments</strong><br />
-                A 15% down payment is required to confirm bookings and parts orders. This is non-refundable if cancelled within 24 hours of the appointment.</p>
-              <p><strong className="text-gray-900 dark:text-white">4. User Responsibilities</strong><br />
-                You are responsible for providing accurate information. Misuse of the platform may result in account suspension.</p>
-              <p><strong className="text-gray-900 dark:text-white">5. Limitation of Liability</strong><br />
-                MotoFix is not liable for delays, damages, or losses arising from service appointments beyond our reasonable control.</p>
-              <p><strong className="text-gray-900 dark:text-white">6. Changes to Terms</strong><br />
-                We reserve the right to update these terms at any time. Continued use of the platform constitutes acceptance.</p>
+              <p>
+                <strong className="text-gray-900 dark:text-white">1. Acceptance of Terms</strong>
+                <br />
+                By registering, you agree to be bound by these Terms and Conditions.
+              </p>
+
+              <p>
+                <strong className="text-gray-900 dark:text-white">2. Services</strong>
+                <br />
+                MotoFix provides motorcycle service booking, parts ordering, and AI appearance preview services.
+                All bookings are subject to shop availability and confirmation.
+              </p>
+
+              <p>
+                <strong className="text-gray-900 dark:text-white">3. Down Payments</strong>
+                <br />
+                A 15% down payment is required to confirm bookings and parts orders. This is non-refundable if
+                cancelled within 24 hours of the appointment.
+              </p>
+
+              <p>
+                <strong className="text-gray-900 dark:text-white">4. User Responsibilities</strong>
+                <br />
+                You are responsible for providing accurate information. Misuse of the platform may result in
+                account suspension.
+              </p>
+
+              <p>
+                <strong className="text-gray-900 dark:text-white">5. Limitation of Liability</strong>
+                <br />
+                MotoFix is not liable for delays, damages, or losses arising from service appointments beyond our
+                reasonable control.
+              </p>
+
+              <p>
+                <strong className="text-gray-900 dark:text-white">6. Changes to Terms</strong>
+                <br />
+                We reserve the right to update these terms at any time. Continued use of the platform constitutes
+                acceptance.
+              </p>
             </div>
+
             <button
               onClick={() => setShowTerms(false)}
               className="mt-5 w-full bg-primary-500 hover:bg-primary-600 text-white font-semibold py-2 rounded-xl shadow-md shadow-primary-500/30 transition text-sm"
@@ -547,24 +671,61 @@ await signUp({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-primary-500 to-accent-400 rounded-l-2xl" />
+
             <div className="flex items-center justify-between mb-4 pl-2">
               <h2 className="text-lg font-bold">Data Privacy Consent</h2>
-              <button onClick={() => setShowDPA(false)} className="text-gray-400 hover:text-gray-700 dark:hover:text-white text-xl">✕</button>
+              <button
+                onClick={() => setShowDPA(false)}
+                className="text-gray-400 hover:text-gray-700 dark:hover:text-white text-xl"
+              >
+                ✕
+              </button>
             </div>
+
             <div className="text-sm text-gray-500 dark:text-gray-400 space-y-3 leading-relaxed pl-2">
-              <p><strong className="text-gray-900 dark:text-white">Data Controller</strong><br />
-                MotoFix collects and processes your personal data as the data controller under RA 10173 (Data Privacy Act of 2012).</p>
-              <p><strong className="text-gray-900 dark:text-white">Data Collected</strong><br />
-                We collect your name, email address, phone number, and motorcycle details for the purpose of service booking, parts ordering, and account management.</p>
-              <p><strong className="text-gray-900 dark:text-white">Purpose of Processing</strong><br />
-                Your data is used to manage your bookings, process orders, send service reminders, and improve our services.</p>
-              <p><strong className="text-gray-900 dark:text-white">Data Sharing</strong><br />
-                Your information may be shared with assigned mechanics solely for service fulfillment. We do not sell your data to third parties.</p>
-              <p><strong className="text-gray-900 dark:text-white">Retention</strong><br />
-                Personal data is retained for the duration of your account and up to 3 years after account closure for legal compliance.</p>
-              <p><strong className="text-gray-900 dark:text-white">Your Rights</strong><br />
-                Under RA 10173, you have the right to access, correct, and request deletion of your personal data. Contact us to exercise these rights.</p>
+              <p>
+                <strong className="text-gray-900 dark:text-white">Data Controller</strong>
+                <br />
+                MotoFix collects and processes your personal data as the data controller under RA 10173
+                (Data Privacy Act of 2012).
+              </p>
+
+              <p>
+                <strong className="text-gray-900 dark:text-white">Data Collected</strong>
+                <br />
+                We collect your name, email address, phone number, and motorcycle details for the purpose of
+                service booking, parts ordering, and account management.
+              </p>
+
+              <p>
+                <strong className="text-gray-900 dark:text-white">Purpose of Processing</strong>
+                <br />
+                Your data is used to manage your bookings, process orders, send service reminders, and improve our
+                services.
+              </p>
+
+              <p>
+                <strong className="text-gray-900 dark:text-white">Data Sharing</strong>
+                <br />
+                Your information may be shared with assigned mechanics solely for service fulfillment. We do not
+                sell your data to third parties.
+              </p>
+
+              <p>
+                <strong className="text-gray-900 dark:text-white">Retention</strong>
+                <br />
+                Personal data is retained for the duration of your account and up to 3 years after account closure
+                for legal compliance.
+              </p>
+
+              <p>
+                <strong className="text-gray-900 dark:text-white">Your Rights</strong>
+                <br />
+                Under RA 10173, you have the right to access, correct, and request deletion of your personal data.
+                Contact us to exercise these rights.
+              </p>
             </div>
+
             <button
               onClick={() => setShowDPA(false)}
               className="mt-5 w-full bg-primary-500 hover:bg-primary-600 text-white font-semibold py-2 rounded-xl shadow-md shadow-primary-500/30 transition text-sm"

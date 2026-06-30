@@ -10,6 +10,7 @@ import {
   Alert,
   TextInput,
   StatusBar,
+  Modal,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../lib/supabase';
@@ -36,6 +37,7 @@ export default function CustomizeScreen() {
   const [partCategory, setPartCategory] = useState('all');
 
   const [resultImage, setResultImage] = useState(null);
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -57,13 +59,26 @@ export default function CustomizeScreen() {
   }
 
   async function fetchParts() {
-    const { data } = await supabase.from('parts').select('*');
-    if (data) setParts(data);
+    const { data, error: fetchError } = await supabase
+      .from('parts')
+      .select('*');
+
+    if (fetchError) {
+      console.error('Failed to fetch preview parts:', fetchError);
+      return;
+    }
+
+    const previewableParts = (data || []).filter(
+      (part) => part.is_previewable !== false
+    );
+
+    setParts(previewableParts);
   }
 
   function resetDownstream() {
     setSelectedParts([]);
     setResultImage(null);
+    setImagePreviewOpen(false);
     setPartSearch('');
     setPartCategory('all');
     setError('');
@@ -92,6 +107,32 @@ export default function CustomizeScreen() {
       allowsEditing: true,
       quality: 0.8,
       base64: true,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setOwnPhotoUri(result.assets[0].uri);
+      setOwnPhotoBase64(result.assets[0].base64);
+      resetDownstream();
+    }
+  }
+
+  async function takePhoto() {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+
+    if (status !== 'granted') {
+      Alert.alert(
+        'Permission needed',
+        'Please allow camera access so you can capture your motorcycle photo.'
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8,
+      base64: true,
+      cameraType: ImagePicker.CameraType.back,
     });
 
     if (!result.canceled && result.assets[0]) {
@@ -147,9 +188,21 @@ export default function CustomizeScreen() {
 
     if (!term) return parts;
 
-    return parts.filter((p) =>
-      p.compatible_models?.some((cm) => cm.toLowerCase().includes(term))
-    );
+    return parts.filter((part) => {
+      const compatibleModels = Array.isArray(part.compatible_models)
+        ? part.compatible_models
+        : [];
+
+      if (compatibleModels.length === 0) {
+        return true;
+      }
+
+      return compatibleModels.some((model) => {
+        const modelText = String(model || '').toLowerCase().trim();
+
+        return modelText.includes(term) || term.includes(modelText);
+      });
+    });
   }, [parts, motorcycleLabel]);
 
   const categories = [
@@ -224,6 +277,18 @@ export default function CustomizeScreen() {
       const selectedPartDetails = parts.filter((p) =>
         selectedParts.includes(p.id)
       );
+
+      const nonPreviewableParts = selectedPartDetails.filter(
+        (part) => part.is_previewable === false
+      );
+
+      if (nonPreviewableParts.length > 0) {
+        throw new Error(
+          `These items cannot be previewed visually: ${nonPreviewableParts
+            .map((part) => part.name)
+            .join(', ')}. Consumables like oils, brake fluids, coolant, grease, and cleaners can be purchased in the shop but cannot be shown in AI Preview.`
+        );
+      }
 
       const partNames = selectedPartDetails.map((p) => p.name).join(', ');
 
@@ -366,11 +431,7 @@ export default function CustomizeScreen() {
                   Best results with a clear side-profile shot in good lighting.
                 </Text>
 
-                <TouchableOpacity
-                  style={[s.photoPicker, ownPhotoUri && s.photoPickerFilled]}
-                  onPress={pickImage}
-                  activeOpacity={0.8}
-                >
+                <View style={[s.photoPicker, ownPhotoUri && s.photoPickerFilled]}>
                   {ownPhotoUri ? (
                     <>
                       <Image
@@ -380,7 +441,7 @@ export default function CustomizeScreen() {
                       />
                       <View style={s.photoPickerOverlay}>
                         <Text style={s.photoPickerOverlayText}>
-                          📷 Change Photo
+                          Motorcycle photo selected
                         </Text>
                       </View>
                     </>
@@ -388,31 +449,54 @@ export default function CustomizeScreen() {
                     <View style={s.photoPickerEmpty}>
                       <Text style={s.photoPickerEmptyIcon}>📷</Text>
                       <Text style={s.photoPickerEmptyTitle}>
-                        Tap to pick a photo
+                        Add your motorcycle photo
                       </Text>
                       <Text style={s.photoPickerEmptyHint}>
-                        JPG or PNG · side profile works best
+                        Take a new photo or upload from gallery
                       </Text>
                     </View>
                   )}
-                </TouchableOpacity>
+                </View>
 
-                {!ownPhotoUri && (
-                  <View style={s.tipsCard}>
-                    <Text style={s.tipsTitle}>📸 Photo tips</Text>
+                <View style={s.photoActionRow}>
+                  <TouchableOpacity
+                    style={s.photoActionBtn}
+                    onPress={takePhoto}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={s.photoActionIcon}>📸</Text>
+                    <Text style={s.photoActionTitle}>Take Photo</Text>
+                    <Text style={s.photoActionSub}>Use camera</Text>
+                  </TouchableOpacity>
 
-                    {[
-                      'Shoot from the left or right side, straight on',
-                      'Good natural light — avoid harsh shadows',
-                      'Keep the full bike in frame with a clean background',
-                    ].map((tip, i) => (
-                      <View key={i} style={s.tipRow}>
-                        <Text style={s.tipDot}>·</Text>
-                        <Text style={s.tipText}>{tip}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
+                  <TouchableOpacity
+                    style={s.photoActionBtn}
+                    onPress={pickImage}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={s.photoActionIcon}>🖼️</Text>
+                    <Text style={s.photoActionTitle}>
+                      {ownPhotoUri ? 'Change Photo' : 'Upload Photo'}
+                    </Text>
+                    <Text style={s.photoActionSub}>From gallery</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={s.tipsCard}>
+                  <Text style={s.tipsTitle}>📸 Photo tips</Text>
+
+                  {[
+                    'Use a full left or right side-view photo',
+                    'Keep the whole motorcycle inside the frame',
+                    'Use good lighting and avoid blurry shots',
+                    'Use a clean background for better AI preview',
+                  ].map((tip, i) => (
+                    <View key={i} style={s.tipRow}>
+                      <Text style={s.tipDot}>·</Text>
+                      <Text style={s.tipText}>{tip}</Text>
+                    </View>
+                  ))}
+                </View>
 
                 <Text style={s.sectionLabel}>
                   Brand details <Text style={s.optionalLabel}>(optional)</Text>
@@ -596,7 +680,7 @@ export default function CustomizeScreen() {
                       isDisabled && s.partRowDisabled,
                     ]}
                     onPress={() => !isDisabled && togglePart(part.id)}
-                    disabled={isDisabled}
+                    disabled={Boolean(isDisabled)}
                   >
                     {part.image_url ? (
                       <Image source={{ uri: part.image_url }} style={s.partImage} />
@@ -712,11 +796,23 @@ export default function CustomizeScreen() {
               <View style={s.card}>
                 <Text style={s.sectionLabel}>✨ Render Finished</Text>
 
-                <Image
-                  source={{ uri: resultImage }}
-                  style={s.resultImage}
-                  resizeMode="contain"
-                />
+                <TouchableOpacity
+                  style={s.resultImageButton}
+                  onPress={() => setImagePreviewOpen(true)}
+                  activeOpacity={0.9}
+                >
+                  <Image
+                    source={{ uri: resultImage }}
+                    style={s.resultImage}
+                    resizeMode="contain"
+                  />
+
+                  <View style={s.resultImageOverlay}>
+                    <Text style={s.resultImageOverlayText}>
+                      🔍 Tap to view full image
+                    </Text>
+                  </View>
+                </TouchableOpacity>
 
                 <TouchableOpacity
                   style={[
@@ -724,6 +820,7 @@ export default function CustomizeScreen() {
                     { marginTop: 16, backgroundColor: theme.bg3 },
                   ]}
                   onPress={() => {
+                    setImagePreviewOpen(false);
                     setResultImage(null);
                     setSelectedParts([]);
                     setStep(1);
@@ -744,7 +841,7 @@ export default function CustomizeScreen() {
           <TouchableOpacity
             style={s.backBtn}
             onPress={() => setStep(step - 1)}
-            disabled={loading}
+            disabled={Boolean(loading)}
           >
             <Text style={s.backBtnText}>← Back</Text>
           </TouchableOpacity>
@@ -763,7 +860,7 @@ export default function CustomizeScreen() {
               }
 
               if (step === 2 && imageSource === 'own' && !ownPhotoUri) {
-                Alert.alert('Image Required', 'Please pick a photo from your gallery.');
+                Alert.alert('Image Required', 'Please take or upload a motorcycle photo.');
                 return;
               }
 
@@ -787,7 +884,7 @@ export default function CustomizeScreen() {
             <TouchableOpacity
               style={[s.nextBtn, loading && s.nextBtnDisabled]}
               onPress={handleGenerate}
-              disabled={loading}
+              disabled={Boolean(loading)}
             >
               {loading ? (
                 <ActivityIndicator color="#fff" />
@@ -798,6 +895,31 @@ export default function CustomizeScreen() {
           )
         )}
       </View>
+
+      <Modal
+        visible={Boolean(imagePreviewOpen && resultImage)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setImagePreviewOpen(false)}
+      >
+        <View style={s.imageModalBackdrop}>
+          <TouchableOpacity
+            style={s.imageModalClose}
+            onPress={() => setImagePreviewOpen(false)}
+            activeOpacity={0.8}
+          >
+            <Text style={s.imageModalCloseText}>✕</Text>
+          </TouchableOpacity>
+
+          <Image
+            source={{ uri: resultImage }}
+            style={s.imageModalImage}
+            resizeMode="contain"
+          />
+
+          <Text style={s.imageModalHint}>AI Generated Preview</Text>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -977,6 +1099,39 @@ const styles = (theme) =>
       fontWeight: 'bold',
       fontSize: 14,
     },
+
+    photoActionRow: {
+      flexDirection: 'row',
+      gap: 10,
+      marginBottom: 16,
+    },
+    photoActionBtn: {
+      flex: 1,
+      backgroundColor: theme.card,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 14,
+      padding: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    photoActionIcon: {
+      fontSize: 26,
+      marginBottom: 6,
+    },
+    photoActionTitle: {
+      color: theme.text,
+      fontSize: 13,
+      fontWeight: '800',
+      marginBottom: 2,
+      textAlign: 'center',
+    },
+    photoActionSub: {
+      color: theme.textMuted,
+      fontSize: 11,
+      textAlign: 'center',
+    },
+
     photoPickerEmpty: { alignItems: 'center', padding: 24 },
     photoPickerEmptyIcon: { fontSize: 52, marginBottom: 12 },
     photoPickerEmptyTitle: {
@@ -1180,7 +1335,74 @@ const styles = (theme) =>
     },
     generateBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
     resultBox: { alignItems: 'center', padding: 32 },
-    resultImage: { width: '100%', height: 260, borderRadius: 12 },
+    resultImageButton: {
+      width: '100%',
+      height: 260,
+      borderRadius: 12,
+      overflow: 'hidden',
+      backgroundColor: theme.bg2,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    resultImage: {
+      width: '100%',
+      height: '100%',
+    },
+    resultImageOverlay: {
+      position: 'absolute',
+      left: 10,
+      right: 10,
+      bottom: 10,
+      alignItems: 'center',
+    },
+    resultImageOverlayText: {
+      color: '#fff',
+      backgroundColor: 'rgba(0,0,0,0.65)',
+      borderRadius: 999,
+      overflow: 'hidden',
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    imageModalBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.94)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 48,
+    },
+    imageModalClose: {
+      position: 'absolute',
+      top: 42,
+      right: 20,
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: 'rgba(255,255,255,0.16)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 2,
+    },
+    imageModalCloseText: {
+      color: '#fff',
+      fontSize: 24,
+      fontWeight: '900',
+      lineHeight: 26,
+    },
+    imageModalImage: {
+      width: '100%',
+      height: '82%',
+    },
+    imageModalHint: {
+      color: '#fff',
+      opacity: 0.8,
+      fontSize: 13,
+      fontWeight: '700',
+      marginTop: 12,
+      textAlign: 'center',
+    },
     emptyText: {
       color: theme.textMuted,
       fontSize: 13,

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Platform, ScrollView, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createStackNavigator } from '@react-navigation/stack';
 import { NavigationContainer } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -79,7 +80,12 @@ function makeIcon(iconName) {
   );
 }
 
-function getTabOptions(theme) {
+function getTabOptions(theme, insets = { bottom: 0 }) {
+  const bottomInset = Math.max(
+    insets.bottom || 0,
+    Platform.OS === 'android' ? 16 : 20
+  );
+
   return {
     headerStyle: {
       backgroundColor: theme.bg,
@@ -94,12 +100,25 @@ function getTabOptions(theme) {
       backgroundColor: theme.bg,
       borderTopWidth: 1,
       borderTopColor: theme.border,
-      height: Platform.OS === 'ios' ? 80 : 65,
-      paddingBottom: Platform.OS === 'ios' ? 24 : 10,
-      paddingTop: 8,
+      height: 58 + bottomInset,
+      paddingTop: 6,
+      paddingBottom: bottomInset,
+      elevation: 12,
+    },
+    tabBarItemStyle: {
+      paddingVertical: 2,
+    },
+    tabBarLabelStyle: {
+      fontSize: 11,
+      fontWeight: '700',
+      marginBottom: 0,
+    },
+    tabBarIconStyle: {
+      marginTop: 2,
     },
     tabBarActiveTintColor: YELLOW,
     tabBarInactiveTintColor: theme.textMuted,
+    tabBarHideOnKeyboard: true,
     tabBarBadgeStyle: {
       backgroundColor: YELLOW,
       color: '#fff',
@@ -245,11 +264,12 @@ function CustomerShopStack() {
 // ════════════════════════════════════════════════════════════════════════════
 export function CustomerTabs() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { cartTotalItems } = useCart();
   const unreadNotifications = useUnreadNotificationCount();
 
   return (
-    <Tab.Navigator screenOptions={getTabOptions(theme)}>
+    <Tab.Navigator screenOptions={getTabOptions(theme, insets)}>
       <Tab.Screen
         name="Home"
         component={HomeScreen}
@@ -304,10 +324,11 @@ export function CustomerTabs() {
 // ════════════════════════════════════════════════════════════════════════════
 export function MechanicTabs() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const unreadNotifications = useUnreadNotificationCount();
 
   return (
-    <Tab.Navigator screenOptions={getTabOptions(theme)}>
+    <Tab.Navigator screenOptions={getTabOptions(theme, insets)}>
       <Tab.Screen
         name="My Jobs"
         component={JobsScreen}
@@ -346,10 +367,11 @@ export function MechanicTabs() {
 // ════════════════════════════════════════════════════════════════════════════
 export function StaffTabs() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const unreadNotifications = useUnreadNotificationCount();
 
   return (
-    <Tab.Navigator screenOptions={getTabOptions(theme)}>
+    <Tab.Navigator screenOptions={getTabOptions(theme, insets)}>
 
       <Tab.Screen
   name="Dashboard"
@@ -535,10 +557,11 @@ function AdminMoreStackNav() {
 // ════════════════════════════════════════════════════════════════════════════
 export function AdminTabs() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const unreadNotifications = useUnreadNotificationCount();
 
   return (
-    <Tab.Navigator screenOptions={getTabOptions(theme)}>
+    <Tab.Navigator screenOptions={getTabOptions(theme, insets)}>
       <Tab.Screen
         name="Dashboard"
         component={AdminDashboardScreen}
@@ -773,10 +796,12 @@ export default function App() {
   return (
     <ThemeProvider>
       <CartProvider>
-        <NavigationContainer>
-          <PushNotificationSetup />
-          <RootNav />
-        </NavigationContainer>
+        <SafeAreaProvider>
+          <NavigationContainer>
+            <PushNotificationSetup />
+            <RootNav />
+          </NavigationContainer>
+        </SafeAreaProvider>
       </CartProvider>
     </ThemeProvider>
   );

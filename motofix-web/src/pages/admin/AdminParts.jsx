@@ -17,6 +17,7 @@ const EMPTY_FORM = {
   color: '',
   finish: '',
   material: '',
+  is_previewable: true,
 };
 
 const STOCK_FILTERS = [
@@ -286,6 +287,7 @@ export default function AdminParts() {
       color: part.color || '',
       finish: part.finish || '',
       material: part.material || '',
+      is_previewable: part.is_previewable !== false,
     });
     setFormError('');
     setShowCategoryInput(false);
@@ -344,6 +346,7 @@ export default function AdminParts() {
       color: form.color.trim() || null,
       finish: form.finish.trim() || null,
       material: form.material.trim() || null,
+      is_previewable: form.is_previewable !== false,
     };
 
     try {
@@ -938,20 +941,38 @@ export default function AdminParts() {
                         </span>
                       )}
                       <StockBadge state={stockState} />
+
                       <span
                         className={`rounded-full px-3 py-1 text-xs font-black ring-1 ${
-                          part.ai_reference_url
-                            ? 'bg-primary-50 text-primary-700 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25'
-                            : 'bg-gray-100 text-gray-500 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25'
+                          part.is_previewable === false
+                            ? 'bg-gray-100 text-gray-500 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25'
+                            : 'bg-primary-50 text-primary-700 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25'
                         }`}
                         title={
-                          part.ai_reference_url
-                            ? 'Has clean AI reference photo'
-                            : 'No AI reference photo yet'
+                          part.is_previewable === false
+                            ? 'This item is for shop/inventory only and will not appear in AI Preview'
+                            : 'This item can appear in AI Preview'
                         }
                       >
-                        {part.ai_reference_url ? 'AI Ready' : 'No AI Ref'}
+                        {part.is_previewable === false ? 'Shop Only' : 'Previewable'}
                       </span>
+
+                      {part.is_previewable !== false && (
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-black ring-1 ${
+                            part.ai_reference_url
+                              ? 'bg-primary-50 text-primary-700 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25'
+                              : 'bg-gray-100 text-gray-500 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25'
+                          }`}
+                          title={
+                            part.ai_reference_url
+                              ? 'Has clean AI reference photo'
+                              : 'No AI reference photo yet'
+                          }
+                        >
+                          {part.ai_reference_url ? 'AI Ready' : 'No AI Ref'}
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -1349,10 +1370,44 @@ export default function AdminParts() {
                 </div>
               </div>
 
-              <div>
-                <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                  AI Reference URL
-                </label>
+              <label
+                className={`flex cursor-pointer gap-4 rounded-3xl border p-4 transition ${
+                  form.is_previewable !== false
+                    ? 'border-primary-200 bg-primary-50 text-primary-800 dark:border-primary-500/25 dark:bg-primary-500/10 dark:text-primary-300'
+                    : 'border-gray-200 bg-gray-50 text-gray-700 dark:border-dark-700 dark:bg-dark-900/70 dark:text-gray-300'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={form.is_previewable !== false}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      is_previewable: event.target.checked,
+                    }))
+                  }
+                  className="mt-1 h-4 w-4 accent-primary-600"
+                />
+
+                <span>
+                  <span className="block text-sm font-black">
+                    Available for AI Preview
+                  </span>
+                  <span className="mt-1 block text-xs leading-5 opacity-80">
+                    Turn this off for oils, brake fluids, coolant, grease,
+                    cleaners, and other consumables that cannot be shown
+                    visually. Shop-only items will still appear in inventory and
+                    shop, but not in AI Preview.
+                  </span>
+                </span>
+              </label>
+
+              {form.is_previewable !== false && (
+                <>
+                  <div>
+                    <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                      AI Reference URL
+                    </label>
 
                 <div className="flex items-center gap-3">
                   <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
@@ -1405,30 +1460,32 @@ export default function AdminParts() {
               />
 
               <div className="grid grid-cols-3 gap-4">
-                <TextInput
-                  label="Color"
-                  name="color"
-                  value={form.color}
-                  onChange={handleChange}
-                  placeholder="Gold"
-                />
+                    <TextInput
+                      label="Color"
+                      name="color"
+                      value={form.color}
+                      onChange={handleChange}
+                      placeholder="Gold"
+                    />
 
-                <TextInput
-                  label="Finish"
-                  name="finish"
-                  value={form.finish}
-                  onChange={handleChange}
-                  placeholder="Gloss metallic"
-                />
+                    <TextInput
+                      label="Finish"
+                      name="finish"
+                      value={form.finish}
+                      onChange={handleChange}
+                      placeholder="Gloss metallic"
+                    />
 
-                <TextInput
-                  label="Material"
-                  name="material"
-                  value={form.material}
-                  onChange={handleChange}
-                  placeholder="Alloy"
-                />
-              </div>
+                    <TextInput
+                      label="Material"
+                      name="material"
+                      value={form.material}
+                      onChange={handleChange}
+                      placeholder="Alloy"
+                    />
+                  </div>
+                </>
+              )}
 
               <TextInput
                 label="Part Name *"

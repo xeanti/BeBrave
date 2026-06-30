@@ -27,6 +27,7 @@ const EMPTY_FORM = {
   reorder_threshold: '5',
   compatible_models: '',
   image_url: '',
+  is_previewable: true,
 };
 
 export default function InventoryScreen({ navigation }) {
@@ -90,6 +91,7 @@ export default function InventoryScreen({ navigation }) {
       reorder_threshold: String(part.reorder_threshold ?? '5'),
       compatible_models: (part.compatible_models || []).join(', '),
       image_url: part.image_url || '',
+      is_previewable: part.is_previewable !== false,
     });
     setFormError('');
     setModalOpen(true);
@@ -132,6 +134,7 @@ export default function InventoryScreen({ navigation }) {
       reorder_threshold: parseInt(form.reorder_threshold || '5', 10),
       compatible_models: compatibleArray,
       image_url: form.image_url.trim() || null,
+      is_previewable: form.is_previewable !== false,
     };
 
     if (editingId) {
@@ -480,6 +483,32 @@ export default function InventoryScreen({ navigation }) {
                     <View style={[s.badge, { backgroundColor: badgeColor + '22' }]}>
                       <Text style={[s.badgeText, { color: badgeColor }]}>{badgeText}</Text>
                     </View>
+
+                    <View
+                      style={[
+                        s.badge,
+                        {
+                          backgroundColor:
+                            p.is_previewable === false
+                              ? theme.textMuted + '22'
+                              : theme.primary + '22',
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          s.badgeText,
+                          {
+                            color:
+                              p.is_previewable === false
+                                ? theme.textMuted
+                                : theme.primaryLight,
+                          },
+                        ]}
+                      >
+                        {p.is_previewable === false ? 'Shop Only' : 'AI Preview'}
+                      </Text>
+                    </View>
                   </View>
                 </View>
 
@@ -523,7 +552,7 @@ export default function InventoryScreen({ navigation }) {
                   <TouchableOpacity
                     style={s.stockBtn}
                     onPress={() => adjustStock(p, -1)}
-                    disabled={p.stock_quantity <= 0}
+                    disabled={Boolean(p.stock_quantity <= 0)}
                   >
                     <Text style={[s.stockBtnText, p.stock_quantity <= 0 && { opacity: 0.3 }]}>−</Text>
                   </TouchableOpacity>
@@ -661,11 +690,48 @@ export default function InventoryScreen({ navigation }) {
                 onChangeText={(v) => handleChange('compatible_models', v)}
               />
 
+              <TouchableOpacity
+                style={[
+                  s.previewToggle,
+                  form.is_previewable !== false && s.previewToggleActive,
+                ]}
+                onPress={() =>
+                  handleChange('is_previewable', form.is_previewable === false)
+                }
+                activeOpacity={0.8}
+              >
+                <View
+                  style={[
+                    s.previewToggleIcon,
+                    form.is_previewable !== false && s.previewToggleIconActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      s.previewToggleCheck,
+                      form.is_previewable !== false && s.previewToggleCheckActive,
+                    ]}
+                  >
+                    {form.is_previewable !== false ? '✓' : ''}
+                  </Text>
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <Text style={s.previewToggleTitle}>
+                    Available for AI Preview
+                  </Text>
+                  <Text style={s.previewToggleText}>
+                    Turn this off for oils, brake fluids, coolant, grease,
+                    cleaners, and other consumables that cannot be shown visually.
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
               <View style={s.modalActions}>
                 <TouchableOpacity style={s.cancelBtn} onPress={closeModal}>
                   <Text style={s.cancelBtnText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={s.saveBtn} onPress={handleSubmit} disabled={saving}>
+                <TouchableOpacity style={s.saveBtn} onPress={handleSubmit} disabled={Boolean(saving)}>
                   <Text style={s.saveBtnText}>
                     {saving ? 'Saving...' : 'Save Changes'}
                   </Text>
@@ -784,6 +850,56 @@ const styles = (theme) =>
     fieldHint: { fontSize: 11, color: theme.textMuted, marginTop: 4 },
     input: { borderWidth: 1, borderColor: theme.border, borderRadius: 10, padding: 12, fontSize: 14, color: theme.text, backgroundColor: theme.bg2 },
     row2: { flexDirection: 'row', gap: 12 },
+
+    previewToggle: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+      backgroundColor: theme.bg2,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 12,
+      padding: 12,
+      marginTop: 16,
+    },
+    previewToggleActive: {
+      borderColor: theme.primary,
+      backgroundColor: theme.primary + '10',
+    },
+    previewToggleIcon: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      borderWidth: 2,
+      borderColor: theme.border,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginTop: 2,
+    },
+    previewToggleIconActive: {
+      borderColor: theme.primary,
+      backgroundColor: theme.primary,
+    },
+    previewToggleCheck: {
+      color: 'transparent',
+      fontSize: 13,
+      fontWeight: '900',
+      lineHeight: 16,
+    },
+    previewToggleCheckActive: {
+      color: '#fff',
+    },
+    previewToggleTitle: {
+      color: theme.text,
+      fontSize: 13,
+      fontWeight: '900',
+      marginBottom: 3,
+    },
+    previewToggleText: {
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
+    },
 
     modalActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
     cancelBtn: { flex: 1, borderWidth: 1, borderColor: theme.border, borderRadius: 10, padding: 14, alignItems: 'center' },

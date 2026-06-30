@@ -337,7 +337,11 @@ export default function Customize() {
       return;
     }
 
-    if (data) setParts(data);
+    const previewableParts = (data || []).filter(
+      (part) => part.is_previewable !== false
+    );
+
+    setParts(previewableParts);
 
     setPageLoading(false);
   }
@@ -623,6 +627,18 @@ export default function Customize() {
         selectedParts.includes(part.id)
       );
 
+      const nonPreviewableParts = selectedPartDetails.filter(
+        (part) => part.is_previewable === false
+      );
+
+      if (nonPreviewableParts.length > 0) {
+        throw new Error(
+          `These items cannot be previewed visually: ${nonPreviewableParts
+            .map((part) => part.name)
+            .join(', ')}. Consumables like oils, brake fluids, coolant, grease, and cleaners can be purchased in the shop but cannot be shown in AI Preview.`
+        );
+      }
+
       const missingAiReferenceImages = selectedPartDetails.filter(
         (part) => !part.ai_reference_url && !part.image_url
       );
@@ -653,7 +669,10 @@ export default function Customize() {
             partDetails: previewPartDetails,
             motorcycleLabel: motorcycleLabel || 'Customer motorcycle',
             imageSource,
-            basePhotoSource: 'reference_photo_url_locked',
+            basePhotoSource:
+              imageSource === 'reference'
+                ? 'reference_photo_url_locked'
+                : 'customer_uploaded_photo',
           },
         }
       );
@@ -1166,8 +1185,7 @@ export default function Customize() {
                   Preview Result
                 </h2>
                 <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                  Your generated motorcycle preview will appear here. Click the
-                  image to enlarge it.
+                  Your generated motorcycle preview will appear here. Click the image to enlarge it.
                 </p>
               </div>
 
@@ -1187,6 +1205,7 @@ export default function Customize() {
                     <button
                       type="button"
                       onClick={() => setLightboxOpen(true)}
+                      aria-label="Open generated preview in full screen"
                       className="group relative block w-full cursor-zoom-in"
                     >
                       <img
@@ -1290,6 +1309,7 @@ export default function Customize() {
           <button
             type="button"
             onClick={() => setLightboxOpen(false)}
+            aria-label="Close full screen preview"
             className="absolute right-5 top-5 grid h-11 w-11 place-items-center rounded-2xl bg-white/10 text-2xl leading-none text-white transition hover:bg-white/20"
           >
             ✕

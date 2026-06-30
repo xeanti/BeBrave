@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabaseClient';
 
 function greeting() {
   const h = new Date().getHours();
@@ -36,31 +37,119 @@ function FeatureRow({ icon, color, title, description }) {
   );
 }
 
+function getFriendlyLoginError(err) {
+  const message = err?.message || '';
+
+  if (message.toLowerCase().includes('email not confirmed')) {
+    return {
+      title: 'Please confirm your email first',
+      message:
+        'Your account was created, but you need to open the verification email sent to your Email before logging in.',
+      tips: [
+        'Check your Inbox, Spam, or Promotions folder.',
+        'Click the confirmation link in the email.',
+        'After confirming, return here and log in again.',
+      ],
+      canResend: true,
+    };
+  }
+
+  if (message.toLowerCase().includes('invalid login credentials')) {
+    return {
+      title: 'Incorrect email or password',
+      message: 'Please check your email and password, then try again.',
+      tips: [],
+      canResend: false,
+    };
+  }
+
+  return {
+    title: 'Login failed',
+    message: message || 'Something went wrong while logging in. Please try again.',
+    tips: [],
+    canResend: false,
+  };
+}
+
 export default function Login() {
   const { signIn, user } = useAuth();
   const navigate = useNavigate();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     if (user) navigate('/dashboard');
-  }, [user]);
+  }, [user, navigate]);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setError('');
+    setError(null);
+    setSuccessMessage('');
     setLoading(true);
+
     try {
-      await signIn({ email, password });
+      const cleanEmail = email.trim().toLowerCase();
+
+      await signIn({
+        email: cleanEmail,
+        password,
+      });
+
       navigate('/dashboard');
     } catch (err) {
-      setError(err.message || 'Failed to log in');
+      setError(getFriendlyLoginError(err));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleResendConfirmation() {
+    setError(null);
+    setSuccessMessage('');
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail) {
+      setError({
+        title: 'Email is required',
+        message: 'Please enter your email address first before resending the confirmation email.',
+        tips: [],
+        canResend: false,
+      });
+      return;
+    }
+
+    setResendLoading(true);
+
+    try {
+      const { error: resendError } = await supabase.auth.resend({
+        type: 'signup',
+        email: cleanEmail,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+
+      if (resendError) throw resendError;
+
+      setSuccessMessage(
+        'Confirmation email sent again. Please check your Inbox, Spam, or Promotions folder.'
+      );
+    } catch (err) {
+      setError({
+        title: 'Could not resend confirmation email',
+        message: err.message || 'Please try again later.',
+        tips: [],
+        canResend: false,
+      });
+    } finally {
+      setResendLoading(false);
     }
   }
 
@@ -73,8 +162,12 @@ export default function Login() {
           {/* Brand panel */}
           <div className="md:w-[40%] p-6 sm:p-7 pl-7 sm:pl-8 border-b md:border-b-0 md:border-r border-gray-200 dark:border-white/10">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-primary-500 flex items-center justify-center text-lg font-bold text-white shrink-0 shadow-md shadow-primary-500/30">
-                🏍️
+              <div className="w-12 h-12 flex items-center justify-center shrink-0 overflow-hidden">
+                <img
+                  src="/favicon.png"
+                  alt="MotoFix Logo"
+                  className="w-full h-full object-contain"
+                />
               </div>
               <div>
                 <p className="text-[11px] uppercase tracking-wide font-semibold text-accent-600 dark:text-accent-400">
@@ -115,8 +208,39 @@ export default function Login() {
             <h2 className="text-lg font-semibold mb-5">Log in to your account</h2>
 
             {error && (
-              <div className="bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-sm rounded-xl p-3 mb-4">
-                {error}
+              <div className="bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-sm rounded-xl p-4 mb-4">
+                <p className="font-semibold text-red-700 dark:text-red-300 mb-1">
+                  {error.title}
+                </p>
+
+                <p className="leading-relaxed">
+                  {error.message}
+                </p>
+
+                {error.tips?.length > 0 && (
+                  <ul className="list-disc pl-5 mt-2 space-y-1 text-xs leading-relaxed">
+                    {error.tips.map((tip) => (
+                      <li key={tip}>{tip}</li>
+                    ))}
+                  </ul>
+                )}
+
+                {error.canResend && (
+                  <button
+                    type="button"
+                    onClick={handleResendConfirmation}
+                    disabled={resendLoading}
+                    className="mt-3 inline-flex items-center justify-center rounded-lg bg-red-500/20 hover:bg-red-500/30 disabled:opacity-50 px-3 py-1.5 text-xs font-semibold text-red-700 dark:text-red-300 transition"
+                  >
+                    {resendLoading ? 'Sending...' : 'Resend confirmation email'}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {successMessage && (
+              <div className="bg-green-500/10 border border-green-500/30 text-green-600 dark:text-green-400 text-sm rounded-xl p-3 mb-4">
+                {successMessage}
               </div>
             )}
 
@@ -147,6 +271,7 @@ export default function Login() {
                     {showPassword ? 'Hide' : 'Show'}
                   </button>
                 </div>
+
                 <div className="relative">
                   <FieldIcon>🔒</FieldIcon>
                   <input
@@ -165,7 +290,9 @@ export default function Login() {
                 disabled={loading}
                 className="w-full flex items-center justify-center gap-2 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl shadow-md shadow-primary-500/30 transition"
               >
-                {loading && <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />}
+                {loading && (
+                  <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                )}
                 {loading ? 'Logging in...' : 'Log In'}
               </button>
             </form>

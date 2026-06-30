@@ -25,8 +25,8 @@
       },
       "edgeToEdgeEnabled": true,
       "permissions": [
-        "android.permission.NOTIFICATIONS",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.CAMERA",
+        "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "web": {
@@ -36,7 +36,14 @@
       "expo-router",
       "expo-secure-store",
       "@react-native-community/datetimepicker",
-      "expo-image-picker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "MotoFix needs photo access so you can upload your motorcycle image for AI preview.",
+          "cameraPermission": "MotoFix needs camera access so you can capture your motorcycle image for AI preview.",
+          "microphonePermission": false
+        }
+      ],
       "expo-notifications"
     ],
     "extra": {
