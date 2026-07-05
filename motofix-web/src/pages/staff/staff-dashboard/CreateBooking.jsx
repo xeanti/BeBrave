@@ -115,6 +115,41 @@ function getServicesDuration(serviceList = []) {
   );
 }
 
+
+async function checkBookingSlotAvailable({
+  bookingDate,
+  bookingTime,
+  durationMinutes,
+  mechanicId = null,
+  excludeBookingId = null,
+}) {
+  const safeDuration = Math.max(30, Number(durationMinutes) || 60);
+
+  const { data, error } = await supabase.rpc('check_booking_slot_available', {
+    p_booking_date: bookingDate,
+    p_booking_time: bookingTime,
+    p_duration_minutes: safeDuration,
+    p_mechanic_id: mechanicId || null,
+    p_exclude_booking_id: excludeBookingId || null,
+  });
+
+  if (error) throw error;
+
+  const result = Array.isArray(data) ? data[0] : data;
+
+  return {
+    available: result?.available === true,
+    reason: result?.reason || 'Selected time is not available.',
+    conflictCount: Number(result?.conflict_count) || 0,
+    conflicts: result?.conflicts || [],
+  };
+}
+
+function getSafeDuration(serviceList = []) {
+  return Math.max(30, getServicesDuration(serviceList) || 30);
+}
+
+
 function getServicesSummary(serviceList = []) {
   if (!serviceList.length) return '—';
   return serviceList.map((service) => service.name).join(', ');
@@ -189,11 +224,27 @@ export default function CreateBooking({ staffId }) {
   const [partsUsed, setPartsUsed] = useState(() => sanitizeDraftParts(draft.partsUsed));
 
   const [scheduleRows, setScheduleRows] = useState([]);
+  const [slotAvailability, setSlotAvailability] = useState({});
   const [loading, setLoading] = useState(true);
   const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState('');
   const [createdBooking, setCreatedBooking] = useState(null);
+
+  const selectedServices = services.filter((service) => serviceIds.includes(service.id));
+  const selectedService = selectedServices[0] || null;
+  const serviceTotal = getServicesTotal(selectedServices);
+  const servicesDuration = getServicesDuration(selectedServices);
+  const servicesSummary = getServicesSummary(selectedServices);
+
+  const partsTotal = partsUsed.reduce(
+    (sum, item) => sum + (Number(item.price) || 0) * (Number(item.quantity) || 1),
+    0
+  );
+
+  const totalBill = serviceTotal + partsTotal;
+  const reservationFee = Number((serviceTotal * 0.2).toFixed(2));
 
   useEffect(() => {
     fetchSetup();
@@ -253,6 +304,15 @@ export default function CreateBooking({ staffId }) {
     return () => supabase.removeChannel(channel);
   }, [bookingDate, mechanicId]);
 
+  useEffect(() => {
+    if (!bookingDate || selectedServices.length === 0) {
+      setSlotAvailability({});
+      return;
+    }
+
+    fetchSlotAvailability();
+  }, [bookingDate, mechanicId, selectedServices.length, servicesDuration, mechanics.length]);
+
   async function fetchSetup(showLoader = true) {
     if (showLoader) setLoading(true);
 
@@ -308,7 +368,9 @@ export default function CreateBooking({ staffId }) {
         booking_time,
         status,
         mechanic_id,
-        services(name),
+        estimated_duration_minutes,
+        services(name, estimated_duration_minutes),
+        booking_services(estimated_duration_minutes, quantity),
         profiles!bookings_customer_id_fkey(first_name, last_name, phone, email),
         mechanic:profiles!bookings_mechanic_id_fkey(first_name, last_name)
       `)
@@ -341,19 +403,131 @@ export default function CreateBooking({ staffId }) {
     setScheduleLoading(false);
   }
 
-  const selectedServices = services.filter((service) => serviceIds.includes(service.id));
-  const selectedService = selectedServices[0] || null;
-  const serviceTotal = getServicesTotal(selectedServices);
-  const servicesDuration = getServicesDuration(selectedServices);
-  const servicesSummary = getServicesSummary(selectedServices);
 
-  const partsTotal = partsUsed.reduce(
-    (sum, item) => sum + (Number(item.price) || 0) * (Number(item.quantity) || 1),
-    0
-  );
+  async function fetchSlotAvailability() {
+    if (!bookingDate || selectedServices.length === 0) {
+      setSlotAvailability({});
+      return;
+    }
 
-  const totalBill = serviceTotal + partsTotal;
-  const reservationFee = Number((serviceTotal * 0.2).toFixed(2));
+    setAvailabilityLoading(true);
+
+    try {
+      const durationMinutes = getSafeDuration(selectedServices);
+      const results = await Promise.all(
+        TIME_SLOTS.map(async (slot) => {
+          if (isElapsedTodayTime(bookingDate, slot)) {
+            return {
+              slot,
+              available: false,
+              reason: 'Elapsed',
+            };
+          }
+
+          try {
+            if (mechanicId) {
+              const availability = await checkBookingSlotAvailable({
+                bookingDate,
+                bookingTime: slot,
+                durationMinutes,
+                mechanicId,
+              });
+
+              return {
+                slot,
+                available: availability.available,
+                reason: availability.available ? '' : 'Overlapping booking',
+              };
+            }
+
+            if (mechanics.length > 0) {
+              const mechanicChecks = await Promise.all(
+                mechanics.map(async (mechanic) => {
+                  const availability = await checkBookingSlotAvailable({
+                    bookingDate,
+                    bookingTime: slot,
+                    durationMinutes,
+                    mechanicId: mechanic.id,
+                  });
+
+                  return {
+                    mechanic,
+                    available: availability.available,
+                  };
+                })
+              );
+
+              const hasAvailableMechanic = mechanicChecks.some((item) => item.available);
+
+              return {
+                slot,
+                available: hasAvailableMechanic,
+                reason: hasAvailableMechanic ? '' : 'All mechanics booked',
+              };
+            }
+
+            const shopAvailability = await checkBookingSlotAvailable({
+              bookingDate,
+              bookingTime: slot,
+              durationMinutes,
+              mechanicId: null,
+            });
+
+            return {
+              slot,
+              available: shopAvailability.available,
+              reason: shopAvailability.available ? '' : 'Overlapping booking',
+            };
+          } catch (error) {
+            return {
+              slot,
+              available: true,
+              reason: '',
+            };
+          }
+        })
+      );
+
+      setSlotAvailability(
+        results.reduce((map, item) => {
+          map[item.slot] = item;
+          return map;
+        }, {})
+      );
+    } finally {
+      setAvailabilityLoading(false);
+    }
+  }
+
+  async function findAvailableMechanicForSlot({ date, time, durationMinutes }) {
+    if (mechanics.length === 0) return null;
+
+    const results = await Promise.all(
+      mechanics.map(async (mechanic) => {
+        try {
+          const availability = await checkBookingSlotAvailable({
+            bookingDate: date,
+            bookingTime: time,
+            durationMinutes,
+            mechanicId: mechanic.id,
+          });
+
+          return {
+            mechanic,
+            available: availability.available,
+          };
+        } catch {
+          return {
+            mechanic,
+            available: false,
+          };
+        }
+      })
+    );
+
+    return results.find((item) => item.available)?.mechanic || null;
+  }
+
 
   const filteredParts = useMemo(() => {
     const query = sanitizeSearch(partSearch);
@@ -376,22 +550,15 @@ export default function CreateBooking({ staffId }) {
       .slice(0, 12);
   }, [parts, partSearch]);
 
-  const blockedTimes = useMemo(() => {
-    if (!mechanicId) return [];
-
-    return scheduleRows
-      .filter((row) => row.mechanic_id === mechanicId)
-      .map((row) => String(row.booking_time || '').slice(0, 5));
-  }, [scheduleRows, mechanicId]);
-
   const availableSlots = TIME_SLOTS.map((slot) => {
     const elapsed = isElapsedTodayTime(bookingDate, slot);
-    const mechanicBlocked = mechanicId && blockedTimes.includes(slot);
+    const availability = slotAvailability[slot];
+    const durationBlocked = availability?.available === false;
 
     return {
       slot,
-      disabled: elapsed || mechanicBlocked,
-      reason: elapsed ? 'Elapsed' : mechanicBlocked ? 'Mechanic booked' : '',
+      disabled: elapsed || durationBlocked,
+      reason: elapsed ? 'Elapsed' : durationBlocked ? availability?.reason || 'Overlapping booking' : '',
     };
   });
 
@@ -412,7 +579,7 @@ export default function CreateBooking({ staffId }) {
     if (
       askConfirmation &&
       hasDraftContent() &&
-      !window.confirm('Clear this scheduled booking draft? Unsaved customer, service, schedule, notes, and parts used will be removed.')
+      !window.confirm('Clear this scheduled booking draft? Unsaved customer, service, schedule, notes, and products used will be removed.')
     ) {
       return;
     }
@@ -540,6 +707,7 @@ export default function CreateBooking({ staffId }) {
       message.includes('total_amount') ||
       message.includes('reservation_fee') ||
       message.includes('payment_status') ||
+      message.includes('estimated_duration_minutes') ||
       message.includes('product_total') ||
       message.includes('parts_total') ||
       message.includes('products') ||
@@ -601,8 +769,12 @@ export default function CreateBooking({ staffId }) {
       return;
     }
 
-    if (mechanicId && blockedTimes.includes(bookingTime)) {
-      setMessage('Error: This mechanic already has a booking at this time.');
+    const selectedSlot = availableSlots.find((item) => item.slot === bookingTime);
+
+    if (selectedSlot?.disabled) {
+      setMessage(
+        `Error: This time is unavailable${selectedSlot.reason ? ` (${selectedSlot.reason})` : ''}. Choose another time.`
+      );
       return;
     }
 
@@ -619,6 +791,43 @@ export default function CreateBooking({ staffId }) {
       return;
     }
 
+    const bookingDurationMinutes = getSafeDuration(selectedServices);
+    let assignedMechanic = mechanicId
+      ? mechanics.find((mechanic) => mechanic.id === mechanicId) || null
+      : null;
+
+    try {
+      if (mechanicId) {
+        const availability = await checkBookingSlotAvailable({
+          bookingDate,
+          bookingTime,
+          durationMinutes: bookingDurationMinutes,
+          mechanicId,
+        });
+
+        if (!availability.available) {
+          setMessage('Error: This mechanic already has an overlapping booking for the selected duration.');
+          await fetchSlotAvailability();
+          return;
+        }
+      } else {
+        assignedMechanic = await findAvailableMechanicForSlot({
+          date: bookingDate,
+          time: bookingTime,
+          durationMinutes: bookingDurationMinutes,
+        });
+
+        if (!assignedMechanic) {
+          setMessage('Error: All mechanics already have overlapping bookings for this duration. Choose another time.');
+          await fetchSlotAvailability();
+          return;
+        }
+      }
+    } catch (availabilityError) {
+      setMessage(`Error: ${availabilityError.message || 'Failed to check schedule availability.'}`);
+      return;
+    }
+
     const cleanNotes = sanitizeNotes(notes);
     const confirmLines = [
       `Create scheduled booking for ${getCustomerName(customer)}?`,
@@ -626,9 +835,9 @@ export default function CreateBooking({ staffId }) {
       `Services: ${servicesSummary}`,
       `Date: ${bookingDate}`,
       `Time: ${formatTime(bookingTime)}`,
-      `Mechanic: ${mechanicId ? getMechanicName(mechanics.find((mechanic) => mechanic.id === mechanicId)) : 'Assign later'}`,
+      `Mechanic: ${assignedMechanic ? getMechanicName(assignedMechanic) : 'Auto-assign available mechanic'}`,
       `Service Total: ${formatPeso(serviceTotal)}`,
-      `Parts Total: ${formatPeso(partsTotal)}`,
+      `Products Total: ${formatPeso(partsTotal)}`,
       `Reservation Fee: ${formatPeso(reservationFee)}`,
       `Total Bill: ${formatPeso(totalBill)}`,
     ];
@@ -646,14 +855,14 @@ export default function CreateBooking({ staffId }) {
       const partsNotes =
         partsPayload.length > 0
           ? [
-              'Parts Used / Products Added:',
+              'Products Added:',
               ...partsPayload.map(
                 (item) =>
                   `- ${item.quantity} x ${item.name} @ ${formatPeso(item.unit_price)} = ${formatPeso(item.subtotal)}`
               ),
-              `Parts Total: ${formatPeso(partsTotal)}`,
+              `Products Total: ${formatPeso(partsTotal)}`,
             ].join('\n')
-          : 'Parts Used / Products Added: None';
+          : 'Products Added: None';
 
       const bookingNotes = [
         'STAFF-ASSISTED SCHEDULED BOOKING',
@@ -669,7 +878,7 @@ export default function CreateBooking({ staffId }) {
       const bookingPayload = {
         customer_id: customer.id,
         service_id: selectedService?.id || null,
-        mechanic_id: mechanicId || null,
+        mechanic_id: assignedMechanic?.id || mechanicId || null,
         booking_date: bookingDate,
         booking_time: bookingTime,
         status: 'pending',
@@ -677,6 +886,7 @@ export default function CreateBooking({ staffId }) {
         reservation_fee: reservationFee,
         service_total: serviceTotal,
         services_summary: servicesSummary,
+        estimated_duration_minutes: bookingDurationMinutes,
         parts_total: partsTotal,
         product_total: partsTotal,
         total_amount: totalBill,
@@ -718,8 +928,9 @@ export default function CreateBooking({ staffId }) {
           customer_name: getCustomerName(customer),
           service_ids: selectedServices.map((service) => service.id),
           services_summary: servicesSummary,
-          mechanic_id: mechanicId || null,
+          mechanic_id: assignedMechanic?.id || mechanicId || null,
           booking_date: bookingDate,
+          estimated_duration_minutes: bookingDurationMinutes,
           booking_time: bookingTime,
           service_total: serviceTotal,
           parts_total: partsTotal,
@@ -735,6 +946,8 @@ export default function CreateBooking({ staffId }) {
         serviceName: servicesSummary,
         bookingDate,
         bookingTime,
+        mechanicName: assignedMechanic ? getMechanicName(assignedMechanic) : 'Auto-assigned',
+        estimatedDuration: bookingDurationMinutes,
         serviceTotal,
         partsTotal,
         total: totalBill,
@@ -744,7 +957,7 @@ export default function CreateBooking({ staffId }) {
 
       clearCreateBookingDraft();
 
-      setMessage('Scheduled booking created. Parts used are included in the total bill.');
+      setMessage('Scheduled booking created. Products used are included in the total bill.');
       setCustomer(null);
       setServiceIds([]);
       setMechanicId('');
@@ -790,7 +1003,7 @@ export default function CreateBooking({ staffId }) {
       <div className="mb-6 grid gap-3 sm:grid-cols-4">
         <StatCard label="Booking Type" value="Scheduled" icon="📅" tone="primary" />
         <StatCard label="Service Total" value={formatPeso(serviceTotal)} icon="💰" tone="accent" />
-        <StatCard label="Parts Used" value={partsUsed.length} icon="📦" tone="yellow" />
+        <StatCard label="Products Used" value={partsUsed.length} icon="📦" tone="yellow" />
         <StatCard label="Total Bill" value={formatPeso(totalBill)} icon="✅" tone="green" />
       </div>
 
@@ -802,12 +1015,15 @@ export default function CreateBooking({ staffId }) {
             {createdBooking.serviceName} · {createdBooking.bookingDate} · {formatTime(createdBooking.bookingTime)}
           </p>
           <p className="mt-1 text-xs font-semibold">
+            Mechanic: {createdBooking.mechanicName || 'Auto-assigned'} · Duration: {createdBooking.estimatedDuration || 30} mins
+          </p>
+          <p className="mt-1 text-xs font-semibold">
             Booking #{createdBooking.id?.slice(0, 8).toUpperCase()} · Total {formatPeso(createdBooking.total)}
           </p>
 
           {createdBooking.partsUsed?.length > 0 && (
             <div className="mt-4 rounded-2xl bg-white/70 p-3 text-xs font-semibold dark:bg-dark-900/50">
-              <p className="mb-2 font-black uppercase">Parts Used</p>
+              <p className="mb-2 font-black uppercase">Products Used</p>
               <div className="space-y-1">
                 {createdBooking.partsUsed.map((item) => (
                   <div key={item.id} className="flex justify-between gap-3">
@@ -912,7 +1128,7 @@ export default function CreateBooking({ staffId }) {
               onChange={(event) => setMechanicId(sanitizeId(event.target.value))}
               className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
             >
-              <option value="">Assign mechanic later</option>
+              <option value="">Auto-assign available mechanic</option>
               {mechanics.map((mechanic) => (
                 <option key={mechanic.id} value={mechanic.id}>
                   {getMechanicName(mechanic)}
@@ -924,13 +1140,13 @@ export default function CreateBooking({ staffId }) {
 
           <Section>
             <p className="mb-4 text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">
-              4. Parts Used
+              4. Products Used
             </p>
 
             <input
               value={partSearch}
               onChange={(event) => setPartSearch(sanitizeSearchInput(event.target.value))}
-              placeholder="Search part/product used..."
+              placeholder="Search product used..."
               className="mb-3 w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
             />
 
@@ -976,7 +1192,7 @@ export default function CreateBooking({ staffId }) {
             </div>
 
             <p className="mt-3 rounded-2xl bg-yellow-50 px-4 py-3 text-xs font-semibold leading-5 text-yellow-800 ring-1 ring-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-200 dark:ring-yellow-500/25">
-              Parts used here are included in the estimated booking bill. Stock should be deducted when the service is actually performed.
+              Products used here are included in the estimated booking bill. Stock will be deducted when the product is actually added during service progress.
             </p>
           </Section>
         </div>
@@ -998,9 +1214,15 @@ export default function CreateBooking({ staffId }) {
               className="mb-4 w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
             />
 
-            {scheduleLoading && (
+            {(scheduleLoading || availabilityLoading) && (
               <p className="mb-3 text-xs font-semibold text-gray-500 dark:text-gray-400">
-                Checking schedule...
+                Checking schedule and duration overlaps...
+              </p>
+            )}
+
+            {selectedServices.length > 0 && (
+              <p className="mb-3 rounded-2xl bg-primary-50 px-4 py-3 text-xs font-semibold leading-5 text-primary-800 ring-1 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-200 dark:ring-primary-500/25">
+                Selected services need about {servicesDuration || 30} minutes. Time slots that overlap existing bookings are disabled.
               </p>
             )}
 
@@ -1009,7 +1231,7 @@ export default function CreateBooking({ staffId }) {
                 <button
                   key={slot}
                   type="button"
-                  disabled={!bookingDate || disabled}
+                  disabled={!bookingDate || selectedServices.length === 0 || availabilityLoading || disabled}
                   onClick={() => setBookingTime(slot)}
                   title={reason}
                   className={`rounded-2xl border px-3 py-3 text-xs font-black transition ${
@@ -1025,22 +1247,22 @@ export default function CreateBooking({ staffId }) {
               ))}
             </div>
 
-            {mechanicId && blockedTimes.length > 0 && (
+            {Object.values(slotAvailability).some((item) => item?.available === false) && (
               <p className="mt-3 text-xs font-semibold text-yellow-700 dark:text-yellow-300">
-                Some slots are disabled because the selected mechanic already has a booking.
+                Some slots are disabled because they overlap existing booking duration.
               </p>
             )}
           </Section>
 
           <Section>
             <p className="mb-4 text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">
-              6. Selected Parts Used
+              6. Selected Products Used
             </p>
 
             {partsUsed.length === 0 ? (
               <div className="rounded-3xl border border-dashed border-gray-300 bg-gray-50 p-6 text-center dark:border-dark-700 dark:bg-dark-900/70">
                 <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
-                  No parts used yet.
+                  No products used yet.
                 </p>
               </div>
             ) : (
@@ -1140,11 +1362,23 @@ export default function CreateBooking({ staffId }) {
                 <span>{bookingTime ? formatTime(bookingTime) : '—'}</span>
               </div>
               <div className="flex justify-between gap-3">
+                <span>Estimated Duration</span>
+                <span>{servicesDuration ? `${servicesDuration} mins` : '—'}</span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span>Mechanic</span>
+                <span className="text-right">
+                  {mechanicId
+                    ? getMechanicName(mechanics.find((mechanic) => mechanic.id === mechanicId))
+                    : 'Auto-assign available'}
+                </span>
+              </div>
+              <div className="flex justify-between gap-3">
                 <span>Service Total</span>
                 <span>{formatPeso(serviceTotal)}</span>
               </div>
               <div className="flex justify-between gap-3">
-                <span>Parts Total</span>
+                <span>Products Total</span>
                 <span>{formatPeso(partsTotal)}</span>
               </div>
               <div className="border-t border-gray-200 pt-3 dark:border-dark-700">

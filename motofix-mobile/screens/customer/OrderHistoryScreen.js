@@ -98,17 +98,105 @@ function getPaymentMethodLabel(method) {
   if (value === 'gcash_manual') return 'GCash Manual Verification';
   if (value === 'cash_on_pickup') return 'Pay at Counter';
   if (value === 'qrph') return 'QR Ph / GCash';
+  if (value === 'cash') return 'Pay at Counter';
+  if (value === 'gcash') return 'GCash';
+  if (value === 'card') return 'Card';
+  if (value === 'bank_transfer') return 'Bank Transfer';
 
   return method ? String(method).replace(/_/g, ' ') : 'To be confirmed';
+}
+
+function isPaidPaymentRecord(payment) {
+  const status = String(
+    payment?.status ||
+      payment?.payment_status ||
+      payment?.receipt_status ||
+      ''
+  ).toLowerCase();
+
+  const receiptStatus = String(payment?.receipt_status || '').toLowerCase();
+  const type = String(payment?.payment_type || payment?.type || '').toLowerCase();
+
+  if (type === 'refund') return false;
+
+  return [
+    'paid',
+    'completed',
+    'success',
+    'successful',
+    'verified',
+    'confirmed',
+    'succeeded',
+    'issued',
+    'settled',
+    'captured',
+    'payment_received',
+    'fully_paid',
+    'full_paid',
+  ].includes(status) || [
+    'issued',
+    'paid',
+    'verified',
+    'confirmed',
+    'completed',
+    'payment_received',
+  ].includes(receiptStatus);
+}
+
+function getOrderPaymentRecords(order) {
+  return [
+    ...(Array.isArray(order.order_payments) ? order.order_payments : []),
+    ...(Array.isArray(order.payments) ? order.payments : []),
+  ];
+}
+
+function getOrderReceiptNumber(order) {
+  const paymentRecords = getOrderPaymentRecords(order);
+
+  const receiptPayment = paymentRecords
+    .slice()
+    .reverse()
+    .find(
+      (payment) =>
+        payment.receipt_number ||
+        payment.reference_number ||
+        payment.provider_payment_id
+    );
+
+  return (
+    order.receipt_number ||
+    receiptPayment?.receipt_number ||
+    receiptPayment?.reference_number ||
+    receiptPayment?.provider_payment_id ||
+    `MFX-${String(order.id || '').slice(0, 8).toUpperCase()}`
+  );
 }
 
 function getPaymentInfo(order) {
   const total = Number(order.total_amount) || 0;
   const paymentStatus = String(order.payment_status || '').toLowerCase();
   const orderStatus = String(order.status || 'pending').toLowerCase();
-  const orderPayments = Array.isArray(order.order_payments) ? order.order_payments : [];
+  const remainingBalance = Number(order.remaining_balance);
+  const storedPaidAmount =
+    Number(order.down_payment_amount) ||
+    Number(order.amount_paid) ||
+    Number(order.paid_amount) ||
+    Number(order.payment_amount) ||
+    0;
 
-  const paidStatuses = ['paid', 'fully_paid', 'full_paid'];
+  const paymentRecords = getOrderPaymentRecords(order);
+
+  const paidStatuses = [
+    'paid',
+    'payment_received',
+    'fully_paid',
+    'full_paid',
+    'settled',
+    'completed',
+    'verified',
+    'confirmed',
+  ];
+
   const unpaidStatuses = [
     'checkout_created',
     'pending_payment',
@@ -117,33 +205,31 @@ function getPaymentInfo(order) {
     'failed',
     'expired',
     'cancelled',
+    'canceled',
   ];
+
   const partialStatuses = ['partial', 'partially_paid', 'downpayment_paid'];
 
-  const onlinePaid = orderPayments
-    .filter((payment) => String(payment.status || '').toLowerCase() === 'paid')
+  const paidFromRecords = paymentRecords
+    .filter(isPaidPaymentRecord)
     .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
 
-  const manualPaid =
-    Number(order.amount_paid) ||
-    Number(order.paid_amount) ||
-    Number(order.payment_amount) ||
-    0;
-
-  // down_payment_amount is only trusted after the order is marked paid/partial.
-  // Do not use it for checkout_created because it may only mean "amount requested".
-  const trustedOrderPaid = partialStatuses.includes(paymentStatus)
-    ? Number(order.down_payment_amount) || 0
-    : 0;
-
-  const paidAmountFromRecords = Math.max(onlinePaid, manualPaid, trustedOrderPaid);
+  const paidAmountFromRecords = Math.max(paidFromRecords, storedPaidAmount);
 
   const fullyPaid =
-    onlinePaid >= total ||
-    (paidStatuses.includes(paymentStatus) && paidAmountFromRecords >= total) ||
-    (orderStatus === 'completed' && !unpaidStatuses.includes(paymentStatus) && paidAmountFromRecords >= total);
+    total > 0 &&
+    (
+      paidStatuses.includes(paymentStatus) ||
+      order.payment_received === true ||
+      paidAmountFromRecords >= total ||
+      (Number.isFinite(remainingBalance) && remainingBalance <= 0) ||
+      Boolean(order.paid_at || order.payment_received_at) ||
+      (orderStatus === 'completed' && !unpaidStatuses.includes(paymentStatus))
+    );
 
-  const paidAmount = fullyPaid ? total : paidAmountFromRecords;
+  const paidAmount = fullyPaid
+    ? total
+    : Math.min(paidAmountFromRecords, total);
 
   const partiallyPaid =
     !fullyPaid && (partialStatuses.includes(paymentStatus) || paidAmount > 0);
@@ -233,18 +319,49 @@ export default function OrderHistoryScreen({ navigation }) {
       const orderIds = orderRows.map((order) => order.id);
 
       let groupedOnlinePayments = {};
+      let groupedManualPayments = {};
 
       if (orderIds.length > 0) {
-        const { data: onlinePayments, error: onlineError } = await supabase
-          .from('order_payments')
-          .select('*')
-          .in('order_id', orderIds)
-          .order('created_at', { ascending: true });
+        const [onlineResult, manualResult] = await Promise.all([
+          supabase
+            .from('order_payments')
+            .select('*')
+            .in('order_id', orderIds)
+            .order('created_at', { ascending: true }),
 
-        if (onlineError) {
-          console.log('Fetch order PayMongo payments error:', onlineError.message);
+          supabase
+            .from('payments')
+            .select(`
+              id,
+              order_id,
+              amount,
+              payment_type,
+              method,
+              status,
+              receipt_status,
+              receipt_number,
+              receipt_issued_at,
+              paid_at,
+              created_at
+            `)
+            .in('order_id', orderIds)
+            .order('created_at', { ascending: true }),
+        ]);
+
+        if (onlineResult.error) {
+          console.log('Fetch order PayMongo payments error:', onlineResult.error.message);
         } else {
-          groupedOnlinePayments = (onlinePayments || []).reduce((acc, payment) => {
+          groupedOnlinePayments = (onlineResult.data || []).reduce((acc, payment) => {
+            if (!acc[payment.order_id]) acc[payment.order_id] = [];
+            acc[payment.order_id].push(payment);
+            return acc;
+          }, {});
+        }
+
+        if (manualResult.error) {
+          console.log('Fetch order manual payments error:', manualResult.error.message);
+        } else {
+          groupedManualPayments = (manualResult.data || []).reduce((acc, payment) => {
             if (!acc[payment.order_id]) acc[payment.order_id] = [];
             acc[payment.order_id].push(payment);
             return acc;
@@ -256,6 +373,7 @@ export default function OrderHistoryScreen({ navigation }) {
         orderRows.map((order) => ({
           ...order,
           order_payments: groupedOnlinePayments[order.id] || [],
+          payments: groupedManualPayments[order.id] || [],
         }))
       );
     }
@@ -319,10 +437,12 @@ export default function OrderHistoryScreen({ navigation }) {
           const status = getOrderStatusConfig(theme, order.status);
           const payment = getPaymentInfo(order);
           const total = Number(order.total_amount) || 0;
-          const downPayment = Number(order.down_payment_amount) || Number(order.down_payment_required) || (String(order.payment_method || '').toLowerCase() === 'paymongo_qrph' ? total : total * 0.15);
-          const receiptNumber =
-            order.receipt_number ||
-            `MFX-${String(order.id || '').slice(0, 8).toUpperCase()}`;
+          const downPayment =
+            Number(order.down_payment_required) ||
+            (String(order.payment_method || '').toLowerCase() === 'paymongo_qrph'
+              ? total
+              : total * 0.15);
+          const receiptNumber = getOrderReceiptNumber(order);
 
           return (
             <View key={order.id} style={s.orderCard}>
@@ -402,6 +522,13 @@ export default function OrderHistoryScreen({ navigation }) {
                     {formatPeso(payment.remainingBalance)}
                   </Text>
                 </View>
+
+                {payment.receiptAvailable && payment.remainingBalance <= 0 ? (
+                  <View style={s.fullyPaidNotice}>
+                    <Ionicons name="checkmark-circle" size={15} color={theme.success} />
+                    <Text style={s.fullyPaidText}>Payment complete. No remaining balance.</Text>
+                  </View>
+                ) : null}
 
                 <View style={s.divider} />
 

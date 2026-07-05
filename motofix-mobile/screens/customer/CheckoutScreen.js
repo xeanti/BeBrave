@@ -28,8 +28,67 @@ function formatPeso(value) {
   })}`;
 }
 
-function cleanText(value) {
-  return String(value || '').trim();
+function cleanText(value, maxLength = 300) {
+  return String(value || '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function cleanMultilineText(value, maxLength = 500) {
+  return String(value || '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function cleanNumericText(value, maxLength = 30) {
+  return String(value || '').replace(/\D/g, '').slice(0, maxLength);
+}
+
+const PHONE_PREFIX = '09';
+
+function formatPhoneInput(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+
+  if (!digits || digits.length <= 2) {
+    return PHONE_PREFIX;
+  }
+
+  const numberAfterPrefix = digits.startsWith(PHONE_PREFIX)
+    ? digits.slice(2)
+    : digits;
+
+  return (PHONE_PREFIX + numberAfterPrefix).slice(0, 11);
+}
+
+function isValidPhilippineMobile(value) {
+  return /^09\d{9}$/.test(value);
+}
+
+function getDatabasePaymentMethod(method) {
+  const map = {
+    cash_on_pickup: 'cash',
+    paymongo_qrph: 'gcash',
+    gcash_manual: 'gcash',
+  };
+
+  return map[method] || 'cash';
+}
+
+function getPaymentMethodLabel(method) {
+  const labels = {
+    cash_on_pickup: 'Pay at Counter',
+    paymongo_qrph: 'PayMongo QR Ph / GCash',
+    gcash_manual: 'GCash Manual Verification',
+  };
+
+  return labels[method] || 'Pay at Counter';
 }
 
 export default function CheckoutScreen({ navigation }) {
@@ -44,7 +103,7 @@ export default function CheckoutScreen({ navigation }) {
   } = useCart();
 
   const [notes, setNotes] = useState('');
-  const [contactPhone, setContactPhone] = useState('');
+  const [contactPhone, setContactPhone] = useState(PHONE_PREFIX);
   const [fulfillmentMethod, setFulfillmentMethod] = useState('pickup');
   const [paymentMethod, setPaymentMethod] = useState('cash_on_pickup');
   const [paymentReference, setPaymentReference] = useState('');
@@ -56,6 +115,7 @@ export default function CheckoutScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
 
   const s = styles(theme);
+  // UI payment options are mapped to DB-safe payment_method values before inserting orders.
 
   const downPaymentRate = 0.15;
   const onlinePaymentAmount =
@@ -205,23 +265,49 @@ export default function CheckoutScreen({ navigation }) {
     );
   }
 
-  async function placeOrder() {
+  function confirmPlaceOrder() {
+    if (cart.length === 0 || submitting || checkingStock) return;
+
+    Alert.alert(
+      'Place Order',
+      `Submit this order with a total amount of ${formatPeso(cartTotal)} using ${getPaymentMethodLabel(paymentMethod)}?`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Submit Order',
+          onPress: submitOrder,
+        },
+      ]
+    );
+  }
+
+  async function submitOrder() {
     if (cart.length === 0 || submitting) return;
 
-    if (!cleanText(contactPhone)) {
-      Alert.alert('Missing Contact Number', 'Please enter your contact number.');
+    const cleanPhone = formatPhoneInput(contactPhone);
+
+    if (!isValidPhilippineMobile(cleanPhone)) {
+      Alert.alert(
+        'Invalid Contact Number',
+        'Contact number must start with 09 and contain exactly 11 digits.'
+      );
       return;
     }
 
-    if (fulfillmentMethod === 'delivery' && !cleanText(deliveryAddress)) {
+    if (fulfillmentMethod === 'delivery' && !cleanMultilineText(deliveryAddress, 300)) {
       Alert.alert('Missing Delivery Address', 'Please enter your delivery address.');
       return;
     }
 
-    if (paymentMethod === 'gcash_manual' && !cleanText(paymentReference)) {
+    const cleanReference = cleanNumericText(paymentReference, 30);
+
+    if (paymentMethod === 'gcash_manual' && cleanReference.length < 6) {
       Alert.alert(
-        'Missing GCash Reference',
-        'Please enter your GCash reference number before submitting.'
+        'Invalid GCash Reference',
+        'Please enter a valid GCash reference number before submitting.'
       );
       return;
     }
@@ -257,6 +343,8 @@ export default function CheckoutScreen({ navigation }) {
 
       const paymentStatus =
         paymentMethod === 'gcash_manual' ? 'pending_verification' : 'pending_payment';
+      const databasePaymentMethod = getDatabasePaymentMethod(paymentMethod);
+      const selectedPaymentLabel = getPaymentMethodLabel(paymentMethod);
 
       let checkoutData = null;
       let finalPaymentStatus = paymentStatus;
@@ -272,8 +360,8 @@ export default function CheckoutScreen({ navigation }) {
           status: 'pending',
 
           payment_status: paymentStatus,
-          payment_method: paymentMethod,
-          payment_reference: cleanText(paymentReference) || null,
+          payment_method: databasePaymentMethod,
+          payment_reference: cleanNumericText(paymentReference, 30) || null,
           // Do not count the amount as paid yet.
           // PayMongo becomes paid only after webhook; GCash manual becomes paid only after staff/admin verification.
           down_payment_amount: 0,
@@ -282,12 +370,16 @@ export default function CheckoutScreen({ navigation }) {
           fulfillment_method: fulfillmentMethod,
           fulfillment_status: fulfillmentStatus,
           delivery_address:
-            fulfillmentMethod === 'delivery' ? cleanText(deliveryAddress) : null,
+            fulfillmentMethod === 'delivery' ? cleanMultilineText(deliveryAddress, 300) : null,
           pickup_notes:
-            fulfillmentMethod === 'pickup' ? cleanText(pickupNotes) || null : null,
-          customer_contact_phone: cleanText(contactPhone),
+            fulfillmentMethod === 'pickup' ? cleanText(pickupNotes, 160) || null : null,
+          customer_contact_phone: cleanPhone,
 
-          notes: cleanText(notes) || null,
+          notes:
+            cleanMultilineText(
+              `${notes ? `${notes}\n\n` : ''}Mobile selected payment option: ${selectedPaymentLabel}`,
+              500
+            ) || null,
         })
         .select()
         .single();
@@ -390,7 +482,9 @@ export default function CheckoutScreen({ navigation }) {
         remainingBalance: cartTotal,
         status: 'pending',
         paymentStatus: finalPaymentStatus,
-        paymentMethod,
+        paymentMethod: databasePaymentMethod,
+        selectedPaymentOption: paymentMethod,
+        selectedPaymentLabel,
         fulfillmentMethod,
         checkoutUrl: checkoutData?.checkout_url || null,
         receiptStatus:
@@ -524,10 +618,11 @@ export default function CheckoutScreen({ navigation }) {
         <Text style={s.sectionTitle}>Contact Number</Text>
         <TextInput
           value={contactPhone}
-          onChangeText={setContactPhone}
+          onChangeText={(value) => setContactPhone(formatPhoneInput(value))}
           placeholder="09XXXXXXXXX"
           placeholderTextColor={theme.textMuted}
           keyboardType="phone-pad"
+          maxLength={11}
           style={s.input}
         />
       </View>
@@ -554,18 +649,20 @@ export default function CheckoutScreen({ navigation }) {
         {fulfillmentMethod === 'delivery' ? (
           <TextInput
             value={deliveryAddress}
-            onChangeText={setDeliveryAddress}
+            onChangeText={(value) => setDeliveryAddress(cleanMultilineText(value, 300))}
             placeholder="Complete delivery address..."
             placeholderTextColor={theme.textMuted}
+            maxLength={300}
             style={[s.input, s.textArea]}
             multiline
           />
         ) : (
           <TextInput
             value={pickupNotes}
-            onChangeText={setPickupNotes}
+            onChangeText={(value) => setPickupNotes(cleanText(value, 160))}
             placeholder="Pickup note, preferred time, or instruction..."
             placeholderTextColor={theme.textMuted}
+            maxLength={160}
             style={s.input}
           />
         )}
@@ -603,10 +700,11 @@ export default function CheckoutScreen({ navigation }) {
             <Text style={s.gcashLabel}>GCash Reference Number</Text>
             <TextInput
               value={paymentReference}
-              onChangeText={setPaymentReference}
+              onChangeText={(value) => setPaymentReference(cleanNumericText(value, 30))}
               placeholder="Example: 1234567890123"
               placeholderTextColor={theme.textMuted}
               keyboardType="number-pad"
+              maxLength={30}
               style={s.input}
             />
             <Text style={s.gcashHelp}>
@@ -621,9 +719,10 @@ export default function CheckoutScreen({ navigation }) {
 
         <TextInput
           value={notes}
-          onChangeText={setNotes}
+          onChangeText={(value) => setNotes(cleanMultilineText(value, 500))}
           placeholder="Special instructions..."
           placeholderTextColor={theme.textMuted}
+          maxLength={500}
           style={[s.input, s.textArea]}
           multiline
         />
@@ -677,7 +776,7 @@ export default function CheckoutScreen({ navigation }) {
 
       <TouchableOpacity
         style={[s.submitButton, (submitting || checkingStock) && { opacity: 0.7 }]}
-        onPress={placeOrder}
+        onPress={confirmPlaceOrder}
         disabled={submitting || checkingStock}
       >
         {submitting || checkingStock ? (

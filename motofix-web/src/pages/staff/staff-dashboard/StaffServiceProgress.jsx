@@ -19,10 +19,10 @@ const ACTIVE_PROGRESS_STATUSES = [
   'quality_check',
 ];
 
+// Completed bookings are intentionally excluded from this module.
 const VISIBLE_SERVICE_STATUSES = [
   ...ACTIVE_PROGRESS_STATUSES,
   'ready_for_pickup',
-  'completed',
 ];
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
@@ -333,9 +333,7 @@ function StaffServiceProgress() {
     (booking) => normalizeStatus(booking.status) === 'ready_for_pickup'
   ).length;
 
-  const completedCount = bookings.filter(
-    (booking) => normalizeStatus(booking.status) === 'completed'
-  ).length;
+  const doneServicesLabel = 'Hidden';
 
   const totalPages = Math.max(1, Math.ceil(filteredBookings.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -365,7 +363,7 @@ function StaffServiceProgress() {
       <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Active Services" value={activeCount} icon="🔧" tone="primary" />
         <StatCard label="Ready for Pickup" value={readyCount} icon="✅" tone="green" />
-        <StatCard label="Completed" value={completedCount} icon="🏁" tone="blue" />
+        <StatCard label="Completed" value={doneServicesLabel} icon="🏁" tone="blue" />
         <StatCard
           label="Last Updated"
           value={lastUpdated ? formatDateTime(lastUpdated) : '—'}
@@ -381,7 +379,7 @@ function StaffServiceProgress() {
               Service Progress
             </p>
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              Update timeline events for scheduled registered bookings only.
+              Update only active scheduled bookings. Completed bookings are hidden automatically.
             </p>
           </div>
 
@@ -425,13 +423,13 @@ function StaffServiceProgress() {
               No scheduled service progress records found
             </p>
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              Confirmed registered bookings will appear here. Walk-ins are handled in the Walk-in Queue.
+              Confirmed and active registered bookings will appear here. Completed bookings are hidden automatically.
             </p>
           </div>
         ) : (
           <>
             <div className="mb-4 rounded-2xl bg-gray-50 px-4 py-3 text-xs font-semibold text-gray-500 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:text-gray-400 dark:ring-dark-700">
-              Showing {filteredBookings.length} matching booking
+              Showing {filteredBookings.length} active matching booking
               {filteredBookings.length === 1 ? '' : 's'}.
             </div>
 

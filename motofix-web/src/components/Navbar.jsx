@@ -62,15 +62,42 @@ function shouldCountAsPendingOrder(order) {
   const status = String(order?.status || '').toLowerCase();
   const paymentStatus = String(order?.payment_status || '').toLowerCase();
 
-  if (['cancelled', 'canceled', 'completed', 'refunded'].includes(status)) {
+  if (['cancelled', 'canceled', 'completed', 'refunded', 'void'].includes(status)) {
     return false;
   }
 
   return (
-    ['pending', 'processing', 'ready_for_pickup'].includes(status) ||
-    ['unpaid', 'pending', 'pending_payment', 'pending_verification', 'partial', 'partially_paid'].includes(paymentStatus)
+    [
+      'pending',
+      'pending_payment',
+      'pending_verification',
+      'confirmed',
+      'processing',
+      'ready',
+      'ready_for_pickup',
+      'ready_for_delivery',
+      'for_pickup',
+      'for_delivery',
+    ].includes(status) ||
+    [
+      'unpaid',
+      'pending',
+      'pending_payment',
+      'checkout_created',
+      'pending_verification',
+      'partial',
+      'partially_paid',
+      'failed',
+      'expired',
+    ].includes(paymentStatus)
   );
 }
+
+const ACTIVE_ORDER_STATUS_FILTER =
+  'pending,pending_payment,pending_verification,confirmed,processing,ready,ready_for_pickup,ready_for_delivery,for_pickup,for_delivery';
+
+const ACTIVE_ORDER_PAYMENT_STATUS_FILTER =
+  'unpaid,pending,pending_payment,checkout_created,pending_verification,partial,partially_paid,failed,expired';
 
 function getBadge(to, state) {
   const {
@@ -164,7 +191,7 @@ export default function Navbar() {
   const isCustomer = role === 'customer';
   const isAdminRole = role === 'admin' || role === 'super_admin';
   const isSuperAdmin = role === 'super_admin';
-  const canSeeOperationAlerts = role === 'staff' || role === 'admin' || role === 'super_admin';
+  const canSeeOperationAlerts = role === 'staff' || role === 'admin';
 
   const initials = profile
     ? `${profile.first_name?.[0] || ''}${profile.last_name?.[0] || ''}`.toUpperCase()
@@ -221,6 +248,12 @@ export default function Navbar() {
   }, []);
 
   useEffect(() => {
+    if (sidebarOpen && user && canSeeOperationAlerts) {
+      fetchOperationNotifs();
+    }
+  }, [sidebarOpen, user?.id, canSeeOperationAlerts]);
+
+  useEffect(() => {
     if (!user || !profile) {
       setUnreadCount(0);
       return;
@@ -266,6 +299,14 @@ export default function Navbar() {
 
     fetchOperationNotifs();
 
+    function handleFocus() {
+      fetchOperationNotifs();
+    }
+
+    window.addEventListener('focus', handleFocus);
+
+    const refreshTimer = window.setInterval(fetchOperationNotifs, 15000);
+
     const tables = [
       'bookings',
       'booking_payments',
@@ -294,7 +335,11 @@ export default function Navbar() {
 
     channel.subscribe();
 
-    return () => supabase.removeChannel(channel);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.clearInterval(refreshTimer);
+      supabase.removeChannel(channel);
+    };
   }, [user?.id, canSeeOperationAlerts]);
 
   async function fetchUnreadCount() {
@@ -345,6 +390,7 @@ export default function Navbar() {
     }
   }
 
+  // Admin/staff operation badges are refreshed by realtime, focus, sidebar open, and polling.
   async function fetchOperationNotifs() {
     try {
       const [
@@ -390,8 +436,10 @@ export default function Navbar() {
 
         supabase
           .from('orders')
-          .select('id, status, payment_status')
-          .limit(1000),
+          .select('id', { count: 'exact', head: true })
+          .or(
+            `status.in.(${ACTIVE_ORDER_STATUS_FILTER}),payment_status.in.(${ACTIVE_ORDER_PAYMENT_STATUS_FILTER})`
+          ),
 
         supabase
           .from('pre_assessments')
@@ -414,7 +462,7 @@ export default function Navbar() {
       setPendingBookings(bookings.count || 0);
       setPendingPayments(bookingPayments.count || 0);
       setPendingWalkIns(walkins.count || 0);
-      setPendingOrders((orders.data || []).filter(shouldCountAsPendingOrder).length);
+      setPendingOrders(orders.count || 0);
       setPendingAssessments(assessments.count || 0);
       setLowStockParts(
         (parts.data || []).filter(

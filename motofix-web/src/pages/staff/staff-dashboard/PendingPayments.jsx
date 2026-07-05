@@ -25,6 +25,16 @@ import {
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
 const DEFAULT_PAGE_SIZE = 10;
 const ALLOWED_PAYMENT_METHODS = ['cash', 'gcash', 'card', 'bank_transfer'];
+const PAID_ORDER_PAYMENT_STATUSES = [
+  'paid',
+  'payment_received',
+  'fully_paid',
+  'full_paid',
+  'settled',
+  'completed',
+  'verified',
+  'confirmed',
+];
 
 function sanitizeSearch(value) {
   return String(value || '')
@@ -91,9 +101,32 @@ function normalizeOrderPaymentRecord(payment) {
 }
 
 function isConfirmedOrderPayment(payment) {
-  const status = String(payment?.status || payment?.receipt_status || '').toLowerCase();
+  const type = String(payment?.payment_type || payment?.type || '').toLowerCase();
 
-  if (['paid', 'completed', 'success', 'successful', 'verified'].includes(status)) {
+  if (type === 'refund') return false;
+
+  const status = String(payment?.status || payment?.payment_status || '').toLowerCase();
+  const receiptStatus = String(payment?.receipt_status || '').toLowerCase();
+
+  if (
+    PAID_ORDER_PAYMENT_STATUSES.includes(status) ||
+    [
+      'paid',
+      'completed',
+      'success',
+      'successful',
+      'verified',
+      'confirmed',
+      'succeeded',
+      'issued',
+      'settled',
+      'captured',
+      'payment_received',
+      'fully_paid',
+      'full_paid',
+    ].includes(status) ||
+    ['issued', 'paid', 'verified', 'confirmed', 'completed', 'payment_received'].includes(receiptStatus)
+  ) {
     return true;
   }
 
@@ -108,17 +141,19 @@ function isConfirmedOrderPayment(payment) {
       'cancelled',
       'canceled',
       'refunded',
+      'void',
     ].includes(status)
   ) {
     return false;
   }
 
   return Boolean(
-    payment?.payment_type &&
+    (payment?.payment_type || payment?.receipt_number) &&
       Number(payment?.amount) > 0 &&
       !payment?.provider_checkout_session_id
   );
 }
+
 
 function getConfirmedOrderPaymentTotal(paymentList = []) {
   return (paymentList || [])
@@ -130,14 +165,49 @@ function getOrderPaidAmount(order, paymentList = []) {
   const total = Number(order?.total_amount) || 0;
   const confirmedPaid = getConfirmedOrderPaymentTotal(paymentList);
   const paymentStatus = String(order?.payment_status || '').toLowerCase();
+  const orderStatus = String(order?.status || '').toLowerCase();
+  const storedPaid = Number(order?.down_payment_amount ?? order?.amount_paid ?? 0) || 0;
+  const remainingBalance = Number(order?.remaining_balance);
+
+  if (
+    total > 0 &&
+    (
+      PAID_ORDER_PAYMENT_STATUSES.includes(paymentStatus) ||
+      order?.payment_received === true ||
+      orderStatus === 'completed'
+    )
+  ) {
+    return total;
+  }
+
+  if (total > 0 && Number.isFinite(remainingBalance) && remainingBalance <= 0) {
+    return total;
+  }
+
+  if (total > 0 && storedPaid >= total) {
+    return total;
+  }
+
   const partialStatuses = ['partial', 'partially_paid', 'downpayment_paid'];
+  const trustedOrderPaid = partialStatuses.includes(paymentStatus) ? storedPaid : 0;
 
-  const trustedOrderPaid = partialStatuses.includes(paymentStatus)
-    ? Number(order?.down_payment_amount) || 0
-    : 0;
-
-  return Math.min(Math.max(confirmedPaid, trustedOrderPaid), total);
+  return Math.max(0, Math.min(Math.max(confirmedPaid, trustedOrderPaid), total));
 }
+
+function isOrderFullySettled(order, paymentList = []) {
+  const total = Number(order?.total_amount) || 0;
+  const paymentStatus = String(order?.payment_status || '').toLowerCase();
+
+  if (
+    PAID_ORDER_PAYMENT_STATUSES.includes(paymentStatus) ||
+    order?.payment_received === true
+  ) {
+    return true;
+  }
+
+  return total > 0 && getOrderDue(order, paymentList) <= 0;
+}
+
 
 function getOrderDue(order, paymentList = []) {
   const total = Number(order?.total_amount) || 0;
@@ -159,6 +229,31 @@ function getOrderPaymentSummary(order, paymentList = []) {
     isFullyPaid,
     percent,
   };
+}
+
+
+function getBookingPaidAmountWithoutDoubleCount(booking, paymentList = []) {
+  const total = calculateBookingTotal(booking);
+  const manualTotalPaid =
+    Number(summarizePayments(paymentList || []).totalPaid) || 0;
+  const reservationPaidAmount = getReservationPaidAmount(booking);
+  const paymentStatus = String(booking?.payment_status || '').toLowerCase();
+
+  if (paymentStatus === 'paid' && reservationPaidAmount >= total && total > 0) {
+    return total;
+  }
+
+  // If a receipt/payment row already exists for the down payment, do not add
+  // bookings.down_payment_amount again. Otherwise the same ₱98 reservation fee
+  // becomes counted twice and the due becomes ₱295 instead of ₱393.
+  return Math.max(manualTotalPaid, reservationPaidAmount);
+}
+
+function getBookingDueWithoutDoubleCount(booking, paymentList = []) {
+  const total = calculateBookingTotal(booking);
+  const totalPaid = getBookingPaidAmountWithoutDoubleCount(booking, paymentList);
+
+  return Math.max(total - totalPaid, 0);
 }
 
 function getBookingServicesSummary(booking) {
@@ -212,9 +307,64 @@ function getRecordSearchText(type, record, payments = []) {
     .toLowerCase();
 }
 
+
+function getBookingPaymentMethodDisplay(booking, latestOnlinePayment = null) {
+  const bookingMethod = String(booking?.payment_method || '').toLowerCase();
+  const onlineMethod = String(latestOnlinePayment?.payment_method || latestOnlinePayment?.provider || '').toLowerCase();
+
+  if (bookingMethod === 'cash_at_shop' || bookingMethod === 'cash') {
+    return 'Cash down payment at shop';
+  }
+
+  if (bookingMethod === 'gcash_manual' || bookingMethod === 'manual_gcash' || bookingMethod === 'personal_gcash') {
+    return 'Personal GCash down payment for verification';
+  }
+
+  if (
+    bookingMethod === 'paymongo_qrph' ||
+    bookingMethod === 'paymongo' ||
+    onlineMethod === 'paymongo_qrph' ||
+    onlineMethod === 'paymongo'
+  ) {
+    return 'PayMongo QR Ph / GCash down payment';
+  }
+
+  return bookingMethod ? bookingMethod.replace(/_/g, ' ') : 'Down payment method not selected';
+}
+
+function getBookingPaymentInstruction(booking, latestOnlinePayment = null) {
+  const paymentStatus = String(booking?.payment_status || '').toLowerCase();
+  const paymentMethod = String(booking?.payment_method || '').toLowerCase();
+
+  if (paymentStatus === 'pending_payment' || paymentMethod === 'cash_at_shop' || paymentMethod === 'cash') {
+    return 'Waiting for cash down payment at the shop counter before booking confirmation.';
+  }
+
+  if (
+    paymentStatus === 'pending_verification' ||
+    paymentMethod === 'gcash_manual' ||
+    paymentMethod === 'manual_gcash' ||
+    paymentMethod === 'personal_gcash'
+  ) {
+    return 'Waiting for staff verification of the customer’s GCash down payment reference.';
+  }
+
+  if (
+    paymentStatus === 'checkout_created' ||
+    paymentMethod === 'paymongo_qrph' ||
+    paymentMethod === 'paymongo' ||
+    latestOnlinePayment?.checkout_url ||
+    latestOnlinePayment?.provider_checkout_session_id
+  ) {
+    return 'Waiting for PayMongo QR Ph / GCash reservation payment before booking confirmation.';
+  }
+
+  return 'Waiting for down payment before booking confirmation.';
+}
+
 function OrderPaymentBadge({ status }) {
   const paymentStatus = String(status || 'pending_payment').toLowerCase();
-  const paid = paymentStatus === 'paid';
+  const paid = PAID_ORDER_PAYMENT_STATUSES.includes(paymentStatus);
 
   return (
     <span
@@ -227,6 +377,19 @@ function OrderPaymentBadge({ status }) {
       {paid ? 'Payment Received' : paymentStatus.replace(/_/g, ' ')}
     </span>
   );
+}
+
+
+function getBookingPaymentActionLabel(type, record, due, totalPaid) {
+  if (type !== 'booking') return 'Confirm';
+
+  const reservationFee = getReservationFee(record);
+
+  if (totalPaid >= reservationFee && due > 0) {
+    return 'Record Balance';
+  }
+
+  return 'Confirm';
 }
 
 function PaginationControls({ page, totalPages, pageSize, onPageChange, onPageSizeChange }) {
@@ -359,8 +522,7 @@ export default function PendingPayments({ staffId, onReceipt }) {
         supabase
           .from('orders')
           .select('*, profiles!orders_customer_id_fkey(first_name, last_name, profile_photo_url)')
-          .neq('status', 'completed')
-          .neq('status', 'cancelled')
+          .not('status', 'in', '(completed,cancelled,canceled,returned,refunded,void)')
           .order('created_at', { ascending: false }),
       ]);
 
@@ -481,18 +643,21 @@ export default function PendingPayments({ staffId, onReceipt }) {
       }
 
       setBookings(
-        bookingsData.filter((booking) => {
-          const total = calculateBookingTotal(booking);
-          const manualTotalPaid =
-            Number(summarizePayments(groupedBookingPayments[booking.id] || []).totalPaid) || 0;
-          const reservationPaidAmount = getReservationPaidAmount(booking);
-
-          return Math.max(total - manualTotalPaid - reservationPaidAmount, 0) > 0;
-        })
+        bookingsData.filter(
+          (booking) =>
+            getBookingDueWithoutDoubleCount(
+              booking,
+              groupedBookingPayments[booking.id] || []
+            ) > 0
+        )
       );
 
       setOrders(
-        ordersData.filter((order) => getOrderDue(order, groupedOrderPayments[order.id] || []) > 0)
+        ordersData.filter((order) => {
+          const payments = groupedOrderPayments[order.id] || [];
+
+          return !isOrderFullySettled(order, payments) && getOrderDue(order, payments) > 0;
+        })
       );
 
       setBookingPayments(groupedBookingPayments);
@@ -756,14 +921,11 @@ export default function PendingPayments({ staffId, onReceipt }) {
   const totalPending = filteredBookings.length + filteredOrders.length;
 
   const totals = useMemo(() => {
-    const bookingDue = filteredBookings.reduce((sum, booking) => {
-      const total = calculateBookingTotal(booking);
-      const manualTotalPaid =
-        Number(summarizePayments(bookingPayments[booking.id] || []).totalPaid) || 0;
-      const reservationPaidAmount = getReservationPaidAmount(booking);
-
-      return sum + Math.max(total - manualTotalPaid - reservationPaidAmount, 0);
-    }, 0);
+    const bookingDue = filteredBookings.reduce(
+      (sum, booking) =>
+        sum + getBookingDueWithoutDoubleCount(booking, bookingPayments[booking.id] || []),
+      0
+    );
 
     const orderDue = filteredOrders.reduce(
       (sum, order) => sum + getOrderDue(order, orderPayments[order.id] || []),
@@ -793,12 +955,14 @@ export default function PendingPayments({ staffId, onReceipt }) {
   function PaymentRow({ type, record, payments }) {
     const orderSummary = type === 'order' ? getOrderPaymentSummary(record, payments) : null;
     const total = type === 'booking' ? calculateBookingTotal(record) : orderSummary.total;
-    const manualTotalPaid =
-      type === 'booking' ? Number(summarizePayments(payments).totalPaid) || 0 : 0;
-    const reservationPaidAmount = type === 'booking' ? getReservationPaidAmount(record) : 0;
     const totalPaid =
-      type === 'booking' ? manualTotalPaid + reservationPaidAmount : orderSummary.totalPaid;
-    const due = type === 'booking' ? Math.max(total - totalPaid, 0) : orderSummary.due;
+      type === 'booking'
+        ? getBookingPaidAmountWithoutDoubleCount(record, payments)
+        : orderSummary.totalPaid;
+    const due =
+      type === 'booking'
+        ? getBookingDueWithoutDoubleCount(record, payments)
+        : orderSummary.due;
     const percent =
       type === 'booking'
         ? total > 0
@@ -825,7 +989,7 @@ export default function PendingPayments({ staffId, onReceipt }) {
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <ModulePaymentBadge status={record.payment_status} />
               <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">
-                Fee {formatPeso(getReservationFee(record))} · Ref {getOnlinePaymentReference(record, latestOnlinePayment)}
+                Fee {formatPeso(getReservationFee(record))} · {getBookingPaymentMethodDisplay(record, latestOnlinePayment)} · Ref {record.payment_reference || getOnlinePaymentReference(record, latestOnlinePayment)}
               </span>
             </div>
           )}
@@ -841,7 +1005,7 @@ export default function PendingPayments({ staffId, onReceipt }) {
 
           {requiresReservationPayment && !isReservationPaid(record) && (
             <p className="mt-2 rounded-xl bg-yellow-50 px-3 py-2 text-[11px] font-semibold leading-4 text-yellow-800 ring-1 ring-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-200 dark:ring-yellow-500/25">
-              Waiting for PayMongo QR Ph / GCash reservation payment before booking confirmation.
+              {getBookingPaymentInstruction(record, latestOnlinePayment)}
             </p>
           )}
 
@@ -868,7 +1032,7 @@ export default function PendingPayments({ staffId, onReceipt }) {
             disabled={savingPayment || due <= 0}
             className="rounded-2xl bg-primary-600 px-4 py-2 text-xs font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Confirm
+            {getBookingPaymentActionLabel(type, record, due, totalPaid)}
           </button>
         </div>
       </div>

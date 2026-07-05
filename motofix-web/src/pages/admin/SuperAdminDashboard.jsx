@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 
+const REPORT_TIME_ZONE = 'Asia/Manila';
+
 function formatPeso(value) {
   const amount = Number(value) || 0;
 
@@ -13,11 +15,37 @@ function formatPeso(value) {
 }
 
 function getLocalDateString(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
+  const safeDate = date instanceof Date ? date : new Date(date);
 
-  return `${year}-${month}-${day}`;
+  if (Number.isNaN(safeDate.getTime())) {
+    return getLocalDateString(new Date());
+  }
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: REPORT_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(safeDate);
+
+  const values = parts.reduce((acc, part) => {
+    acc[part.type] = part.value;
+    return acc;
+  }, {});
+
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function getLocalDateFromTimestamp(value) {
+  if (!value) return getLocalDateString(new Date());
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return getLocalDateString(new Date());
+  }
+
+  return getLocalDateString(date);
 }
 
 function getLastDays(count = 7) {
@@ -30,12 +58,12 @@ function getLastDays(count = 7) {
 }
 
 function getPaymentDate(payment) {
-  return String(
+  return getLocalDateFromTimestamp(
     payment?.paid_at ||
       payment?.receipt_issued_at ||
       payment?.created_at ||
       new Date().toISOString()
-  ).slice(0, 10);
+  );
 }
 
 function getPaymentAmount(payment) {
@@ -48,6 +76,21 @@ function getPaymentAmount(payment) {
   );
 }
 
+const PAID_REVENUE_STATUSES = [
+  'paid',
+  'payment_received',
+  'fully_paid',
+  'full_paid',
+  'settled',
+  'completed',
+  'verified',
+  'confirmed',
+  'success',
+  'successful',
+  'succeeded',
+  'issued',
+];
+
 function isPaidPayment(payment) {
   const status = String(
     payment?.status ||
@@ -58,8 +101,49 @@ function isPaidPayment(payment) {
 
   if (!status) return true;
 
-  return ['paid', 'succeeded', 'success', 'completed', 'confirmed', 'issued'].includes(status);
+  return PAID_REVENUE_STATUSES.includes(status);
 }
+
+function isPaidOrder(order) {
+  const paymentStatus = String(order?.payment_status || '').toLowerCase();
+  const status = String(order?.status || '').toLowerCase();
+  const total = Number(order?.total_amount) || 0;
+  const paidAmount = Number(order?.down_payment_amount ?? order?.amount_paid ?? 0) || 0;
+  const remainingBalance = Number(order?.remaining_balance);
+
+  if (['cancelled', 'canceled', 'returned', 'refunded', 'void'].includes(status)) {
+    return false;
+  }
+
+  if (
+    PAID_REVENUE_STATUSES.includes(paymentStatus) ||
+    order?.payment_received === true ||
+    Boolean(order?.paid_at || order?.payment_received_at)
+  ) {
+    return true;
+  }
+
+  if (total > 0 && paidAmount >= total) {
+    return true;
+  }
+
+  if (total > 0 && Number.isFinite(remainingBalance) && remainingBalance <= 0) {
+    return true;
+  }
+
+  return false;
+}
+
+function getOrderPaidDate(order) {
+  return getLocalDateFromTimestamp(
+    order?.paid_at ||
+      order?.payment_received_at ||
+      order?.updated_at ||
+      order?.created_at ||
+      new Date().toISOString()
+  );
+}
+
 
 function normalizeRole(role) {
   if (!role) return 'unknown';
@@ -194,6 +278,7 @@ function RoleDistribution({ rows }) {
 }
 
 export default function SuperAdminDashboard() {
+  // Sales dates use Asia/Manila local dates so 2 AM PH payments count for the same PH day.
   const { profile } = useAuth();
 
   const [profiles, setProfiles] = useState([]);
@@ -204,6 +289,7 @@ export default function SuperAdminDashboard() {
 
   const [payments, setPayments] = useState([]);
   const [bookingPayments, setBookingPayments] = useState([]);
+  const [orderPayments, setOrderPayments] = useState([]);
   const [walkinPayments, setWalkinPayments] = useState([]);
 
   const [loading, setLoading] = useState(true);
@@ -220,6 +306,7 @@ export default function SuperAdminDashboard() {
       'walkin_queue',
       'payments',
       'booking_payments',
+      'order_payments',
       'walkin_queue_payments',
       'parts',
     ];
@@ -251,6 +338,7 @@ export default function SuperAdminDashboard() {
         walkinsResult,
         paymentsResult,
         bookingPaymentsResult,
+        orderPaymentsResult,
         walkinPaymentsResult,
         partsResult,
       ] = await Promise.all([
@@ -263,8 +351,10 @@ export default function SuperAdminDashboard() {
           .select('id, status, payment_status, total_amount, service_total, reservation_fee, booking_date, created_at'),
 
         supabase
-          .from('orders')
-          .select('id, status, payment_status, total_amount, created_at'),
+        .from('orders')
+        .select(
+          'id, status, payment_status, payment_received, total_amount, down_payment_amount, remaining_balance, created_at, updated_at, paid_at, payment_received_at'
+        ),
 
         supabase
           .from('walkin_queue')
@@ -277,6 +367,10 @@ export default function SuperAdminDashboard() {
         supabase
           .from('booking_payments')
           .select('id, booking_id, amount, status, payment_method, created_at, paid_at'),
+
+        supabase
+          .from('order_payments')
+          .select('id, order_id, amount, status, payment_method, reference_number, created_at, paid_at'),
 
         supabase
           .from('walkin_queue_payments')
@@ -294,6 +388,7 @@ export default function SuperAdminDashboard() {
         walkinsResult,
         paymentsResult,
         bookingPaymentsResult,
+        orderPaymentsResult,
         walkinPaymentsResult,
         partsResult,
       ].find((result) => result.error)?.error;
@@ -306,6 +401,7 @@ export default function SuperAdminDashboard() {
       setWalkins(walkinsResult.data || []);
       setPayments(paymentsResult.data || []);
       setBookingPayments(bookingPaymentsResult.data || []);
+      setOrderPayments(orderPaymentsResult.data || []);
       setWalkinPayments(walkinPaymentsResult.data || []);
       setParts(partsResult.data || []);
       setLastUpdated(new Date());
@@ -318,6 +414,8 @@ export default function SuperAdminDashboard() {
   }
 
   const paidPaymentRows = useMemo(() => {
+    const orderById = new Map((orders || []).map((order) => [order.id, order]));
+
     const paidBookingPaymentIds = new Set(
       bookingPayments
         .filter(isPaidPayment)
@@ -337,18 +435,82 @@ export default function SuperAdminDashboard() {
     const normalizedGeneralPayments = payments
       .filter(isPaidPayment)
       .filter((payment) => {
+        if (payment.order_id) return false;
+
         if (!payment.booking_id) return true;
 
         const type = String(payment.payment_type || '').toLowerCase();
-
         return !paidBookingPaymentIds.has(payment.booking_id) || type !== 'reservation_fee';
       })
       .map((payment) => ({
         ...payment,
-        source: payment.order_id ? 'orders' : payment.booking_id ? 'bookings' : 'other',
+        source: payment.booking_id ? 'bookings' : 'other',
         amount: getPaymentAmount(payment),
         paid_date: getPaymentDate(payment),
       }));
+
+    const paidOrderPaymentRows = [
+      ...payments
+        .filter((payment) => payment.order_id && isPaidPayment(payment))
+        .map((payment) => ({
+          order_id: payment.order_id,
+          amount: getPaymentAmount(payment),
+          paid_date: getPaymentDate(payment),
+        })),
+
+      ...orderPayments
+        .filter((payment) => payment.order_id && isPaidPayment(payment))
+        .map((payment) => ({
+          order_id: payment.order_id,
+          amount: getPaymentAmount(payment),
+          paid_date: getPaymentDate(payment),
+        })),
+    ];
+
+    const paidOrdersById = new Map();
+
+    paidOrderPaymentRows.forEach((payment) => {
+      if (!payment.order_id) return;
+
+      const current = paidOrdersById.get(payment.order_id) || {
+        order_id: payment.order_id,
+        amount: 0,
+        paid_date: payment.paid_date,
+      };
+
+      current.amount += Number(payment.amount) || 0;
+
+      if (payment.paid_date > current.paid_date) {
+        current.paid_date = payment.paid_date;
+      }
+
+      paidOrdersById.set(payment.order_id, current);
+    });
+
+    const normalizedOrderPaymentRevenue = Array.from(paidOrdersById.values())
+      .map((row) => {
+        const order = orderById.get(row.order_id);
+        const orderTotal = Number(order?.total_amount) || 0;
+
+        return {
+          ...row,
+          source: 'orders',
+          amount: orderTotal > 0 ? Math.min(row.amount, orderTotal) : row.amount,
+          paid_date: row.paid_date || getOrderPaidDate(order),
+        };
+      })
+      .filter((row) => Number(row.amount) > 0);
+
+    const normalizedDirectPaidOrders = orders
+      .filter(isPaidOrder)
+      .filter((order) => !paidOrdersById.has(order.id))
+      .map((order) => ({
+        ...order,
+        source: 'orders',
+        amount: Number(order.total_amount) || 0,
+        paid_date: getOrderPaidDate(order),
+      }))
+      .filter((row) => Number(row.amount) > 0);
 
     const normalizedWalkinPayments = walkinPayments
       .filter(isPaidPayment)
@@ -362,9 +524,11 @@ export default function SuperAdminDashboard() {
     return [
       ...normalizedBookingPayments,
       ...normalizedGeneralPayments,
+      ...normalizedOrderPaymentRevenue,
+      ...normalizedDirectPaidOrders,
       ...normalizedWalkinPayments,
     ];
-  }, [payments, bookingPayments, walkinPayments]);
+  }, [payments, bookingPayments, orderPayments, orders, walkinPayments]);
 
   const stats = useMemo(() => {
     const today = getLocalDateString();
@@ -378,9 +542,11 @@ export default function SuperAdminDashboard() {
       bookings.filter((row) =>
         ['unpaid', 'checkout_created', 'pending_payment', 'pending_verification', null, undefined, ''].includes(row.payment_status)
       ).length +
-      orders.filter((row) =>
-        ['unpaid', 'pending', 'pending_payment', null, undefined, ''].includes(row.payment_status)
-      ).length +
+      orders.filter((row) => {
+        if (isPaidOrder(row)) return false;
+
+        return ['unpaid', 'pending', 'pending_payment', 'checkout_created', 'pending_verification', null, undefined, ''].includes(row.payment_status);
+      }).length +
       walkins.filter((row) =>
         ['unpaid', 'pending', 'pending_payment', null, undefined, ''].includes(row.payment_status)
       ).length;

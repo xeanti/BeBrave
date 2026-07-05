@@ -110,6 +110,42 @@ function sanitizeGcashReference(value) {
 }
 
 
+async function checkBookingSlotAvailable({
+  bookingDate,
+  bookingTime,
+  durationMinutes,
+  mechanicId = null,
+  excludeBookingId = null,
+}) {
+  const safeDuration = Math.max(30, Number(durationMinutes) || 60);
+
+  const { data, error } = await supabase.rpc('check_booking_slot_available', {
+    p_booking_date: bookingDate,
+    p_booking_time: bookingTime,
+    p_duration_minutes: safeDuration,
+    p_mechanic_id: mechanicId || null,
+    p_exclude_booking_id: excludeBookingId || null,
+  });
+
+  if (error) throw error;
+
+  const result = Array.isArray(data) ? data[0] : data;
+
+  return {
+    available: result?.available === true,
+    reason: result?.reason || 'Selected time is not available.',
+    conflictCount: Number(result?.conflict_count) || 0,
+    conflicts: result?.conflicts || [],
+  };
+}
+
+function getAvailableMechanicIdsFromResults(results = []) {
+  return results
+    .filter((item) => item?.available === true && item?.mechanic?.id)
+    .map((item) => item.mechanic.id);
+}
+
+
 export default function BookingScreen({ route, navigation }) {
   const { theme, isDark } = useTheme();
   const [step, setStep] = useState(1);
@@ -139,7 +175,9 @@ export default function BookingScreen({ route, navigation }) {
   const [manualReference, setManualReference] = useState('');
 
   const [bookedMechanicIds, setBookedMechanicIds] = useState([]);
+  const [unavailableTimeSlots, setUnavailableTimeSlots] = useState([]);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
+  const [checkingTimeSlots, setCheckingTimeSlots] = useState(false);
 
   useEffect(() => {
     if (route?.params?.preselectedService) {
@@ -152,11 +190,17 @@ export default function BookingScreen({ route, navigation }) {
     fetchData();
   }, []);
 
-useEffect(() => {
-  if (step === 4 && bookingDate && bookingTime && selectedServices.length > 0) {
-    fetchMechanicAvailability();
-  }
-}, [step, bookingDate, bookingTime, selectedServices]);
+  useEffect(() => {
+    if (step === 3 && bookingDate && selectedServices.length > 0) {
+      fetchTimeSlotAvailability();
+    }
+  }, [step, bookingDate, selectedServices, mechanics]);
+
+  useEffect(() => {
+    if (step === 4 && bookingDate && bookingTime && selectedServices.length > 0) {
+      fetchMechanicAvailability();
+    }
+  }, [step, bookingDate, bookingTime, selectedServices, mechanics]);
 
   function toggleService(service) {
     setSelectedServices((current) => {
@@ -184,42 +228,152 @@ useEffect(() => {
     setLoadingCerts(false);
   }
 
-  async function fetchMechanicAvailability() {
-    setCheckingAvailability(true);
-
-    const dateStr = toISODateString(bookingDate);
-
-    const { data, error } = await supabase
-      .from('bookings')
-      .select('mechanic_id, booking_time, services(estimated_duration_minutes), booking_services(estimated_duration_minutes, quantity)')
-      .eq('booking_date', dateStr)
-        .in('status', [
-          'pending',
-          'confirmed',
-          'in_progress',
-          'inspection',
-          'repairing',
-          'quality_check',
-          'ready_for_pickup',
-        ])      .not('mechanic_id', 'is', null);
-
-    if (!error && data) {
-      const newStart = timeToMinutes(bookingTime);
-      const newDuration = getServicesDuration(selectedServices) || 30;
-      const newEnd = newStart + newDuration;
-
-      const conflicting = data.filter((b) => {
-        const start = timeToMinutes((b.booking_time || '').slice(0, 5));
-        const duration = getExistingBookingDuration(b);
-        const end = start + duration;
-
-        return newStart < end && newEnd > start;
-      });
-
-      setBookedMechanicIds(conflicting.map((b) => b.mechanic_id));
+  async function fetchTimeSlotAvailability() {
+    if (!bookingDate || selectedServices.length === 0) {
+      setUnavailableTimeSlots([]);
+      return;
     }
 
-    setCheckingAvailability(false);
+    setCheckingTimeSlots(true);
+
+    try {
+      const dateStr = toISODateString(bookingDate);
+      const durationMinutes = getServicesDuration(selectedServices) || 30;
+
+      const results = await Promise.all(
+        timeSlots.map(async (slot) => {
+          try {
+            if (mechanics.length > 0) {
+              const mechanicResults = await Promise.all(
+                mechanics.map(async (mechanic) => {
+                  const availability = await checkBookingSlotAvailable({
+                    bookingDate: dateStr,
+                    bookingTime: slot,
+                    durationMinutes,
+                    mechanicId: mechanic.id,
+                  });
+
+                  return {
+                    mechanic,
+                    available: availability.available,
+                  };
+                })
+              );
+
+              const availableMechanicIds = getAvailableMechanicIdsFromResults(mechanicResults);
+
+              return {
+                slot,
+                available: availableMechanicIds.length > 0,
+              };
+            }
+
+            const availability = await checkBookingSlotAvailable({
+              bookingDate: dateStr,
+              bookingTime: slot,
+              durationMinutes,
+              mechanicId: null,
+            });
+
+            return {
+              slot,
+              available: availability.available,
+            };
+          } catch {
+            return {
+              slot,
+              available: true,
+            };
+          }
+        })
+      );
+
+      const blockedSlots = results
+        .filter((item) => !item.available)
+        .map((item) => item.slot);
+
+      setUnavailableTimeSlots(blockedSlots);
+
+      if (bookingTime && blockedSlots.includes(bookingTime)) {
+        setBookingTime('');
+      }
+    } finally {
+      setCheckingTimeSlots(false);
+    }
+  }
+
+  async function fetchMechanicAvailability() {
+    if (!bookingDate || !bookingTime || selectedServices.length === 0) {
+      setBookedMechanicIds([]);
+      return;
+    }
+
+    setCheckingAvailability(true);
+
+    try {
+      const dateStr = toISODateString(bookingDate);
+      const durationMinutes = getServicesDuration(selectedServices) || 30;
+
+      const mechanicResults = await Promise.all(
+        mechanics.map(async (mechanic) => {
+          try {
+            const availability = await checkBookingSlotAvailable({
+              bookingDate: dateStr,
+              bookingTime,
+              durationMinutes,
+              mechanicId: mechanic.id,
+            });
+
+            return {
+              mechanic,
+              available: availability.available,
+            };
+          } catch {
+            return {
+              mechanic,
+              available: true,
+            };
+          }
+        })
+      );
+
+      const unavailableMechanicIds = mechanicResults
+        .filter((item) => !item.available)
+        .map((item) => item.mechanic.id);
+
+      setBookedMechanicIds(unavailableMechanicIds);
+    } finally {
+      setCheckingAvailability(false);
+    }
+  }
+
+  async function findAvailableMechanicForSlot({ bookingDateStr, bookingTimeValue, durationMinutes }) {
+    if (mechanics.length === 0) return null;
+
+    const mechanicResults = await Promise.all(
+      mechanics.map(async (mechanic) => {
+        try {
+          const availability = await checkBookingSlotAvailable({
+            bookingDate: bookingDateStr,
+            bookingTime: bookingTimeValue,
+            durationMinutes,
+            mechanicId: mechanic.id,
+          });
+
+          return {
+            mechanic,
+            available: availability.available,
+          };
+        } catch {
+          return {
+            mechanic,
+            available: false,
+          };
+        }
+      })
+    );
+
+    return mechanicResults.find((item) => item.available)?.mechanic || null;
   }
 
   async function fetchData() {
@@ -397,45 +551,58 @@ if (paymentMethod === 'gcash_manual' && manualReference.trim().length < 4) {
 
 const bookingDateStr = toISODateString(bookingDate);
 
-    if (selectedMechanic) {
-      const { data: existingBookings } = await supabase
-        .from('bookings')
-        .select('booking_time, services(estimated_duration_minutes)')
-        .eq('mechanic_id', selectedMechanic.id)
-        .eq('booking_date', bookingDateStr)
-        .in('status', [
-            'pending',
-            'confirmed',
-            'in_progress',
-            'inspection',
-            'repairing',
-            'quality_check',
-            'ready_for_pickup',
-          ]);
+    const bookingDurationMinutes = Math.max(30, servicesDuration || getServicesDuration(selectedServices) || 30);
+    let assignedMechanic = selectedMechanic;
 
-      const newStart = timeToMinutes(bookingTime);
-      const newDuration = getServicesDuration(selectedServices) || 30;
-      const newEnd = newStart + newDuration;
+    try {
+      if (selectedMechanic?.id) {
+        const selectedMechanicAvailability = await checkBookingSlotAvailable({
+          bookingDate: bookingDateStr,
+          bookingTime,
+          durationMinutes: bookingDurationMinutes,
+          mechanicId: selectedMechanic.id,
+        });
 
-      const hasConflict = (existingBookings || []).some((b) => {
-        const start = timeToMinutes((b.booking_time || '').slice(0, 5));
-        const duration = getExistingBookingDuration(b);
-        const end = start + duration;
+        if (!selectedMechanicAvailability.available) {
+          Alert.alert(
+            'Mechanic Unavailable',
+            'This mechanic already has an overlapping booking for this duration. Please choose another mechanic or time.'
+          );
 
-        return newStart < end && newEnd > start;
-      });
+          setSubmitting(false);
+          setStep(4);
+          fetchMechanicAvailability();
+          return;
+        }
+      } else {
+        assignedMechanic = await findAvailableMechanicForSlot({
+          bookingDateStr,
+          bookingTimeValue: bookingTime,
+          durationMinutes: bookingDurationMinutes,
+        });
 
-      if (hasConflict) {
-        Alert.alert(
-          'Mechanic Unavailable',
-          'This mechanic was just booked for this time slot. Please choose another mechanic or time.'
-        );
+        if (!assignedMechanic) {
+          Alert.alert(
+            'Schedule Not Available',
+            'All mechanics already have overlapping bookings for this duration. Please choose another time slot.'
+          );
 
-        setSubmitting(false);
-        setStep(4);
-        fetchMechanicAvailability();
-        return;
+          setSubmitting(false);
+          setStep(3);
+          fetchTimeSlotAvailability();
+          return;
+        }
       }
+    } catch (availabilityError) {
+      console.log('BOOKING AVAILABILITY RPC ERROR:', availabilityError);
+
+      Alert.alert(
+        'Availability Check Failed',
+        availabilityError.message || 'Unable to check this booking schedule. Please try again.'
+      );
+
+      setSubmitting(false);
+      return;
     }
 
     const { data: assessment, error: assessmentError } = await supabase
@@ -466,7 +633,7 @@ const { data: booking, error: bookingError } = await supabase
   .insert({
     customer_id: user.id,
     service_id: selectedService?.id || null,
-    mechanic_id: selectedMechanic?.id || null,
+    mechanic_id: assignedMechanic?.id || null,
     booking_date: bookingDateStr,
     booking_time: bookingTime,
     status: 'pending',
@@ -475,6 +642,7 @@ const { data: booking, error: bookingError } = await supabase
     services_summary: servicesSummary,
     total_amount: servicesTotal,
     reservation_fee: reservationFeePreview,
+    estimated_duration_minutes: bookingDurationMinutes,
     payment_method: paymentMethod,
     payment_status: getInitialPaymentStatus(paymentMethod),
     payment_reference:
@@ -600,9 +768,9 @@ const adminBookingMessage =
   relatedId: booking.id,
 });
 
-    if (selectedMechanic?.id) {
+    if (assignedMechanic?.id) {
       await notifyUser({
-        userId: selectedMechanic.id,
+        userId: assignedMechanic.id,
         title: 'New Assigned Booking',
         message:
           paymentMethod === 'paymongo_qrph' && checkoutData
@@ -626,8 +794,8 @@ const adminBookingMessage =
       motorcycle: `${motorcycleMake} ${motorcycleModel} ${motorcycleYear}`.trim(),
       bookingDate: bookingDateStr,
       bookingTime,
-      mechanicName: selectedMechanic
-        ? `${selectedMechanic.first_name || ''} ${selectedMechanic.last_name || ''}`.trim()
+      mechanicName: assignedMechanic
+        ? `${assignedMechanic.first_name || ''} ${assignedMechanic.last_name || ''}`.trim()
         : 'No preference / auto-assigned',
       totalAmount: servicesTotal,
       status: 'pending',
@@ -904,23 +1072,55 @@ const adminBookingMessage =
 
             <Text style={s.label}>Select Time Slot</Text>
 
+            {checkingTimeSlots && (
+              <Text style={s.checkingText}>
+                Checking available time slots based on total service duration...
+              </Text>
+            )}
+
+            {servicesDuration > 0 && (
+              <Text style={s.durationNotice}>
+                Selected services need about {servicesDuration} minutes. Overlapping time slots are disabled.
+              </Text>
+            )}
+
             <View style={s.timeGrid}>
-              {timeSlots.map((t) => (
-                <TouchableOpacity
-                  key={t}
-                  style={[s.timeChip, bookingTime === t && s.timeChipActive]}
-                  onPress={() => setBookingTime(t)}
-                >
-                  <Text
+              {timeSlots.map((t) => {
+                const isUnavailable = unavailableTimeSlots.includes(t);
+
+                return (
+                  <TouchableOpacity
+                    key={t}
                     style={[
-                      s.timeChipText,
-                      bookingTime === t && s.timeChipTextActive,
+                      s.timeChip,
+                      bookingTime === t && s.timeChipActive,
+                      isUnavailable && s.timeChipDisabled,
                     ]}
+                    onPress={() => {
+                      if (isUnavailable) {
+                        Alert.alert(
+                          'Time Slot Unavailable',
+                          'This time overlaps with an existing booking duration. Please choose another time.'
+                        );
+                        return;
+                      }
+
+                      setBookingTime(t);
+                    }}
+                    disabled={checkingTimeSlots}
                   >
-                    {formatTimeSlot(t)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+                    <Text
+                      style={[
+                        s.timeChipText,
+                        bookingTime === t && s.timeChipTextActive,
+                        isUnavailable && s.timeChipTextDisabled,
+                      ]}
+                    >
+                      {formatTimeSlot(t)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
 
             <Text style={s.label}>Additional Notes (optional)</Text>
@@ -956,7 +1156,7 @@ const adminBookingMessage =
               <View style={s.mechanicInfo}>
                 <Text style={s.mechanicName}>No Preference</Text>
                 <Text style={s.mechanicSpec}>
-                  We'll assign the best available mechanic
+                  We'll automatically assign an available mechanic
                 </Text>
               </View>
 
@@ -1111,7 +1311,7 @@ const adminBookingMessage =
               <Text style={s.summaryValue}>
                 {selectedMechanic
                   ? `${selectedMechanic.first_name} ${selectedMechanic.last_name}`
-                  : 'No Preference (Auto-assigned)'}
+                  : 'No Preference (system will auto-assign an available mechanic)'}
               </Text>
 
               <View style={s.divider} />
@@ -1630,9 +1830,18 @@ const styles = (theme) => StyleSheet.create({
     backgroundColor: theme.primary,
     borderColor: theme.primary,
   },
+  timeChipDisabled: {
+    opacity: 0.45,
+    backgroundColor: theme.bg3,
+    borderColor: theme.border,
+  },
   timeChipText: {
     color: theme.textSub,
     fontSize: 14,
+  },
+  timeChipTextDisabled: {
+    color: theme.textMuted,
+    textDecorationLine: 'line-through',
   },
   timeChipTextActive: {
     color: '#fff',
@@ -1929,5 +2138,16 @@ const styles = (theme) => StyleSheet.create({
     fontStyle: 'italic',
     marginBottom: 12,
     textAlign: 'center',
+  },
+  durationNotice: {
+    fontSize: 12,
+    color: theme.textSub,
+    lineHeight: 17,
+    marginBottom: 12,
+    backgroundColor: theme.bg2,
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: theme.border,
   },
 });

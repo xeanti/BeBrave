@@ -10,6 +10,21 @@ const STATUS_OPTIONS = ['pending', 'confirmed', 'processing', 'ready', 'complete
 const PAYMENT_TYPES = ['down_payment', 'balance', 'full'];
 const PAYMENT_METHODS = ['cash', 'gcash', 'card', 'bank_transfer'];
 
+const PAID_ORDER_PAYMENT_STATUSES = [
+  'paid',
+  'payment_received',
+  'fully_paid',
+  'full_paid',
+  'settled',
+  'completed',
+  'verified',
+  'confirmed',
+  'issued',
+  'success',
+  'successful',
+  'succeeded',
+];
+
 function formatPeso(value) {
   const amount = Number(value) || 0;
 
@@ -187,13 +202,17 @@ function normalizeOrderPaymentRecord(payment) {
 }
 
 function isConfirmedOrderPayment(payment) {
-  const type = String(payment?.payment_type || '').toLowerCase();
+  const type = String(payment?.payment_type || payment?.type || '').toLowerCase();
 
   if (type === 'refund') return false;
 
-  const status = String(payment?.status || payment?.receipt_status || '').toLowerCase();
+  const status = String(payment?.status || payment?.payment_status || '').toLowerCase();
+  const receiptStatus = String(payment?.receipt_status || '').toLowerCase();
 
-  if (['paid', 'completed', 'success', 'successful', 'verified'].includes(status)) {
+  if (
+    PAID_ORDER_PAYMENT_STATUSES.includes(status) ||
+    PAID_ORDER_PAYMENT_STATUSES.includes(receiptStatus)
+  ) {
     return true;
   }
 
@@ -208,14 +227,15 @@ function isConfirmedOrderPayment(payment) {
       'cancelled',
       'canceled',
       'refunded',
+      'void',
     ].includes(status)
   ) {
     return false;
   }
 
   return Boolean(
-    payment?.payment_type &&
-      payment?.amount &&
+    (payment?.payment_type || payment?.receipt_number) &&
+      Number(payment?.amount) > 0 &&
       !payment?.provider_checkout_session_id
   );
 }
@@ -236,13 +256,62 @@ function getOrderPaidAmount(order, paymentList = []) {
   const total = Number(order?.total_amount) || 0;
   const confirmedPaid = getConfirmedOrderPaymentTotal(paymentList);
   const paymentStatus = String(order?.payment_status || '').toLowerCase();
-  const partialStatuses = ['partial', 'partially_paid', 'downpayment_paid'];
+  const orderStatus = normalizeStatus(order?.status);
+  const storedPaid = Number(order?.down_payment_amount ?? order?.amount_paid ?? 0) || 0;
+  const remainingBalance = Number(order?.remaining_balance);
 
-  const trustedOrderPaid = partialStatuses.includes(paymentStatus)
-    ? Number(order?.down_payment_amount) || 0
-    : 0;
+  if (
+    total > 0 &&
+    (
+      PAID_ORDER_PAYMENT_STATUSES.includes(paymentStatus) ||
+      order?.payment_received === true ||
+      orderStatus === 'completed'
+    )
+  ) {
+    return total;
+  }
+
+  if (total > 0 && Number.isFinite(remainingBalance) && remainingBalance <= 0) {
+    return total;
+  }
+
+  if (total > 0 && storedPaid >= total) {
+    return total;
+  }
+
+  const partialStatuses = ['partial', 'partially_paid', 'downpayment_paid'];
+  const trustedOrderPaid = partialStatuses.includes(paymentStatus) ? storedPaid : 0;
 
   return Math.max(0, Math.min(Math.max(confirmedPaid, trustedOrderPaid), total));
+}
+
+function isOrderFullySettled(order, paymentList = []) {
+  const summary = getOrderPaymentSummary(order, paymentList);
+  const paymentStatus = String(order?.payment_status || '').toLowerCase();
+  const total = Number(order?.total_amount) || 0;
+  const storedPaid = Number(order?.down_payment_amount ?? order?.amount_paid ?? 0) || 0;
+  const remainingBalance = Number(order?.remaining_balance);
+
+  if (
+    PAID_ORDER_PAYMENT_STATUSES.includes(paymentStatus) ||
+    order?.payment_received === true
+  ) {
+    return true;
+  }
+
+  if (summary.isFullyPaid || summary.balance <= 0) {
+    return true;
+  }
+
+  if (total > 0 && storedPaid >= total) {
+    return true;
+  }
+
+  if (total > 0 && Number.isFinite(remainingBalance) && remainingBalance <= 0) {
+    return true;
+  }
+
+  return false;
 }
 
 function getOrderPaymentSummary(order, paymentList = []) {
@@ -607,6 +676,11 @@ export default function AdminOrderDetails() {
     const summary = getOrderPaymentSummary(order, payments);
     const existingBalance = Math.max(summary.balance, 0);
 
+    if (isOrderFullySettled(order, payments) || existingBalance <= 0) {
+      showErrorPopup('This order is already fully paid. No additional payment is needed.');
+      return;
+    }
+
     if (amount > existingBalance) {
       showErrorPopup(`Payment cannot exceed the remaining balance of ${formatPeso(existingBalance)}.`);
       return;
@@ -931,11 +1005,21 @@ export default function AdminOrderDetails() {
     );
   }
 
-  const summary = getOrderPaymentSummary(order, payments);
+  const rawSummary = getOrderPaymentSummary(order, payments);
+  const fullyPaid = isOrderFullySettled(order, payments);
+  const summary = fullyPaid
+    ? {
+        ...rawSummary,
+        totalPaid: rawSummary.total,
+        balance: 0,
+        isFullyPaid: true,
+        paymentPercent: 100,
+      }
+    : rawSummary;
   const latestReceipt = getLatestReceipt(payments);
   const customerName = getCustomerName(order);
   const paymentPercent = summary.total > 0 ? Math.min(Math.round(summary.paymentPercent), 100) : 0;
-  const isPaymentDisabled = isReturnedOrder(order);
+  const isPaymentDisabled = isReturnedOrder(order) || summary.isFullyPaid || summary.balance <= 0;
 
   return (
     <>
@@ -1090,8 +1174,11 @@ export default function AdminOrderDetails() {
               </section>
 
               <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm dark:border-dark-700 dark:bg-dark-800">
-                <p className="mb-4 text-xs font-black uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
+                <p className="mb-2 text-xs font-black uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
                   Update Status
+                </p>
+                <p className="mb-4 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                  Current status: {formatOrderStatus(order.status, order)}
                 </p>
 
                 <div className="flex flex-wrap gap-2">
@@ -1210,6 +1297,12 @@ export default function AdminOrderDetails() {
                   {paymentPercent}% paid
                 </p>
 
+                {summary.isFullyPaid && (
+                  <p className="mt-2 rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-xs font-black text-green-700 dark:border-green-500/25 dark:bg-green-500/10 dark:text-green-300">
+                    ✓ Payment complete. No remaining balance.
+                  </p>
+                )}
+
                 <div className="mt-5 grid gap-2">
                   <button
                     type="button"
@@ -1241,9 +1334,13 @@ export default function AdminOrderDetails() {
                   Record Payment
                 </p>
 
-                {isPaymentDisabled ? (
+                {isReturnedOrder(order) ? (
                   <div className="rounded-2xl border border-orange-200 bg-orange-50 p-4 text-sm font-semibold leading-6 text-orange-700 dark:border-orange-500/25 dark:bg-orange-500/10 dark:text-orange-300">
                     This order is returned. Payments are locked here. Use payment history/invoice for records.
+                  </div>
+                ) : summary.isFullyPaid || summary.balance <= 0 ? (
+                  <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-sm font-semibold leading-6 text-green-700 dark:border-green-500/25 dark:bg-green-500/10 dark:text-green-300">
+                    ✓ This order is fully paid. No remaining payment is needed.
                   </div>
                 ) : (
                   <div className="space-y-3">

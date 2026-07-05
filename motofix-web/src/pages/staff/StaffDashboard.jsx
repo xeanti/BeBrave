@@ -11,6 +11,7 @@ import WalkInServicePOS from './staff-dashboard/WalkInServicePOS';
 import WalkInPOS from './staff-dashboard/WalkInPOS';
 import PendingPayments from './staff-dashboard/PendingPayments';
 import StaffServiceProgress from './staff-dashboard/StaffServiceProgress';
+import StaffMechanicSchedule from './staff-dashboard/StaffMechanicSchedule';
 
 const STAFF_ACTIVE_TAB_KEY = 'motofix_staff_dashboard_active_tab';
 const DEFAULT_STAFF_TAB = 'service_queue';
@@ -21,6 +22,12 @@ const STAFF_TABS = [
     label: 'Booking Queue',
     icon: '📅',
     badgeKey: 'bookingQueue',
+  },
+  {
+    id: 'mechanic_schedule',
+    label: 'Mechanic Schedule',
+    icon: '🗓️',
+    badgeKey: null,
   },
   {
     id: 'create_booking',
@@ -129,15 +136,38 @@ function shouldCountAsPendingOrder(order) {
   const status = String(order?.status || '').toLowerCase();
   const paymentStatus = String(order?.payment_status || '').toLowerCase();
 
-  if (['completed', 'cancelled', 'canceled', 'refunded'].includes(status)) {
+  if (
+    ['completed', 'cancelled', 'canceled', 'refunded', 'returned', 'void'].includes(status) ||
+    paymentStatus === 'paid' ||
+    order?.payment_received === true
+  ) {
     return false;
   }
 
   return (
-    ['pending', 'processing', 'ready_for_pickup'].includes(status) ||
-    ['unpaid', 'pending', 'pending_payment', 'pending_verification', 'partial', 'partially_paid'].includes(paymentStatus)
+    [
+      'pending',
+      'pending_payment',
+      'pending_verification',
+      'processing',
+      'ready',
+      'ready_for_pickup',
+      'ready_for_delivery',
+    ].includes(status) ||
+    [
+      'unpaid',
+      'pending',
+      'pending_payment',
+      'checkout_created',
+      'pending_verification',
+      'partial',
+      'partially_paid',
+      'failed',
+      'expired',
+    ].includes(paymentStatus)
   );
 }
+
 
 export default function StaffDashboard() {
   const { user } = useAuth();
@@ -246,7 +276,7 @@ export default function StaffDashboard() {
 
         supabase
           .from('orders')
-          .select('id, status, payment_status')
+          .select('id, status, payment_status, payment_received')
           .limit(1000),
 
         supabase
@@ -267,11 +297,12 @@ export default function StaffDashboard() {
           ]),
 
         supabase
-          .from('orders')
-          .select('id, status, payment_status')
-          .neq('status', 'completed')
-          .neq('status', 'cancelled')
-          .limit(1000),
+        .from('orders')
+        .select('id, status, payment_status, payment_received')
+        .not('status', 'in', '(completed,cancelled,canceled,returned,refunded)')
+        .not('payment_status', 'eq', 'paid')
+        .limit(1000),
+
 
         supabase
           .from('bookings')
@@ -287,25 +318,31 @@ export default function StaffDashboard() {
           ]),
       ]);
 
-      const paymentOrderCount = (paymentOrdersResult.data || []).filter(
-        (order) => {
-          const paymentStatus = String(order.payment_status || '').toLowerCase();
-          const status = String(order.status || '').toLowerCase();
+const paymentOrderCount = (paymentOrdersResult.data || []).filter((order) => {
+  const paymentStatus = String(order.payment_status || '').toLowerCase();
+  const status = String(order.status || '').toLowerCase();
 
-          if (['completed', 'cancelled', 'canceled', 'refunded'].includes(status)) {
-            return false;
-          }
+  if (
+    ['completed', 'cancelled', 'canceled', 'refunded', 'returned', 'void'].includes(status) ||
+    paymentStatus === 'paid' ||
+    order.payment_received === true
+  ) {
+    return false;
+  }
 
-          return [
-            'unpaid',
-            'pending',
-            'pending_payment',
-            'pending_verification',
-            'partial',
-            'partially_paid',
-          ].includes(paymentStatus);
-        }
-      ).length;
+  return [
+    'unpaid',
+    'pending',
+    'pending_payment',
+    'checkout_created',
+    'pending_verification',
+    'partial',
+    'partially_paid',
+    'failed',
+    'expired',
+  ].includes(paymentStatus);
+}).length;
+
 
       setTabCounts({
         bookingQueue: bookingQueueResult.error ? 0 : bookingQueueResult.count || 0,
@@ -337,6 +374,9 @@ export default function StaffDashboard() {
     switch (tab) {
       case 'service_queue':
         return <BookingServiceQueue staffId={staffId} />;
+
+      case 'mechanic_schedule':
+        return <StaffMechanicSchedule />;
 
       case 'create_booking':
         return <CreateBooking staffId={staffId} />;
@@ -411,7 +451,7 @@ export default function StaffDashboard() {
               </div>
 
               <div
-                className="grid grid-cols-2 gap-2 rounded-3xl bg-gray-100 p-2 dark:bg-dark-900 sm:grid-cols-3 xl:grid-cols-6"
+                className="grid grid-cols-2 gap-2 rounded-3xl bg-gray-100 p-2 dark:bg-dark-900 sm:grid-cols-3 xl:grid-cols-7"
                 role="tablist"
                 aria-label="Staff dashboard modules"
               >

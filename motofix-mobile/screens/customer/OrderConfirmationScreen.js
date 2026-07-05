@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Image,
   Linking,
   ScrollView,
   StatusBar,
@@ -48,6 +49,10 @@ function getPaymentMethodLabel(method) {
   if (value === 'gcash_manual') return 'GCash Manual Verification';
   if (value === 'cash_on_pickup') return 'Pay at Counter';
   if (value === 'qrph') return 'QR Ph / GCash';
+  if (value === 'cash') return 'Pay at Counter';
+  if (value === 'gcash') return 'GCash';
+  if (value === 'card') return 'Card';
+  if (value === 'bank_transfer') return 'Bank Transfer';
 
   return method ? humanize(method) : 'To be confirmed';
 }
@@ -56,11 +61,37 @@ function getStatusColor(theme, paymentStatus) {
   const value = String(paymentStatus || '').toLowerCase();
 
   if (value === 'paid') return theme.success || '#22c55e';
-  if (value === 'checkout_created' || value === 'pending_payment') return theme.warning || YELLOW;
+  if (value === 'checkout_created' || value === 'pending_payment') {
+    return theme.warning || YELLOW;
+  }
   if (value === 'pending_verification') return theme.primaryLight || YELLOW;
-  if (value === 'failed' || value === 'cancelled') return theme.danger || '#ef4444';
+  if (value === 'failed' || value === 'cancelled' || value === 'canceled') {
+    return theme.danger || '#ef4444';
+  }
 
   return theme.textMuted || '#9ca3af';
+}
+
+function getOrderItemName(item, index) {
+  return (
+    item?.parts?.name ||
+    item?.part?.name ||
+    item?.product?.name ||
+    item?.name ||
+    `Item ${index + 1}`
+  );
+}
+
+function getOrderItemImage(item) {
+  return (
+    item?.parts?.image_url ||
+    item?.part?.image_url ||
+    item?.product?.image_url ||
+    item?.image_url ||
+    item?.image ||
+    item?.photo_url ||
+    null
+  );
 }
 
 export default function OrderConfirmationScreen({ route, navigation }) {
@@ -71,8 +102,8 @@ export default function OrderConfirmationScreen({ route, navigation }) {
   const order = params.order || {};
   const orderId = params.orderId || order.id;
   const totalAmount = Number(params.totalAmount || order.total_amount || 0);
-  const itemCount = params.itemCount || getItemCount(params.items || order.order_items || []);
   const orderItems = params.items || order.order_items || [];
+  const itemCount = params.itemCount || getItemCount(orderItems);
 
   const orderStatus = params.status || order.status || 'pending';
   const paymentStatus = String(
@@ -81,7 +112,11 @@ export default function OrderConfirmationScreen({ route, navigation }) {
       (params.checkoutUrl ? 'checkout_created' : 'pending_payment')
   ).toLowerCase();
 
-  const paymentMethod = params.paymentMethod || order.payment_method || 'cash_on_pickup';
+  const paymentMethod = params.paymentMethod || order.payment_method || 'cash';
+  const selectedPaymentLabel =
+    params.selectedPaymentLabel ||
+    getPaymentMethodLabel(params.selectedPaymentOption || paymentMethod);
+
   const checkoutUrl = params.checkoutUrl || order.checkout_url || null;
   const paidAt = params.paidAt || order.paid_at || null;
 
@@ -143,7 +178,7 @@ export default function OrderConfirmationScreen({ route, navigation }) {
             ? 'Your product order payment was received. MotoFix will now process your order.'
             : isCheckoutCreated
               ? 'Your order was submitted. Complete your PayMongo QR Ph / GCash payment to continue processing.'
-              : 'Your parts order was sent to MotoFix. Staff will verify payment and stock before release.'}
+              : 'Your product order was sent to MotoFix. Staff will verify payment and stock before release.'}
         </Text>
 
         <View
@@ -197,7 +232,7 @@ export default function OrderConfirmationScreen({ route, navigation }) {
           theme={theme}
           icon="phone-portrait-outline"
           label="Payment Method"
-          value={getPaymentMethodLabel(paymentMethod)}
+          value={selectedPaymentLabel}
         />
 
         <InfoRow
@@ -268,19 +303,34 @@ export default function OrderConfirmationScreen({ route, navigation }) {
           <Text style={s.cardTitle}>Items Ordered</Text>
 
           {orderItems.slice(0, 4).map((item, index) => {
-            const name = item.parts?.name || item.name || `Item ${index + 1}`;
+            const name = getOrderItemName(item, index);
+            const imageUrl = getOrderItemImage(item);
             const quantity = Number(item.quantity) || 1;
             const unitPrice = Number(item.unit_price) || Number(item.price) || 0;
             const subtotal = Number(item.subtotal) || unitPrice * quantity;
 
             return (
               <View key={`${name}-${index}`} style={s.itemRow}>
-                <View style={s.itemIcon}>
-                  <Ionicons name="cube-outline" size={17} color={theme.primaryLight || YELLOW} />
+                <View style={s.itemImageBox}>
+                  {imageUrl ? (
+                    <Image
+                      source={{ uri: imageUrl }}
+                      style={s.itemImage}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <Ionicons
+                      name="cube-outline"
+                      size={22}
+                      color={theme.primaryLight || YELLOW}
+                    />
+                  )}
                 </View>
 
-                <View style={{ flex: 1 }}>
-                  <Text style={s.itemName}>{name}</Text>
+                <View style={s.itemInfo}>
+                  <Text style={s.itemName} numberOfLines={2}>
+                    {name}
+                  </Text>
                   <Text style={s.itemMeta}>
                     {formatPeso(unitPrice)} × {quantity}
                   </Text>
@@ -300,7 +350,11 @@ export default function OrderConfirmationScreen({ route, navigation }) {
       )}
 
       <View style={s.noticeCard}>
-        <Ionicons name="information-circle-outline" size={20} color={theme.primaryLight || YELLOW} />
+        <Ionicons
+          name="information-circle-outline"
+          size={20}
+          color={theme.primaryLight || YELLOW}
+        />
         <Text style={s.noticeText}>
           {isPaid
             ? 'Your PayMongo payment was recorded. You can track processing updates from Order Details.'
@@ -488,23 +542,35 @@ const styles = (theme) =>
     itemRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
-      paddingVertical: 11,
+      gap: 12,
+      paddingVertical: 12,
       borderTopWidth: 1,
       borderTopColor: theme.border,
     },
-    itemIcon: {
-      width: 36,
-      height: 36,
-      borderRadius: 12,
-      backgroundColor: (theme.primaryLight || YELLOW) + '16',
+    itemImageBox: {
+      width: 54,
+      height: 54,
+      borderRadius: 14,
+      backgroundColor: (theme.primaryLight || YELLOW) + '12',
       alignItems: 'center',
       justifyContent: 'center',
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    itemImage: {
+      width: '100%',
+      height: '100%',
+    },
+    itemInfo: {
+      flex: 1,
+      minWidth: 0,
     },
     itemName: {
       color: theme.text,
       fontSize: 13,
       fontWeight: '900',
+      lineHeight: 18,
     },
     itemMeta: {
       color: theme.textMuted,
@@ -516,6 +582,8 @@ const styles = (theme) =>
       color: theme.primaryLight || YELLOW,
       fontSize: 12,
       fontWeight: '900',
+      maxWidth: 90,
+      textAlign: 'right',
     },
     moreItemsText: {
       color: theme.textMuted,

@@ -10,12 +10,14 @@ import {
   Platform,
   RefreshControl,
   TextInput,
+  Linking,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
 import { supabase } from '../../lib/supabase';
+import { createBookingQrphCheckout } from '../../lib/paymongo';
 import { useTheme } from '../../lib/ThemeContext';
 
 const SHOP_OPEN = 8;
@@ -89,6 +91,24 @@ function peso(value) {
 
 function normalizeStatus(status) {
   return String(status || '').toLowerCase();
+}
+
+function sanitizePaymentReference(value) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9\-_.]/g, '')
+    .slice(0, 50);
+}
+
+function isUnpaidBookingPaymentStatus(status) {
+  return [
+    'unpaid',
+    'pending',
+    'pending_payment',
+    'checkout_created',
+    'pending_verification',
+    'failed',
+    'expired',
+  ].includes(normalizeStatus(status));
 }
 
 function humanize(value) {
@@ -308,6 +328,64 @@ function canChangePaymentMethod(booking) {
   return bookingStatus === 'pending' && paymentStatus !== 'paid';
 }
 
+
+function getBookingDurationMinutes(booking) {
+  const savedDuration = Number(booking?.estimated_duration_minutes) || 0;
+
+  if (savedDuration > 0) {
+    return Math.max(30, savedDuration);
+  }
+
+  const selectedServices = getBookingServices(booking);
+
+  if (selectedServices.length > 0) {
+    const duration = selectedServices.reduce((sum, item) => {
+      const itemDuration =
+        Number(item?.estimated_duration_minutes) ||
+        Number(item?.services?.estimated_duration_minutes) ||
+        30;
+
+      const quantity = Math.max(1, Number(item?.quantity) || 1);
+
+      return sum + itemDuration * quantity;
+    }, 0);
+
+    return Math.max(30, duration || 30);
+  }
+
+  return Math.max(30, Number(booking?.services?.estimated_duration_minutes) || 30);
+}
+
+async function checkBookingSlotAvailable({
+  bookingDate,
+  bookingTime,
+  durationMinutes,
+  mechanicId = null,
+  excludeBookingId = null,
+}) {
+  const safeDuration = Math.max(30, Number(durationMinutes) || 60);
+
+  const { data, error } = await supabase.rpc('check_booking_slot_available', {
+    p_booking_date: bookingDate,
+    p_booking_time: bookingTime,
+    p_duration_minutes: safeDuration,
+    p_mechanic_id: mechanicId || null,
+    p_exclude_booking_id: excludeBookingId || null,
+  });
+
+  if (error) throw error;
+
+  const result = Array.isArray(data) ? data[0] : data;
+
+  return {
+    available: result?.available === true,
+    reason: result?.reason || 'Selected time is not available.',
+    conflictCount: Number(result?.conflict_count) || 0,
+    conflicts: result?.conflicts || [],
+  };
+}
+
+
 export default function AppointmentDetailScreen({ route, navigation }) {
   const { theme, isDark } = useTheme();
 
@@ -328,6 +406,8 @@ export default function AppointmentDetailScreen({ route, navigation }) {
   const [newDate, setNewDate] = useState(null);
   const [newTime, setNewTime] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [unavailableRescheduleTimes, setUnavailableRescheduleTimes] = useState([]);
+  const [checkingRescheduleTimes, setCheckingRescheduleTimes] = useState(false);
 
   const [showPaymentMethodPanel, setShowPaymentMethodPanel] = useState(false);
   const [manualReference, setManualReference] = useState('');
@@ -500,6 +580,24 @@ export default function AppointmentDetailScreen({ route, navigation }) {
     }, [fetchDetails])
   );
 
+
+  useEffect(() => {
+    if (!showReschedule || !newDate || !booking?.id) {
+      setUnavailableRescheduleTimes([]);
+      return;
+    }
+
+    fetchRescheduleTimeAvailability();
+  }, [
+    showReschedule,
+    newDate,
+    booking?.id,
+    booking?.mechanic_id,
+    booking?.estimated_duration_minutes,
+    selectedServices.length,
+  ]);
+
+
   function statusColor(status) {
     switch (normalizeStatus(status)) {
       case 'confirmed':
@@ -527,51 +625,160 @@ export default function AppointmentDetailScreen({ route, navigation }) {
     }
   }
 
-  async function updatePaymentMethod(payload, successMessage) {
-    if (!booking?.id) return;
+  async function expireOldPendingBookingPayments(bookingId) {
+    if (!bookingId) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('booking_payments')
+        .select('id, status')
+        .eq('booking_id', bookingId);
+
+      if (error) throw error;
+
+      const stalePaymentIds = (data || [])
+        .filter((payment) => isUnpaidBookingPaymentStatus(payment.status))
+        .map((payment) => payment.id)
+        .filter(Boolean);
+
+      if (stalePaymentIds.length === 0) return;
+
+      const { error: updateError } = await supabase
+        .from('booking_payments')
+        .update({
+          status: 'expired',
+        })
+        .in('id', stalePaymentIds);
+
+      if (updateError) throw updateError;
+    } catch (error) {
+      console.log('Expire old booking payments error:', error.message);
+    }
+  }
+
+  async function updatePaymentMethod({ method, reference = '', successMessage }) {
+    if (!booking?.id || actionLoading) return;
+
+    const now = new Date().toISOString();
+    const cleanReference = sanitizePaymentReference(reference);
 
     setActionLoading(true);
 
-    const { error } = await supabase
-      .from('bookings')
-      .update(payload)
-      .eq('id', booking.id);
+    try {
+      let payload = null;
+      let checkoutData = null;
 
-    setActionLoading(false);
+      if (method === 'paymongo_qrph') {
+        await expireOldPendingBookingPayments(booking.id);
 
-    if (error) {
-      Alert.alert('Error', error.message);
-      return;
+        const initialPayload = {
+          payment_method: 'paymongo_qrph',
+          payment_status: 'unpaid',
+          payment_reference: null,
+          updated_at: now,
+        };
+
+        const { error: initialError } = await supabase
+          .from('bookings')
+          .update(initialPayload)
+          .eq('id', booking.id);
+
+        if (initialError) throw initialError;
+
+        checkoutData = await createBookingQrphCheckout(booking.id);
+
+        payload = {
+          payment_method: 'paymongo_qrph',
+          payment_status: 'checkout_created',
+          payment_reference:
+            checkoutData?.reference_number ||
+            checkoutData?.provider_payment_id ||
+            checkoutData?.id ||
+            null,
+          updated_at: new Date().toISOString(),
+        };
+      } else if (method === 'gcash_manual') {
+        if (cleanReference.length < 4) {
+          Alert.alert('Reference Required', 'Please enter your GCash reference number.');
+          return;
+        }
+
+        await expireOldPendingBookingPayments(booking.id);
+
+        payload = {
+          payment_method: 'gcash_manual',
+          payment_status: 'pending_verification',
+          payment_reference: cleanReference,
+          updated_at: now,
+        };
+      } else if (method === 'cash_at_shop') {
+        await expireOldPendingBookingPayments(booking.id);
+
+        payload = {
+          payment_method: 'cash_at_shop',
+          payment_status: 'pending_payment',
+          payment_reference: null,
+          updated_at: now,
+        };
+      } else {
+        throw new Error('Invalid payment method selected.');
+      }
+
+      const { error } = await supabase
+        .from('bookings')
+        .update(payload)
+        .eq('id', booking.id);
+
+      if (error) throw error;
+
+      setBooking((current) => ({
+        ...current,
+        ...payload,
+      }));
+
+      setShowPaymentMethodPanel(false);
+      setManualReference('');
+
+      if (method === 'paymongo_qrph' && checkoutData?.checkout_url) {
+        Alert.alert(
+          'Payment Method Updated',
+          'PayMongo QR / GCash checkout was created and synced to staff/admin. Open the payment page now?',
+          [
+            {
+              text: 'Later',
+              style: 'cancel',
+            },
+            {
+              text: 'Open Checkout',
+              onPress: () => Linking.openURL(checkoutData.checkout_url),
+            },
+          ]
+        );
+      } else {
+        Alert.alert('Payment Method Updated', successMessage);
+      }
+
+      await fetchDetails(false);
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to update payment method.');
+    } finally {
+      setActionLoading(false);
     }
-
-    setBooking((current) => ({
-      ...current,
-      ...payload,
-    }));
-
-    setShowPaymentMethodPanel(false);
-    setManualReference('');
-    Alert.alert('Payment Method Updated', successMessage);
-    fetchDetails(false);
   }
 
   async function choosePayMongoPayment() {
     Alert.alert(
       'Use PayMongo QR / GCash for Down Payment?',
-      'This will set your down payment method to PayMongo QR / GCash.',
+      'This will create a new PayMongo QR checkout and sync it to staff/admin.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Confirm',
           onPress: () =>
-            updatePaymentMethod(
-              {
-                payment_method: 'paymongo_qrph',
-                payment_status: 'checkout_created',
-                payment_reference: booking?.payment_reference || null,
-              },
-              'Please continue your down payment using PayMongo QR / GCash.'
-            ),
+            updatePaymentMethod({
+              method: 'paymongo_qrph',
+              successMessage: 'Please continue your down payment using PayMongo QR / GCash.',
+            }),
         },
       ]
     );
@@ -586,35 +793,29 @@ export default function AppointmentDetailScreen({ route, navigation }) {
         {
           text: 'Confirm',
           onPress: () =>
-            updatePaymentMethod(
-              {
-                payment_method: 'cash_at_shop',
-                payment_status: 'pending_payment',
-                payment_reference: null,
-              },
-              'Please pay your down payment at the shop counter.'
-            ),
+            updatePaymentMethod({
+              method: 'cash_at_shop',
+              successMessage: 'Please pay your down payment at the shop counter.',
+            }),
         },
       ]
     );
   }
 
   async function submitManualGCash() {
-    const reference = manualReference.trim();
+    const reference = sanitizePaymentReference(manualReference);
 
     if (reference.length < 4) {
       Alert.alert('Reference Required', 'Please enter your GCash reference number.');
       return;
     }
 
-    await updatePaymentMethod(
-      {
-        payment_method: 'gcash_manual',
-        payment_status: 'pending_verification',
-        payment_reference: reference,
-      },
-      'Your GCash down payment reference was submitted. Please wait for staff verification.'
-    );
+    await updatePaymentMethod({
+      method: 'gcash_manual',
+      reference,
+      successMessage:
+        'Your GCash down payment reference was submitted and synced to staff/admin. Please wait for staff verification.',
+    });
   }
 
   async function handleCancel() {
@@ -649,6 +850,57 @@ export default function AppointmentDetailScreen({ route, navigation }) {
     );
   }
 
+
+  async function fetchRescheduleTimeAvailability() {
+    if (!newDate || !booking?.id) {
+      setUnavailableRescheduleTimes([]);
+      return;
+    }
+
+    setCheckingRescheduleTimes(true);
+
+    try {
+      const dateStr = toISODateString(newDate);
+      const durationMinutes = getBookingDurationMinutes(booking);
+
+      const results = await Promise.all(
+        timeSlots.map(async (slot) => {
+          try {
+            const availability = await checkBookingSlotAvailable({
+              bookingDate: dateStr,
+              bookingTime: slot,
+              durationMinutes,
+              mechanicId: booking?.mechanic_id || null,
+              excludeBookingId: booking.id,
+            });
+
+            return {
+              slot,
+              available: availability.available,
+            };
+          } catch {
+            return {
+              slot,
+              available: true,
+            };
+          }
+        })
+      );
+
+      const blockedTimes = results
+        .filter((item) => !item.available)
+        .map((item) => item.slot);
+
+      setUnavailableRescheduleTimes(blockedTimes);
+
+      if (newTime && blockedTimes.includes(newTime)) {
+        setNewTime('');
+      }
+    } finally {
+      setCheckingRescheduleTimes(false);
+    }
+  }
+
   async function handleReschedule() {
     if (!newDate) {
       Alert.alert('Error', 'Please select a new date.');
@@ -660,38 +912,79 @@ export default function AppointmentDetailScreen({ route, navigation }) {
       return;
     }
 
+    if (unavailableRescheduleTimes.includes(newTime)) {
+      Alert.alert(
+        'Time Slot Unavailable',
+        'This time overlaps with another booking duration. Please choose another time.'
+      );
+      return;
+    }
+
     setActionLoading(true);
 
-    const dateStr = toISODateString(newDate);
+    try {
+      const dateStr = toISODateString(newDate);
+      const durationMinutes = getBookingDurationMinutes(booking);
 
-    const { error } = await supabase
-      .from('bookings')
-      .update({
-        booking_date: dateStr,
-        booking_time: newTime,
-        status: 'pending',
-      })
-      .eq('id', booking.id);
+      const availability = await checkBookingSlotAvailable({
+        bookingDate: dateStr,
+        bookingTime: newTime,
+        durationMinutes,
+        mechanicId: booking?.mechanic_id || null,
+        excludeBookingId: booking.id,
+      });
 
-    setActionLoading(false);
+      if (!availability.available) {
+        Alert.alert(
+          'Schedule Not Available',
+          availability.reason ||
+            'This time overlaps with another booking duration. Please choose another time.'
+        );
 
-    if (error) {
-      Alert.alert('Error', error.message);
-    } else {
+        setActionLoading(false);
+        fetchRescheduleTimeAvailability();
+        return;
+      }
+
+      const { error } = await supabase
+        .from('bookings')
+        .update({
+          booking_date: dateStr,
+          booking_time: newTime,
+          estimated_duration_minutes: durationMinutes,
+          status: 'pending',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', booking.id);
+
+      if (error) throw error;
+
       setBooking({
         ...booking,
         booking_date: dateStr,
         booking_time: newTime,
+        estimated_duration_minutes: durationMinutes,
         status: 'pending',
       });
+
       setShowReschedule(false);
       setNewDate(null);
       setNewTime('');
+      setUnavailableRescheduleTimes([]);
+
       Alert.alert(
         'Rescheduled!',
         'Your booking has been rescheduled and is pending confirmation.'
       );
+
       fetchDetails(false);
+    } catch (error) {
+      Alert.alert(
+        'Error',
+        error.message || 'Failed to reschedule. Please try another date or time.'
+      );
+    } finally {
+      setActionLoading(false);
     }
   }
 
@@ -907,7 +1200,7 @@ export default function AppointmentDetailScreen({ route, navigation }) {
 
         <View style={s.paymentGrid}>
           <MiniStat label="Service Total" value={peso(serviceTotal)} theme={theme} />
-          <MiniStat label="Parts" value={peso(partsTotal)} theme={theme} />
+          <MiniStat label="Products" value={peso(partsTotal)} theme={theme} />
           <MiniStat label="Total" value={peso(total)} theme={theme} />
         </View>
       </View>
@@ -915,17 +1208,17 @@ export default function AppointmentDetailScreen({ route, navigation }) {
       <SectionTitle
         theme={theme}
         icon="cube"
-        title="Parts Used"
-        subtitle="Parts added by staff or mechanic after inspection will appear here."
+        title="Products Used"
+        subtitle="Products added by staff or mechanic after inspection will appear here."
       />
 
       <View style={s.card}>
         {partsUsed.length === 0 ? (
           <View style={s.emptyBoxLarge}>
             <Ionicons name="cube-outline" size={28} color={YELLOW} />
-            <Text style={s.emptyBoxTitle}>No parts used yet</Text>
+            <Text style={s.emptyBoxTitle}>No products used yet</Text>
             <Text style={s.emptyBoxTextCenter}>
-              Parts will appear here after the shop inspects your motorcycle and adds
+              Products will appear here after the shop inspects your motorcycle and adds
               needed items such as brake fluid, oil, or spark plugs.
             </Text>
           </View>
@@ -945,10 +1238,10 @@ export default function AppointmentDetailScreen({ route, navigation }) {
                   >
                     <View style={{ flex: 1 }}>
                       <Text style={s.paymentRowTitle}>
-                        {quantity} × {item.name || 'Part / Product'}
+                        {quantity} × {item.name || 'Product'}
                       </Text>
                       <Text style={s.paymentRowDate}>
-                        {item.category || 'Service Part'} · {peso(price)} each
+                        {item.category || 'Service Product'} · {peso(price)} each
                       </Text>
                       <Text style={s.receiptText}>
                         {deducted ? 'Used during service' : 'Added to estimate'}
@@ -963,7 +1256,7 @@ export default function AppointmentDetailScreen({ route, navigation }) {
 
             <View style={s.paymentGrid}>
               <MiniStat label="Service" value={peso(serviceTotal)} theme={theme} />
-              <MiniStat label="Parts" value={peso(partsTotal)} theme={theme} />
+              <MiniStat label="Products" value={peso(partsTotal)} theme={theme} />
               <MiniStat label="Updated Total" value={peso(total)} theme={theme} />
             </View>
           </>
@@ -1012,6 +1305,9 @@ export default function AppointmentDetailScreen({ route, navigation }) {
             ) : (
               <>
                 <Text style={s.paymentMethodTitle}>Choose down payment method</Text>
+                <Text style={s.paymentOptionText}>
+                  Staff/admin web will see the selected method after saving.
+                </Text>
 
                 <TouchableOpacity
                   style={s.paymentOption}
@@ -1052,7 +1348,7 @@ export default function AppointmentDetailScreen({ route, navigation }) {
                   </Text>
                   <TextInput
                     value={manualReference}
-                    onChangeText={setManualReference}
+                    onChangeText={(value) => setManualReference(sanitizePaymentReference(value))}
                     placeholder="Enter GCash reference number"
                     placeholderTextColor={theme.textMuted}
                     style={s.referenceInput}
@@ -1279,23 +1575,54 @@ export default function AppointmentDetailScreen({ route, navigation }) {
 
           <Text style={s.timeLabel}>Select Time</Text>
 
+          {checkingRescheduleTimes && (
+            <Text style={s.rescheduleNotice}>
+              Checking available time slots based on this booking’s total duration...
+            </Text>
+          )}
+
+          <Text style={s.rescheduleNotice}>
+            Current service duration: about {getBookingDurationMinutes(booking)} minutes.
+            Overlapping time slots are disabled.
+          </Text>
+
           <View style={s.timeGrid}>
-            {timeSlots.map((t) => (
-              <TouchableOpacity
-                key={t}
-                style={[s.timeChip, newTime === t && s.timeChipActive]}
-                onPress={() => setNewTime(t)}
-              >
-                <Text
+            {timeSlots.map((t) => {
+              const isUnavailable = unavailableRescheduleTimes.includes(t);
+
+              return (
+                <TouchableOpacity
+                  key={t}
                   style={[
-                    s.timeChipText,
-                    newTime === t && s.timeChipTextActive,
+                    s.timeChip,
+                    newTime === t && s.timeChipActive,
+                    isUnavailable && s.timeChipDisabled,
                   ]}
+                  onPress={() => {
+                    if (isUnavailable) {
+                      Alert.alert(
+                        'Time Slot Unavailable',
+                        'This time overlaps with another booking duration. Please choose another time.'
+                      );
+                      return;
+                    }
+
+                    setNewTime(t);
+                  }}
+                  disabled={checkingRescheduleTimes}
                 >
-                  {formatTimeSlot(t)}
-                </Text>
-              </TouchableOpacity>
-            ))}
+                  <Text
+                    style={[
+                      s.timeChipText,
+                      newTime === t && s.timeChipTextActive,
+                      isUnavailable && s.timeChipTextDisabled,
+                    ]}
+                  >
+                    {formatTimeSlot(t)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
           <View style={s.rescheduleActions}>
@@ -1878,6 +2205,18 @@ const styles = (theme) =>
       gap: 8,
       marginBottom: 20,
     },
+    rescheduleNotice: {
+      color: theme.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '600',
+      backgroundColor: theme.bg2 || theme.bg,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 10,
+      padding: 10,
+      marginBottom: 10,
+    },
     timeChip: {
       paddingHorizontal: 14,
       paddingVertical: 9,
@@ -1890,8 +2229,17 @@ const styles = (theme) =>
       backgroundColor: theme.primary,
       borderColor: theme.primary,
     },
+    timeChipDisabled: {
+      opacity: 0.45,
+      backgroundColor: theme.bg2 || theme.bg,
+      borderColor: theme.border,
+    },
     timeChipText: { color: theme.textSub || theme.textMuted, fontSize: 13 },
     timeChipTextActive: { color: '#fff', fontWeight: 'bold' },
+    timeChipTextDisabled: {
+      color: theme.textMuted,
+      textDecorationLine: 'line-through',
+    },
     rescheduleActions: { flexDirection: 'row', gap: 10 },
     cancelRescheduleBtn: {
       flex: 1,

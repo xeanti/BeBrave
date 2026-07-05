@@ -5,9 +5,9 @@
 // Includes:
 // - progress bar only, no slider
 // - service progress status buttons
-// - add parts used during scheduled service
-// - deducts stock only when parts are actually used
-// - restores deducted parts when the appointment is cancelled
+// - add products used during scheduled service
+// - deducts stock automatically when products are added as used
+// - restores deducted products when the appointment is cancelled
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
@@ -148,8 +148,8 @@ function getPartLineTotal(item) {
   return (Number(item?.unit_price ?? item?.price) || 0) * (Number(item?.quantity) || 1);
 }
 
-function getPartsTotal(parts = []) {
-  return parts.reduce((sum, item) => sum + getPartLineTotal(item), 0);
+function getProductsTotal(products = []) {
+  return products.reduce((sum, item) => sum + getPartLineTotal(item), 0);
 }
 
 function makePartPayload(part, quantity = 1, stockDeducted = true) {
@@ -209,7 +209,7 @@ function ProductImage({ product }) {
 
 export default function ServiceProgressManager({ booking, onUpdated, compact = false }) {
   const [events, setEvents] = useState([]);
-  const [parts, setParts] = useState([]);
+  const [products, setProducts] = useState([]);
   const [partsUsed, setPartsUsed] = useState(() =>
     getInitialPartsUsed(booking).map(normalizePartLine)
   );
@@ -217,15 +217,15 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
   const [partSearch, setPartSearch] = useState('');
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(true);
-  const [partsLoading, setPartsLoading] = useState(true);
+  const [productsLoading, setProductsLoading] = useState(true);
   const [savingStatus, setSavingStatus] = useState('');
   const [savingPart, setSavingPart] = useState('');
   const [message, setMessage] = useState('');
 
   const bookingId = booking?.id;
   const serviceTotal = getServiceTotal(booking);
-  const partsTotal = getPartsTotal(partsUsed);
-  const totalBill = serviceTotal + partsTotal;
+  const productsTotal = getProductsTotal(partsUsed);
+  const totalBill = serviceTotal + productsTotal;
   const hasDeductedParts = partsUsed.some((item) => item.stock_deducted === true);
 
   useEffect(() => {
@@ -236,7 +236,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
     if (!bookingId) return;
 
     fetchEvents();
-    fetchParts();
+    fetchProducts();
 
     const channel = supabase
       .channel(`simple-service-progress-${bookingId}`)
@@ -252,8 +252,8 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
       )
       .subscribe();
 
-    const partsChannel = supabase
-      .channel('service-progress-parts')
+    const productsChannel = supabase
+      .channel('service-progress-products')
       .on(
         'postgres_changes',
         {
@@ -261,13 +261,13 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
           schema: 'public',
           table: 'parts',
         },
-        () => fetchParts(false)
+        () => fetchProducts(false)
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
-      supabase.removeChannel(partsChannel);
+      supabase.removeChannel(productsChannel);
     };
   }, [bookingId]);
 
@@ -293,8 +293,8 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
     setLoading(false);
   }
 
-  async function fetchParts(showLoader = true) {
-    if (showLoader) setPartsLoading(true);
+  async function fetchProducts(showLoader = true) {
+    if (showLoader) setProductsLoading(true);
 
     const { data, error } = await supabase
       .from('parts')
@@ -304,13 +304,13 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
       .limit(500);
 
     if (error) {
-      console.warn('Failed to load parts:', error.message);
-      setParts([]);
+      console.warn('Failed to load products:', error.message);
+      setProducts([]);
     } else {
-      setParts(data || []);
+      setProducts(data || []);
     }
 
-    setPartsLoading(false);
+    setProductsLoading(false);
   }
 
   const currentProgress = useMemo(
@@ -320,12 +320,27 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
 
   const currentStatus = String(booking?.status || 'pending').toLowerCase();
 
-  const filteredParts = useMemo(() => {
+
+  useEffect(() => {
+    if (!bookingId || !booking?.customer_id) return;
+    if (savingPart) return;
+    if (['cancelled', 'rejected', 'no_show'].includes(currentStatus)) return;
+
+    const hasLegacyUndeductedProduct = partsUsed.some(
+      (item) => item.stock_deducted !== true && (item.id || item.part_id)
+    );
+
+    if (!hasLegacyUndeductedProduct) return;
+
+    autoSyncUndeductedProducts();
+  }, [bookingId, booking?.customer_id, currentStatus, partsUsed.length]);
+
+  const filteredProducts = useMemo(() => {
     const query = safeText(partSearch);
 
-    if (!query) return parts.slice(0, 8);
+    if (!query) return products.slice(0, 8);
 
-    return parts
+    return products
       .filter((part) => {
         const haystack = [
           part.name,
@@ -338,7 +353,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
         return haystack.includes(query);
       })
       .slice(0, 12);
-  }, [parts, partSearch]);
+  }, [products, partSearch]);
 
   function requireCustomerId() {
     if (booking?.customer_id) return booking.customer_id;
@@ -353,16 +368,16 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
     return data?.user?.id || null;
   }
 
-  async function updateBookingParts(nextParts, extraPayload = {}) {
-    const normalized = nextParts.map(normalizePartLine);
-    const nextPartsTotal = getPartsTotal(normalized);
-    const nextTotal = serviceTotal + nextPartsTotal;
+  async function updateBookingProducts(nextProducts, extraPayload = {}) {
+    const normalized = nextProducts.map(normalizePartLine);
+    const nextProductsTotal = getProductsTotal(normalized);
+    const nextTotal = serviceTotal + nextProductsTotal;
 
     const payload = {
       parts_used: normalized,
       products: normalized,
-      parts_total: nextPartsTotal,
-      product_total: nextPartsTotal,
+      parts_total: nextProductsTotal,
+      product_total: nextProductsTotal,
       total_amount: nextTotal,
       updated_at: new Date().toISOString(),
       ...extraPayload,
@@ -488,7 +503,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
     if (!bookingId || !part?.id) return;
 
     const confirmed = window.confirm(
-      `Add "${part.name}" as part used and deduct 1 from inventory?`
+      `Add "${part.name}" as product used?\n\nInventory stock will be deducted automatically.`
     );
 
     if (!confirmed) return;
@@ -501,10 +516,10 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
         (item) => item.id === part.id && item.stock_deducted === true
       );
 
-      let nextParts = [];
+      let nextProducts = [];
 
       if (existingActualIndex >= 0) {
-        nextParts = partsUsed.map((item, index) => {
+        nextProducts = partsUsed.map((item, index) => {
           if (index !== existingActualIndex) return item;
 
           const nextQty = (Number(item.quantity) || 1) + 1;
@@ -518,18 +533,18 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
           };
         });
       } else {
-        nextParts = [...partsUsed, makePartPayload(part, 1, true)];
+        nextProducts = [...partsUsed, makePartPayload(part, 1, true)];
       }
 
       await adjustPartStock({
         partId: part.id,
         movementType: 'stock_out',
         quantity: 1,
-        reason: `Part used in scheduled booking ${String(bookingId).slice(0, 8).toUpperCase()}`,
+        reason: `Product used in scheduled booking ${String(bookingId).slice(0, 8).toUpperCase()}`,
         relatedOrderId: null,
       });
 
-      await updateBookingParts(nextParts, {
+      await updateBookingProducts(nextProducts, {
         parts_stock_deducted_at: booking?.parts_stock_deducted_at || new Date().toISOString(),
       });
 
@@ -547,8 +562,8 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
       });
 
       setPartSearch('');
-      setMessage(`${part.name} added to parts used and deducted from inventory.`);
-      await fetchParts(false);
+      setMessage(`${part.name} added to products used. Inventory deducted automatically.`);
+      await fetchProducts(false);
     } catch (err) {
       setMessage(`Error: ${err.message || 'Failed to add part used.'}`);
     } finally {
@@ -556,48 +571,75 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
     }
   }
 
-  async function deductEstimatedPart(index) {
-    const line = partsUsed[index];
-    if (!line || line.stock_deducted) return;
 
-    const quantity = Number(line.quantity) || 1;
+  async function autoSyncUndeductedProducts() {
+    if (!bookingId || !booking?.customer_id) return;
 
-    const confirmed = window.confirm(
-      `Deduct ${quantity} x "${line.name}" from inventory as actually used?`
-    );
+    const undeductedLines = partsUsed.filter((item) => item.stock_deducted !== true);
+    if (undeductedLines.length === 0) return;
 
-    if (!confirmed) return;
-
-    setSavingPart(line.line_id || line.id);
+    setSavingPart('auto-sync');
     setMessage('');
 
     try {
-      await adjustPartStock({
-        partId: line.id || line.part_id,
-        movementType: 'stock_out',
-        quantity,
-        reason: `Estimated part confirmed as used in booking ${String(bookingId).slice(0, 8).toUpperCase()}`,
-        relatedOrderId: null,
-      });
+      const nextProducts = [];
 
-      const nextParts = partsUsed.map((item, itemIndex) =>
-        itemIndex === index
-          ? {
-              ...item,
-              stock_deducted: true,
-              subtotal: getPartLineTotal(item),
-            }
-          : item
-      );
+      for (const item of partsUsed) {
+        if (item.stock_deducted === true) {
+          nextProducts.push(item);
+          continue;
+        }
 
-      await updateBookingParts(nextParts, {
+        const partId = item.id || item.part_id;
+        const quantity = Number(item.quantity) || 1;
+
+        if (!partId || quantity <= 0) {
+          nextProducts.push({
+            ...item,
+            stock_deducted: true,
+            subtotal: getPartLineTotal(item),
+          });
+          continue;
+        }
+
+        await adjustPartStock({
+          partId,
+          movementType: 'stock_out',
+          quantity,
+          reason: `Auto synced product used in scheduled booking ${String(bookingId).slice(0, 8).toUpperCase()}`,
+          relatedOrderId: null,
+        });
+
+        nextProducts.push({
+          ...item,
+          stock_deducted: true,
+          subtotal: getPartLineTotal(item),
+        });
+      }
+
+      await updateBookingProducts(nextProducts, {
         parts_stock_deducted_at: booking?.parts_stock_deducted_at || new Date().toISOString(),
       });
 
-      await fetchParts(false);
-      setMessage(`${line.name} deducted from inventory.`);
+      await supabase.from('audit_logs').insert({
+        action: 'AUTO_SYNC_BOOKING_PARTS_USED',
+        entity: 'bookings',
+        entity_id: bookingId,
+        performed_by: await getCurrentUserId(),
+        details: {
+          synced_products: undeductedLines.map((item) => ({
+            part_id: item.id || item.part_id,
+            name: item.name,
+            quantity: Number(item.quantity) || 1,
+          })),
+          movement_type: 'stock_out',
+        },
+      });
+
+      await fetchProducts(false);
+      setMessage('Products were automatically synced with inventory.');
     } catch (err) {
-      setMessage(`Error: ${err.message || 'Failed to deduct part.'}`);
+      setMessage(`Error: ${err.message || 'Failed to auto-sync products.'}`);
     } finally {
       setSavingPart('');
     }
@@ -613,7 +655,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
     const confirmed = window.confirm(
       deducted
         ? `Remove ${line.name} and return ${quantity} to inventory?`
-        : `Remove ${line.name} from the estimated parts list?`
+        : `Remove ${line.name} from the products used list?`
     );
 
     if (!confirmed) return;
@@ -632,15 +674,15 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
         });
       }
 
-      const nextParts = partsUsed.filter((_, itemIndex) => itemIndex !== index);
+      const nextProducts = partsUsed.filter((_, itemIndex) => itemIndex !== index);
 
-      await updateBookingParts(nextParts);
+      await updateBookingProducts(nextProducts);
 
-      await fetchParts(false);
+      await fetchProducts(false);
       setMessage(
         deducted
           ? `${line.name} removed and returned to inventory.`
-          : `${line.name} removed from estimated parts.`
+          : `${line.name} removed from products used.`
       );
     } catch (err) {
       setMessage(`Error: ${err.message || 'Failed to remove part.'}`);
@@ -652,15 +694,15 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
   async function cancelBookingRestoreInventory() {
     if (!bookingId) return;
 
-    const restorableParts = partsUsed.filter(
+    const restorableProducts = partsUsed.filter(
       (item) =>
         item.stock_deducted === true ||
         (booking?.parts_stock_deducted_at && item.stock_deducted !== false)
     );
 
     const confirmText =
-      restorableParts.length > 0 && !booking?.inventory_restored_at
-      ? `Cancel this appointment and return ${restorableParts.length} deducted product line(s) back to inventory?`
+      restorableProducts.length > 0 && !booking?.inventory_restored_at
+      ? `Cancel this appointment and return ${restorableProducts.length} deducted product line(s) back to inventory?`
       : 'Cancel this appointment?';
 
     const confirmed = window.confirm(confirmText);
@@ -672,8 +714,8 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
     try {
       const currentUserId = await getCurrentUserId();
 
-      if (restorableParts.length > 0 && !booking?.inventory_restored_at) {
-        for (const item of restorableParts) {
+      if (restorableProducts.length > 0 && !booking?.inventory_restored_at) {
+        for (const item of restorableProducts) {
           const partId = item.id || item.part_id;
           const quantity = Number(item.quantity) || 0;
 
@@ -694,11 +736,11 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
         .update({
           status: 'cancelled',
           inventory_restored_at:
-            restorableParts.length > 0 && !booking?.inventory_restored_at
+            restorableProducts.length > 0 && !booking?.inventory_restored_at
               ? new Date().toISOString()
               : booking?.inventory_restored_at || null,
           inventory_restored_by:
-            restorableParts.length > 0 && !booking?.inventory_restored_at
+            restorableProducts.length > 0 && !booking?.inventory_restored_at
               ? currentUserId
               : booking?.inventory_restored_by || null,
           updated_at: new Date().toISOString(),
@@ -714,7 +756,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
           status: 'cancelled',
           title: 'Booking Cancelled',
           description:
-            restorableParts.length > 0
+            restorableProducts.length > 0
               ? 'Booking was cancelled and deducted products were returned to inventory.'
               : 'Booking was cancelled.',
           progress_percent: 0,
@@ -727,8 +769,8 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
           status: 'cancelled',
           title: 'Booking Cancelled',
           description:
-            restorableParts.length > 0
-              ? 'Booking was cancelled and deducted parts were returned to inventory.'
+            restorableProducts.length > 0
+              ? 'Booking was cancelled and deducted products were returned to inventory.'
               : 'Booking was cancelled.',
           progress_percent: 0,
         });
@@ -740,19 +782,19 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
         entity_id: bookingId,
         performed_by: currentUserId,
         details: {
-          restored_inventory: restorableParts.length > 0 && !booking?.inventory_restored_at,
-          parts_returned: restorableParts,
+          restored_inventory: restorableProducts.length > 0 && !booking?.inventory_restored_at,
+          products_returned: restorableProducts,
         },
       });
 
       setMessage(
-        restorableParts.length > 0 && !booking?.inventory_restored_at
+        restorableProducts.length > 0 && !booking?.inventory_restored_at
           ? 'Booking cancelled. Deducted products were returned to inventory.'
           : 'Booking cancelled.'
       );
 
       await fetchEvents(false);
-      await fetchParts(false);
+      await fetchProducts(false);
       onUpdated?.();
     } catch (err) {
       setMessage(`Error: ${err.message || 'Failed to cancel booking.'}`);
@@ -795,7 +837,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
             Service Progress
           </p>
           <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-            Use simple status buttons. Products used can be added during service.
+            Use simple status buttons. Products used can be added during service. Stock is deducted automatically.
           </p>
         </div>
 
@@ -877,10 +919,10 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">
-              Parts Used
+              Products Used
             </p>
             <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-              Add actual parts used during the service. Added parts deduct stock immediately.
+              Add actual products used during the service. Stock is deducted automatically once.
             </p>
           </div>
 
@@ -903,16 +945,16 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
           </div>
 
           <div className="rounded-2xl bg-white p-3 ring-1 ring-gray-100 dark:bg-dark-800 dark:ring-dark-700">
-            <p className="text-[11px] font-black uppercase text-gray-500">Parts</p>
+            <p className="text-[11px] font-black uppercase text-gray-500">Products</p>
             <p className="text-sm font-black text-gray-950 dark:text-white">
-              {formatPeso(partsTotal)}
+              {formatPeso(productsTotal)}
             </p>
           </div>
 
           <div className="rounded-2xl bg-white p-3 ring-1 ring-gray-100 dark:bg-dark-800 dark:ring-dark-700">
             <p className="text-[11px] font-black uppercase text-gray-500">Inventory</p>
             <p className={`text-sm font-black ${hasDeductedParts ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'}`}>
-              {hasDeductedParts ? 'Deducted' : 'No deduction yet'}
+              {partsUsed.length > 0 ? 'Auto synced' : 'No products'}
             </p>
           </div>
         </div>
@@ -920,17 +962,17 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
         <input
           value={partSearch}
           onChange={(event) => setPartSearch(event.target.value)}
-          placeholder="Search part/product to add as used..."
+          placeholder="Search product to add as used..."
           className="mb-3 w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-800 dark:text-white"
         />
 
-        {partsLoading ? (
+        {productsLoading ? (
           <div className="rounded-2xl bg-white p-4 text-sm font-semibold text-gray-500 dark:bg-dark-800 dark:text-gray-400">
-            Loading parts...
+            Loading products...
           </div>
-        ) : filteredParts.length > 0 ? (
+        ) : filteredProducts.length > 0 ? (
           <div className="mb-4 grid max-h-72 gap-2 overflow-y-auto">
-            {filteredParts.map((part) => (
+            {filteredProducts.map((part) => (
               <button
                 key={part.id}
                 type="button"
@@ -962,13 +1004,13 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
           </div>
         ) : (
           <div className="mb-4 rounded-2xl border border-dashed border-gray-300 bg-white p-4 text-center text-sm font-semibold text-gray-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400">
-            No products found. Check if the product is active and if the simple parts SELECT policy SQL was already run.
+            No products found. Check if the product is active and if the products/parts SELECT policy SQL was already run.
           </div>
         )}
 
         {partsUsed.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-4 text-center text-sm font-semibold text-gray-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400">
-            No parts used yet.
+            No products used yet.
           </div>
         ) : (
           <div className="space-y-2">
@@ -999,19 +1041,8 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
                             : 'bg-yellow-50 text-yellow-700 ring-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-300 dark:ring-yellow-500/25'
                         }`}
                       >
-                        {deducted ? 'Stock deducted' : 'Estimate only'}
+                        {deducted ? 'Stock deducted automatically' : 'Auto syncing inventory'}
                       </span>
-
-                      {!deducted && (
-                        <button
-                          type="button"
-                          disabled={saving}
-                          onClick={() => deductEstimatedPart(index)}
-                          className="rounded-xl bg-primary-600 px-3 py-2 text-xs font-black text-white transition hover:bg-primary-700 disabled:opacity-50"
-                        >
-                          Deduct
-                        </button>
-                      )}
 
                       <button
                         type="button"
@@ -1019,7 +1050,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
                         onClick={() => removePartLine(index)}
                         className="rounded-xl bg-red-50 px-3 py-2 text-xs font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-100 disabled:opacity-50 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25"
                       >
-                        {deducted ? 'Return' : 'Remove'}
+                        Remove
                       </button>
                     </div>
                   </div>
@@ -1045,7 +1076,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
             Cancel Appointment
           </p>
           <p className="mt-1 text-xs font-semibold text-red-700 dark:text-red-300">
-            If deducted parts exist, they will be returned to inventory automatically.
+            If deducted products exist, they will be returned to inventory automatically.
           </p>
         </div>
 

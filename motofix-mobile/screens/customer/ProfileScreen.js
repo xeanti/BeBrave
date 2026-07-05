@@ -1,75 +1,216 @@
 import { useEffect, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, Switch, Alert, Image, TextInput,
+  ActivityIndicator,
+  Alert,
+  Image,
+  Linking,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
+import { CommonActions } from '@react-navigation/native';
 import { useTheme } from '../../lib/ThemeContext';
 import { supabase } from '../../lib/supabase';
 import { unregisterPushToken } from '../../lib/pushNotifications';
-import { CommonActions } from '@react-navigation/native';
+
+const PHONE_PREFIX = '09';
+const MIN_MOTORCYCLE_YEAR = 1980;
+const MAX_MOTORCYCLE_YEAR = new Date().getFullYear() + 1;
+const MAX_PASSWORD_LENGTH = 72;
+const MAX_PROFILE_PHOTO_MB = 5;
+const MAX_CERT_SIZE_MB = 10;
+const ALLOWED_CERT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'pdf'];
 
 function cleanName(value) {
-  return String(value || '').replace(/\s+/g, ' ').slice(0, 60);
+  return String(value || '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/[^a-zA-ZñÑ .'-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trimStart()
+    .slice(0, 50);
 }
 
-function cleanPhone(value) {
-  return String(value || '').replace(/[^0-9]/g, '').slice(0, 11);
+function cleanMotorcycleText(value) {
+  return String(value || '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&]/g, '')
+    .replace(/\s+/g, ' ')
+    .trimStart()
+    .slice(0, 60);
 }
 
-function cleanYear(value) {
-  return String(value || '').replace(/[^0-9]/g, '').slice(0, 4);
+function cleanSpecialization(value) {
+  return String(value || '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&#]/g, '')
+    .replace(/\s+/g, ' ')
+    .trimStart()
+    .slice(0, 80);
+}
+
+function cleanCertName(value) {
+  return String(value || '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&#]/g, '')
+    .replace(/\s+/g, ' ')
+    .trimStart()
+    .slice(0, 80);
+}
+
+function cleanPassword(value) {
+  return String(value || '')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .slice(0, MAX_PASSWORD_LENGTH);
+}
+
+function formatPhoneInput(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+
+  if (!digits || digits.length <= 2) {
+    return PHONE_PREFIX;
+  }
+
+  const numberAfterPrefix = digits.startsWith(PHONE_PREFIX)
+    ? digits.slice(2)
+    : digits;
+
+  return (PHONE_PREFIX + numberAfterPrefix).slice(0, 11);
 }
 
 function isValidPhilippineMobile(value) {
-  if (!value) return true;
   return /^09\d{9}$/.test(value);
 }
 
-function normalizeProfilePayloadText(value) {
+function cleanYear(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 4);
+}
+
+function isValidMotorcycleYear(value) {
+  if (!value) return true;
+
+  const year = Number(value);
+
+  return (
+    /^\d{4}$/.test(value) &&
+    Number.isInteger(year) &&
+    year >= MIN_MOTORCYCLE_YEAR &&
+    year <= MAX_MOTORCYCLE_YEAR
+  );
+}
+
+function normalizeNullableText(value) {
   const clean = String(value || '').trim();
   return clean.length ? clean : null;
 }
 
+function getFileExtension(name = '') {
+  return String(name || '')
+    .split('.')
+    .pop()
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]/g, '') || '';
+}
+
+function isAllowedCertificateFile(asset) {
+  if (!asset) return false;
+
+  const ext = getFileExtension(asset.name);
+  const size = Number(asset.size || 0);
+  const validExt = ALLOWED_CERT_EXTENSIONS.includes(ext);
+  const validType =
+    String(asset.mimeType || '').startsWith('image/') ||
+    asset.mimeType === 'application/pdf' ||
+    ext === 'pdf';
+
+  if (!validExt || !validType) return false;
+  if (size && size > MAX_CERT_SIZE_MB * 1024 * 1024) return false;
+
+  return true;
+}
+
+function getMimeFromExtension(ext) {
+  switch (ext) {
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'png':
+      return 'image/png';
+    case 'webp':
+      return 'image/webp';
+    case 'gif':
+      return 'image/gif';
+    case 'pdf':
+      return 'application/pdf';
+    default:
+      return 'application/octet-stream';
+  }
+}
 
 export default function ProfileScreen({ navigation }) {
   const { theme, isDark, toggleTheme } = useTheme();
+
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [certificates, setCertificates] = useState([]);
-  const [loadingCerts, setLoadingCerts] = useState(false);
-
-  // Form state
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [specialization, setSpecialization] = useState('');
-  const [motoMake, setMotoMake] = useState('');
-  const [motoModel, setMotoModel] = useState('');
-  const [motoYear, setMotoYear] = useState('');
-
-  // Photo state
   const [photoUri, setPhotoUri] = useState(null);
   const [savedPhotoUrl, setSavedPhotoUrl] = useState(null);
 
-  // Certificate State variables
+  const [certificates, setCertificates] = useState([]);
+  const [loadingCerts, setLoadingCerts] = useState(false);
   const [certName, setCertName] = useState('');
   const [certFile, setCertFile] = useState(null);
   const [uploadingCert, setUploadingCert] = useState(false);
   const [certError, setCertError] = useState('');
   const [deletingCertId, setDeletingCertId] = useState(null);
 
-  useEffect(() => { fetchProfile(); }, []);
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState(PHONE_PREFIX);
+  const [specialization, setSpecialization] = useState('');
+  const [motoMake, setMotoMake] = useState('');
+  const [motoModel, setMotoModel] = useState('');
+  const [motoYear, setMotoYear] = useState('');
+
+  const [showPasswordSection, setShowPasswordSection] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const s = styles(theme);
+  const isMechanic = profile?.role === 'mechanic';
+  const displayPhoto = photoUri || savedPhotoUrl;
+  const initials = profile
+    ? `${profile.first_name?.[0] || ''}${profile.last_name?.[0] || ''}`.toUpperCase()
+    : '?';
+
+  useEffect(() => {
+    fetchProfile();
+  }, []);
 
   async function fetchProfile() {
     setLoading(true);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
       if (!user) {
         setLoading(false);
@@ -86,18 +227,20 @@ export default function ProfileScreen({ navigation }) {
 
       if (data) {
         setProfile(data);
-        setFirstName(data.first_name || '');
-        setLastName(data.last_name || '');
-        setPhone(cleanPhone(data.phone || ''));
-        setSpecialization(data.specialization || '');
-        setMotoMake(data.moto_make || '');
-        setMotoModel(data.moto_model || '');
-        setMotoYear(data.moto_year ? String(data.moto_year) : '');
+        setFirstName(cleanName(data.first_name || ''));
+        setLastName(cleanName(data.last_name || ''));
+        setPhone(data.phone ? formatPhoneInput(data.phone) : PHONE_PREFIX);
+        setSpecialization(cleanSpecialization(data.specialization || ''));
+        setMotoMake(cleanMotorcycleText(data.moto_make || ''));
+        setMotoModel(cleanMotorcycleText(data.moto_model || ''));
+        setMotoYear(data.moto_year ? cleanYear(String(data.moto_year)) : '');
 
         setSavedPhotoUrl(data.profile_photo_url || null);
         setPhotoUri(data.profile_photo_url || null);
 
-        if (data.role === 'mechanic') fetchCertificates(user.id);
+        if (data.role === 'mechanic') {
+          fetchCertificates(user.id);
+        }
       }
     } catch (error) {
       Alert.alert('Profile Error', error.message || 'Failed to load profile.');
@@ -108,19 +251,29 @@ export default function ProfileScreen({ navigation }) {
 
   async function fetchCertificates(mechanicId) {
     setLoadingCerts(true);
-    const { data } = await supabase
-      .from('mechanic_certificates')
-      .select('*')
-      .eq('mechanic_id', mechanicId)
-      .order('created_at', { ascending: false });
-    if (data) setCertificates(data);
-    setLoadingCerts(false);
+
+    try {
+      const { data, error } = await supabase
+        .from('mechanic_certificates')
+        .select('*')
+        .eq('mechanic_id', mechanicId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      setCertificates(data || []);
+    } catch (error) {
+      setCertError(error.message || 'Failed to load certificates.');
+    } finally {
+      setLoadingCerts(false);
+    }
   }
 
   async function pickPhoto() {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
     if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Please allow photo library access to change your photo.');
+      Alert.alert('Permission Needed', 'Please allow photo library access to change your photo.');
       return;
     }
 
@@ -131,8 +284,14 @@ export default function ProfileScreen({ navigation }) {
       quality: 0.8,
     });
 
-    if (!result.canceled && result.assets && result.assets[0]) {
+    if (!result.canceled && result.assets?.[0]) {
       const selectedAsset = result.assets[0];
+
+      if (selectedAsset.fileSize && selectedAsset.fileSize > MAX_PROFILE_PHOTO_MB * 1024 * 1024) {
+        Alert.alert('Image Too Large', `Profile photo must be ${MAX_PROFILE_PHOTO_MB}MB or smaller.`);
+        return;
+      }
+
       if (selectedAsset?.uri) {
         setPhotoUri(selectedAsset.uri);
       } else {
@@ -142,14 +301,22 @@ export default function ProfileScreen({ navigation }) {
   }
 
   async function uploadPhoto(localUri) {
-    if (!localUri) throw new Error('No local image path available');
+    if (!localUri) throw new Error('No local image path available.');
 
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user?.id) throw new Error('Login required.');
+
     const ext = localUri.match(/\.(\w+)$/)?.[1]?.toLowerCase() || 'jpg';
+    const safeExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext) ? ext : 'jpg';
+    const contentType = safeExt === 'jpg' ? 'image/jpeg' : `image/${safeExt}`;
     const prefix = profile?.role === 'mechanic' ? 'mechanic' : 'profile';
-    const filePath = `${user.id}/${prefix}_${Date.now()}.${ext}`;
+    const filePath = `${user.id}/${prefix}_${Date.now()}.${safeExt}`;
 
     setUploadingPhoto(true);
+
     try {
       const response = await fetch(localUri);
       const arrayBuffer = await response.arrayBuffer();
@@ -157,7 +324,7 @@ export default function ProfileScreen({ navigation }) {
       const { error: uploadError } = await supabase.storage
         .from('motorcycle-photos')
         .upload(filePath, arrayBuffer, {
-          contentType: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
+          contentType,
           upsert: true,
         });
 
@@ -167,37 +334,84 @@ export default function ProfileScreen({ navigation }) {
         .from('motorcycle-photos')
         .getPublicUrl(filePath);
 
+      if (!urlData?.publicUrl) {
+        throw new Error('Uploaded photo URL was not generated.');
+      }
+
       return urlData.publicUrl;
     } finally {
       setUploadingPhoto(false);
     }
   }
 
+  function validateProfileForm() {
+    const cleanFirstName = cleanName(firstName).trim();
+    const cleanLastName = cleanName(lastName).trim();
+    const cleanPhoneNumber = formatPhoneInput(phone);
+    const cleanMotoYear = cleanYear(motoYear);
+
+    if (!cleanFirstName || !cleanLastName) {
+      return { error: 'Please enter your first name and last name.' };
+    }
+
+    if (!isValidPhilippineMobile(cleanPhoneNumber)) {
+      return {
+        error: 'Phone number must start with 09 and contain exactly 11 digits.',
+      };
+    }
+
+    if (!isMechanic && cleanMotoYear && !isValidMotorcycleYear(cleanMotoYear)) {
+      return {
+        error: `Motorcycle year must be between ${MIN_MOTORCYCLE_YEAR} and ${MAX_MOTORCYCLE_YEAR}.`,
+      };
+    }
+
+    return {
+      cleanFirstName,
+      cleanLastName,
+      cleanPhoneNumber,
+      cleanMotoYear,
+    };
+  }
+
   async function handleSave() {
-    const { data: { user } } = await supabase.auth.getUser();
+    const validation = validateProfileForm();
+
+    if (validation.error) {
+      Alert.alert('Invalid Profile Details', validation.error);
+      return;
+    }
+
+    Alert.alert(
+      'Save Profile',
+      'Save these profile changes?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Save',
+          onPress: saveProfile,
+        },
+      ]
+    );
+  }
+
+  async function saveProfile() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
     if (!user?.id) {
       Alert.alert('Login Required', 'Please login again before updating your profile.');
       return;
     }
 
-    const cleanFirstName = firstName.trim();
-    const cleanLastName = lastName.trim();
-    const cleanPhoneNumber = cleanPhone(phone);
-    const cleanMotoYear = cleanYear(motoYear);
+    const validation = validateProfileForm();
 
-    if (!cleanFirstName || !cleanLastName) {
-      Alert.alert('Missing Name', 'Please enter your first name and last name.');
-      return;
-    }
-
-    if (!isValidPhilippineMobile(cleanPhoneNumber)) {
-      Alert.alert('Invalid Phone Number', 'Use an 11-digit Philippine mobile number starting with 09.');
-      return;
-    }
-
-    if (cleanMotoYear && (Number(cleanMotoYear) < 1980 || Number(cleanMotoYear) > new Date().getFullYear() + 1)) {
-      Alert.alert('Invalid Year', 'Please enter a valid motorcycle year.');
+    if (validation.error) {
+      Alert.alert('Invalid Profile Details', validation.error);
       return;
     }
 
@@ -211,19 +425,23 @@ export default function ProfileScreen({ navigation }) {
       }
 
       const payload = {
-        first_name: cleanFirstName,
-        last_name: cleanLastName,
-        phone: cleanPhoneNumber || null,
+        first_name: validation.cleanFirstName,
+        last_name: validation.cleanLastName,
+        phone: validation.cleanPhoneNumber,
       };
 
-      if (newPhotoUrl) payload.profile_photo_url = newPhotoUrl;
+      if (newPhotoUrl) {
+        payload.profile_photo_url = newPhotoUrl;
+      }
 
-      if (profile?.role === 'mechanic') {
-        payload.specialization = normalizeProfilePayloadText(specialization);
+      if (isMechanic) {
+        payload.specialization = normalizeNullableText(cleanSpecialization(specialization));
       } else {
-        payload.moto_make = normalizeProfilePayloadText(motoMake);
-        payload.moto_model = normalizeProfilePayloadText(motoModel);
-        payload.moto_year = cleanMotoYear ? parseInt(cleanMotoYear, 10) : null;
+        payload.moto_make = normalizeNullableText(cleanMotorcycleText(motoMake));
+        payload.moto_model = normalizeNullableText(cleanMotorcycleText(motoModel));
+        payload.moto_year = validation.cleanMotoYear
+          ? parseInt(validation.cleanMotoYear, 10)
+          : null;
       }
 
       const { error } = await supabase
@@ -233,14 +451,16 @@ export default function ProfileScreen({ navigation }) {
 
       if (error) throw error;
 
-      if (newPhotoUrl) setSavedPhotoUrl(newPhotoUrl);
+      if (newPhotoUrl) {
+        setSavedPhotoUrl(newPhotoUrl);
+      }
 
       setProfile((current) => ({
         ...current,
         ...payload,
       }));
 
-      Alert.alert('✅ Success', 'Profile updated successfully!');
+      Alert.alert('Success', 'Profile updated successfully!');
     } catch (err) {
       Alert.alert('Error', err.message || 'Failed to update profile.');
     } finally {
@@ -248,31 +468,158 @@ export default function ProfileScreen({ navigation }) {
     }
   }
 
-async function handleLogout() {
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
+  function validatePasswordForm() {
+    const cleanCurrent = cleanPassword(currentPassword);
+    const cleanNew = cleanPassword(newPassword);
+    const cleanConfirm = cleanPassword(confirmNewPassword);
 
-    if (user?.id) {
-      await unregisterPushToken(user.id);
+    if (!cleanCurrent) {
+      return { error: 'Please enter your current password.' };
     }
 
-    await supabase.auth.signOut();
-  } catch (error) {
-    console.log('Logout error:', error.message);
+    if (!cleanNew) {
+      return { error: 'Please enter a new password.' };
+    }
+
+    if (cleanNew.length < 6) {
+      return { error: 'New password must be at least 6 characters.' };
+    }
+
+    if (cleanNew.length > MAX_PASSWORD_LENGTH) {
+      return { error: `Password must not exceed ${MAX_PASSWORD_LENGTH} characters.` };
+    }
+
+    if (cleanNew !== cleanConfirm) {
+      return { error: 'New password and confirm password do not match.' };
+    }
+
+    if (cleanCurrent === cleanNew) {
+      return { error: 'New password must be different from your current password.' };
+    }
+
+    return {
+      cleanCurrent,
+      cleanNew,
+    };
   }
 
-  const resetAction = CommonActions.reset({
-    index: 0,
-    routes: [{ name: 'Login' }],
-  });
+  async function handleChangePassword() {
+    const validation = validatePasswordForm();
 
-  const rootNavigation =
-    navigation.getParent()?.getParent() ||
-    navigation.getParent() ||
-    navigation;
+    if (validation.error) {
+      Alert.alert('Invalid Password', validation.error);
+      return;
+    }
 
-  rootNavigation.dispatch(resetAction);
-}
+    Alert.alert(
+      'Change Password',
+      'Are you sure you want to change your password?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Change Password',
+          style: 'destructive',
+          onPress: changePassword,
+        },
+      ]
+    );
+  }
+
+  async function changePassword() {
+    const validation = validatePasswordForm();
+
+    if (validation.error) {
+      Alert.alert('Invalid Password', validation.error);
+      return;
+    }
+
+    setChangingPassword(true);
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user?.email) {
+        throw new Error('Unable to confirm your account email. Please login again.');
+      }
+
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: validation.cleanCurrent,
+      });
+
+      if (signInError) {
+        throw new Error('Current password is incorrect.');
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: validation.cleanNew,
+      });
+
+      if (updateError) throw updateError;
+
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setShowPasswordSection(false);
+
+      Alert.alert('Success', 'Password changed successfully.');
+    } catch (error) {
+      Alert.alert('Password Error', error.message || 'Failed to change password.');
+    } finally {
+      setChangingPassword(false);
+    }
+  }
+
+  async function handleLogout() {
+    Alert.alert(
+      'Log Out',
+      'Are you sure you want to log out?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Log Out',
+          style: 'destructive',
+          onPress: logoutNow,
+        },
+      ]
+    );
+  }
+
+  async function logoutNow() {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (user?.id) {
+        await unregisterPushToken(user.id);
+      }
+
+      await supabase.auth.signOut();
+    } catch (error) {
+      console.log('Logout error:', error.message);
+    }
+
+    const resetAction = CommonActions.reset({
+      index: 0,
+      routes: [{ name: 'Login' }],
+    });
+
+    const rootNavigation =
+      navigation.getParent()?.getParent() ||
+      navigation.getParent() ||
+      navigation;
+
+    rootNavigation.dispatch(resetAction);
+  }
 
   async function pickCertFile() {
     try {
@@ -280,70 +627,153 @@ async function handleLogout() {
         type: ['image/*', 'application/pdf'],
         copyToCacheDirectory: true,
       });
+
       if (!result.canceled && result.assets?.[0]) {
         const asset = result.assets[0];
-        setCertFile({ uri: asset.uri, name: asset.name, mimeType: asset.mimeType });
-        if (!certName) setCertName(asset.name.replace(/\.[^/.]+$/, ''));
+
+        if (!isAllowedCertificateFile(asset)) {
+          Alert.alert(
+            'Invalid File',
+            `Please upload JPG, PNG, WEBP, GIF, or PDF up to ${MAX_CERT_SIZE_MB}MB.`
+          );
+          return;
+        }
+
+        setCertFile({
+          uri: asset.uri,
+          name: asset.name,
+          mimeType: asset.mimeType || getMimeFromExtension(getFileExtension(asset.name)),
+          size: asset.size,
+        });
+
+        if (!certName) {
+          setCertName(cleanCertName(asset.name.replace(/\.[^/.]+$/, '')));
+        }
       }
     } catch (err) {
-      Alert.alert('Error', 'Could not pick file: ' + err.message);
+      Alert.alert('Error', `Could not pick file: ${err.message}`);
     }
   }
 
   async function handleUploadCertificate() {
     setCertError('');
-    if (!certName.trim()) { setCertError('Please enter a certificate name.'); return; }
-    if (!certFile) { setCertError('Please pick a file.'); return; }
+
+    const safeCertName = cleanCertName(certName).trim();
+
+    if (!safeCertName) {
+      setCertError('Please enter a certificate name.');
+      return;
+    }
+
+    if (!certFile) {
+      setCertError('Please pick a file.');
+      return;
+    }
+
+    if (!isAllowedCertificateFile(certFile)) {
+      setCertError(`Please upload JPG, PNG, WEBP, GIF, or PDF up to ${MAX_CERT_SIZE_MB}MB.`);
+      return;
+    }
+
+    Alert.alert(
+      'Upload Certificate',
+      `Upload "${safeCertName}"?`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Upload',
+          onPress: uploadCertificateNow,
+        },
+      ]
+    );
+  }
+
+  async function uploadCertificateNow() {
+    const safeCertName = cleanCertName(certName).trim();
+
+    if (!safeCertName || !certFile) return;
+
     setUploadingCert(true);
+
     try {
-      const ext = certFile.name.split('.').pop() || 'pdf';
-      const filePath = `${profile.id}/${Date.now()}.${ext}`;
+      const ext = getFileExtension(certFile.name) || 'pdf';
+      const safeExt = ALLOWED_CERT_EXTENSIONS.includes(ext) ? ext : 'pdf';
+      const filePath = `${profile.id}/${Date.now()}.${safeExt}`;
+
       const response = await fetch(certFile.uri);
       const blob = await response.blob();
+
       const { error: uploadError } = await supabase.storage
         .from('mechanic-certificates')
-        .upload(filePath, blob, { contentType: certFile.mimeType || 'application/octet-stream' });
+        .upload(filePath, blob, {
+          contentType: certFile.mimeType || getMimeFromExtension(safeExt),
+        });
+
       if (uploadError) throw uploadError;
+
       const { data: urlData } = supabase.storage
         .from('mechanic-certificates')
         .getPublicUrl(filePath);
+
       const { error: insertError } = await supabase
         .from('mechanic_certificates')
         .insert({
           mechanic_id: profile.id,
-          name: certName.trim(),
+          name: safeCertName,
           file_url: urlData.publicUrl,
           uploaded_by: profile.id,
         });
+
       if (insertError) throw insertError;
+
       setCertName('');
       setCertFile(null);
-      Alert.alert('✅ Success', 'Certificate uploaded!');
+      Alert.alert('Success', 'Certificate uploaded.');
       fetchCertificates(profile.id);
     } catch (err) {
-      setCertError(err.message);
+      setCertError(err.message || 'Failed to upload certificate.');
     } finally {
       setUploadingCert(false);
     }
   }
 
   async function handleDeleteCertificate(cert) {
-    Alert.alert('Delete Certificate', `Delete "${cert.name}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive', onPress: async () => {
-          setDeletingCertId(cert.id);
-          await supabase.from('mechanic_certificates').delete().eq('id', cert.id);
-          setDeletingCertId(null);
-          fetchCertificates(profile.id);
-        }
-      }
-    ]);
-  }
+    Alert.alert(
+      'Delete Certificate',
+      `Delete "${cert.name}"?`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletingCertId(cert.id);
 
-  const s = styles(theme);
-  const isMechanic = profile?.role === 'mechanic';
-  const displayPhoto = photoUri || savedPhotoUrl;
+            try {
+              const { error } = await supabase
+                .from('mechanic_certificates')
+                .delete()
+                .eq('id', cert.id);
+
+              if (error) throw error;
+
+              fetchCertificates(profile.id);
+            } catch (error) {
+              Alert.alert('Error', error.message || 'Failed to delete certificate.');
+            } finally {
+              setDeletingCertId(null);
+            }
+          },
+        },
+      ]
+    );
+  }
 
   if (loading) {
     return (
@@ -353,66 +783,65 @@ async function handleLogout() {
     );
   }
 
-  const initials = profile
-    ? `${profile.first_name?.[0] || ''}${profile.last_name?.[0] || ''}`.toUpperCase()
-    : '?';
-
   return (
-    <ScrollView style={s.container} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
-
+    <ScrollView
+      style={s.container}
+      contentContainerStyle={s.content}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={s.headerCard}>
-        <View>
-          <Text style={s.headerEyebrow}>MotoFix Account</Text>
-          <Text style={s.headerTitle}>
-            {firstName || lastName ? `${firstName} ${lastName}`.trim() : 'My Profile'}
-          </Text>
-          <Text style={s.headerSubtitle}>
-            {profile?.email || 'Manage your account details'}
-          </Text>
-        </View>
-
-        <View style={s.rolePill}>
-          <Text style={s.rolePillText}>{String(profile?.role || 'customer').replace('_', ' ')}</Text>
-        </View>
-      </View>
-
-      {/* ── Photo Section ── */}
-      <View style={s.photoCard}>
-        <TouchableOpacity onPress={pickPhoto} style={s.photoWrap} activeOpacity={0.8}>
-          {displayPhoto ? (
-            <Image
-              source={{ uri: displayPhoto }}
-              style={s.avatarCircle}
-              resizeMode="cover"
-            />
-          ) : (
-            <View style={[s.avatarCircle, s.avatarPlaceholder]}>
-              <Text style={s.avatarInitials}>{initials}</Text>
-            </View>
-          )}
-
-          {/* Camera badge */}
-          <View style={s.cameraBadge}>
-            <Text style={{ fontSize: 14 }}>📷</Text>
+        <View style={s.headerTop}>
+          <View>
+            <Text style={s.headerEyebrow}>MotoFix Account</Text>
+            <Text style={s.headerTitle}>
+              {firstName || lastName ? `${firstName} ${lastName}`.trim() : 'My Profile'}
+            </Text>
+            <Text style={s.headerSubtitle}>
+              {profile?.email || 'Manage your account details'}
+            </Text>
           </View>
-        </TouchableOpacity>
 
-        <View style={s.photoInfo}>
-          <Text style={s.photoTitle}>Profile Photo</Text>
-          <Text style={s.photoSubtitle}>
-            Tap the photo to change it
-          </Text>
-          {uploadingPhoto && (
-            <ActivityIndicator size="small" color={theme.primaryLight} style={{ marginTop: 6 }} />
-          )}
-          {photoUri && photoUri !== savedPhotoUrl && !uploadingPhoto && (
-            <Text style={s.photoChanged}>📸 New photo selected — tap Save</Text>
-          )}
+          <View style={s.rolePill}>
+            <Text style={s.rolePillText}>
+              {String(profile?.role || 'customer').replace('_', ' ')}
+            </Text>
+          </View>
+        </View>
+
+        <View style={s.photoRow}>
+          <TouchableOpacity onPress={pickPhoto} style={s.photoWrap} activeOpacity={0.85}>
+            {displayPhoto ? (
+              <Image source={{ uri: displayPhoto }} style={s.avatarCircle} resizeMode="cover" />
+            ) : (
+              <View style={[s.avatarCircle, s.avatarPlaceholder]}>
+                <Text style={s.avatarInitials}>{initials}</Text>
+              </View>
+            )}
+
+            <View style={s.cameraBadge}>
+              <Ionicons name="camera" size={15} color="#fff" />
+            </View>
+          </TouchableOpacity>
+
+          <View style={s.photoInfo}>
+            <Text style={s.photoTitle}>Profile Photo</Text>
+            <Text style={s.photoSubtitle}>Tap the photo to change it.</Text>
+
+            {uploadingPhoto && (
+              <View style={s.inlineLoading}>
+                <ActivityIndicator size="small" color={theme.primaryLight} />
+                <Text style={s.inlineLoadingText}>Uploading photo...</Text>
+              </View>
+            )}
+
+            {photoUri && photoUri !== savedPhotoUrl && !uploadingPhoto && (
+              <Text style={s.photoChanged}>New photo selected. Tap Save Changes.</Text>
+            )}
+          </View>
         </View>
       </View>
 
-      {/* ── Account Info ── */}
-      <Text style={s.sectionLabel}>Account Information</Text>
+      <SectionTitle title="Account Information" />
       <View style={s.card}>
         <FieldRow
           theme={theme}
@@ -421,8 +850,9 @@ async function handleLogout() {
           value={firstName}
           onChangeText={(value) => setFirstName(cleanName(value))}
           placeholder="First name"
-          maxLength={40}
+          maxLength={50}
         />
+
         <FieldRow
           theme={theme}
           icon="person-outline"
@@ -430,64 +860,65 @@ async function handleLogout() {
           value={lastName}
           onChangeText={(value) => setLastName(cleanName(value))}
           placeholder="Last name"
-          maxLength={40}
+          maxLength={50}
         />
+
         <FieldRow
           theme={theme}
           icon="call-outline"
           label="Phone"
           value={phone}
-          onChangeText={(value) => setPhone(cleanPhone(value))}
+          onChangeText={(value) => setPhone(formatPhoneInput(value))}
           placeholder="09XXXXXXXXX"
           keyboardType="phone-pad"
           autoCapitalize="none"
           maxLength={11}
+          helper="Must start with 09 and contain exactly 11 digits."
           last
         />
       </View>
 
-      {/* ── Mechanic Info ── */}
-      {isMechanic && (
+      {isMechanic ? (
         <>
-          <Text style={s.sectionLabel}>Mechanic Profile</Text>
+          <SectionTitle title="Mechanic Profile" />
           <View style={s.card}>
             <FieldRow
               theme={theme}
               icon="construct-outline"
               label="Specialization"
               value={specialization}
-              onChangeText={setSpecialization}
+              onChangeText={(value) => setSpecialization(cleanSpecialization(value))}
               placeholder="e.g. Engine Repair, Electrical"
               maxLength={80}
+              helper="Letters, numbers, spaces, and basic symbols only."
               last
             />
           </View>
         </>
-      )}
-
-      {/* ── Motorcycle Info (customers) ── */}
-      {!isMechanic && (
+      ) : (
         <>
-          <Text style={s.sectionLabel}>My Motorcycle</Text>
+          <SectionTitle title="My Motorcycle" />
           <View style={s.card}>
             <FieldRow
               theme={theme}
               icon="bicycle-outline"
               label="Make"
               value={motoMake}
-              onChangeText={setMotoMake}
+              onChangeText={(value) => setMotoMake(cleanMotorcycleText(value))}
               placeholder="e.g. Yamaha"
-              maxLength={40}
+              maxLength={60}
             />
+
             <FieldRow
               theme={theme}
               icon="bicycle-outline"
               label="Model"
               value={motoModel}
-              onChangeText={setMotoModel}
+              onChangeText={(value) => setMotoModel(cleanMotorcycleText(value))}
               placeholder="e.g. Aerox 155"
-              maxLength={50}
+              maxLength={60}
             />
+
             <FieldRow
               theme={theme}
               icon="calendar-outline"
@@ -498,28 +929,102 @@ async function handleLogout() {
               keyboardType="number-pad"
               autoCapitalize="none"
               maxLength={4}
+              helper={`Allowed year: ${MIN_MOTORCYCLE_YEAR}-${MAX_MOTORCYCLE_YEAR}.`}
               last
             />
           </View>
         </>
       )}
 
-      {/* ── Preferences ── */}
-      <Text style={s.sectionLabel}>Preferences</Text>
+      <SectionTitle title="Security" />
+      <View style={s.card}>
+        <TouchableOpacity
+          style={s.securityHeader}
+          onPress={() => setShowPasswordSection((current) => !current)}
+          activeOpacity={0.85}
+        >
+          <View style={s.securityLeft}>
+            <View style={s.securityIcon}>
+              <Ionicons name="lock-closed-outline" size={18} color={theme.primaryLight} />
+            </View>
+            <View>
+              <Text style={s.securityTitle}>Change Password</Text>
+              <Text style={s.securitySub}>Update your account password securely.</Text>
+            </View>
+          </View>
+
+          <Ionicons
+            name={showPasswordSection ? 'chevron-up' : 'chevron-down'}
+            size={20}
+            color={theme.textMuted}
+          />
+        </TouchableOpacity>
+
+        {showPasswordSection && (
+          <View style={s.passwordBox}>
+            <PasswordRow
+              theme={theme}
+              label="Current Password"
+              value={currentPassword}
+              onChangeText={(value) => setCurrentPassword(cleanPassword(value))}
+              secure={!showCurrentPassword}
+              onToggleSecure={() => setShowCurrentPassword((current) => !current)}
+              placeholder="Enter current password"
+            />
+
+            <PasswordRow
+              theme={theme}
+              label="New Password"
+              value={newPassword}
+              onChangeText={(value) => setNewPassword(cleanPassword(value))}
+              secure={!showNewPassword}
+              onToggleSecure={() => setShowNewPassword((current) => !current)}
+              placeholder="At least 6 characters"
+            />
+
+            <PasswordRow
+              theme={theme}
+              label="Confirm New Password"
+              value={confirmNewPassword}
+              onChangeText={(value) => setConfirmNewPassword(cleanPassword(value))}
+              secure={!showConfirmPassword}
+              onToggleSecure={() => setShowConfirmPassword((current) => !current)}
+              placeholder="Re-enter new password"
+              last
+            />
+
+            <TouchableOpacity
+              style={[s.passwordButton, changingPassword && { opacity: 0.65 }]}
+              onPress={handleChangePassword}
+              disabled={changingPassword}
+            >
+              {changingPassword ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={s.passwordButtonText}>Change Password</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+
+      <SectionTitle title="Preferences" />
       <View style={s.card}>
         <View style={s.toggleRow}>
           <View style={s.toggleLeft}>
-            <Ionicons
-              name={isDark ? 'moon' : 'sunny'}
-              size={20}
-              color={theme.primaryLight}
-              style={{ marginRight: 12 }}
-            />
+            <View style={s.toggleIcon}>
+              <Ionicons
+                name={isDark ? 'moon' : 'sunny'}
+                size={20}
+                color={theme.primaryLight}
+              />
+            </View>
             <View>
               <Text style={s.toggleLabel}>Dark Mode</Text>
               <Text style={s.toggleSub}>{isDark ? 'Currently dark' : 'Currently light'}</Text>
             </View>
           </View>
+
           <Switch
             value={isDark}
             onValueChange={toggleTheme}
@@ -529,110 +1034,98 @@ async function handleLogout() {
         </View>
       </View>
 
-      {/* ── Certificates Management Section ── */}
       {isMechanic && (
         <>
-          <Text style={s.sectionLabel}>My Certificates</Text>
+          <SectionTitle title="My Certificates" />
           <View style={s.card}>
-            {/* Error */}
             {certError ? (
-              <View style={{ backgroundColor: '#ef444418', borderRadius: 8, padding: 10, margin: 14, marginBottom: 0 }}>
-                <Text style={{ color: '#ef4444', fontSize: 13 }}>{certError}</Text>
+              <View style={s.errorBox}>
+                <Text style={s.errorText}>{certError}</Text>
               </View>
             ) : null}
-            {/* Upload form */}
-            <View style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: theme.border }}>
-              <Text style={{ fontSize: 12, fontWeight: 'bold', color: theme.textMuted, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                Upload New Certificate
-              </Text>
+
+            <View style={s.certUploadBox}>
+              <Text style={s.certUploadTitle}>Upload New Certificate</Text>
+
               <TextInput
-                style={{
-                  borderWidth: 1, borderColor: theme.border, borderRadius: 10,
-                  padding: 12, fontSize: 14, color: theme.text,
-                  backgroundColor: theme.bg2, marginBottom: 10,
-                }}
-                placeholder="Certificate name (e.g. TESDA NC II)"
+                style={s.simpleInput}
+                placeholder="Certificate name, e.g. TESDA NC II"
                 placeholderTextColor={theme.textMuted}
                 value={certName}
-                onChangeText={setCertName}
+                onChangeText={(value) => setCertName(cleanCertName(value))}
+                maxLength={80}
               />
-              <TouchableOpacity
-                style={{
-                  borderWidth: 1, borderColor: theme.border, borderRadius: 10,
-                  padding: 12, marginBottom: 10, backgroundColor: theme.bg2,
-                  alignItems: 'center',
-                }}
-                onPress={pickCertFile}
-              >
-                <Text style={{ fontSize: 13, color: certFile ? theme.primaryLight : theme.textSub }}>
-                  {certFile ? `📄 ${certFile.name}` : '📁 Pick file (image or PDF)'}
+
+              <TouchableOpacity style={s.filePickerButton} onPress={pickCertFile}>
+                <Ionicons
+                  name="document-attach-outline"
+                  size={18}
+                  color={certFile ? theme.primaryLight : theme.textMuted}
+                />
+                <Text style={[s.filePickerText, certFile && { color: theme.primaryLight }]}>
+                  {certFile ? certFile.name : 'Pick file: image or PDF'}
                 </Text>
               </TouchableOpacity>
+
               <TouchableOpacity
-                style={{
-                  backgroundColor: theme.primary, borderRadius: 10,
-                  padding: 12, alignItems: 'center',
-                  opacity: uploadingCert ? 0.6 : 1,
-                }}
+                style={[s.uploadButton, uploadingCert && { opacity: 0.65 }]}
                 onPress={handleUploadCertificate}
                 disabled={uploadingCert}
               >
-                {uploadingCert
-                  ? <ActivityIndicator color="#fff" size="small" />
-                  : <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 14 }}>+ Upload Certificate</Text>
-                }
+                {uploadingCert ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={s.uploadButtonText}>+ Upload Certificate</Text>
+                )}
               </TouchableOpacity>
             </View>
-            {/* Certificates list */}
+
             {loadingCerts ? (
-              <View style={{ padding: 16, alignItems: 'center' }}>
+              <View style={s.emptyCertBox}>
                 <ActivityIndicator size="small" color={theme.primaryLight} />
               </View>
             ) : certificates.length === 0 ? (
-              <View style={{ padding: 16 }}>
-                <Text style={{ fontSize: 13, color: theme.textMuted }}>No certificates uploaded yet.</Text>
+              <View style={s.emptyCertBox}>
+                <Text style={s.emptyCertText}>No certificates uploaded yet.</Text>
               </View>
             ) : (
-              certificates.map((c, index) => (
+              certificates.map((certificate, index) => (
                 <View
-                  key={c.id}
+                  key={certificate.id}
                   style={[
                     s.certRow,
-                    index < certificates.length - 1 && { borderBottomWidth: 1, borderBottomColor: theme.border },
+                    index < certificates.length - 1 && {
+                      borderBottomWidth: 1,
+                      borderBottomColor: theme.border,
+                    },
                   ]}
                 >
-                  <Text style={{ fontSize: 18, marginRight: 12 }}>📄</Text>
+                  <View style={s.certIcon}>
+                    <Ionicons name="document-text-outline" size={20} color={theme.primaryLight} />
+                  </View>
+
                   <View style={{ flex: 1 }}>
-                    <Text style={s.certName}>{c.name}</Text>
+                    <Text style={s.certName}>{certificate.name}</Text>
                     <Text style={s.certDate}>
-                      Uploaded {new Date(c.created_at).toLocaleDateString()}
+                      Uploaded {new Date(certificate.created_at).toLocaleDateString()}
                     </Text>
                   </View>
-                  <View style={{ flexDirection: 'row', gap: 8, flexShrink: 0 }}>
+
+                  <View style={s.certActions}>
                     <TouchableOpacity
-                      onPress={() => {
-                        const { Linking } = require('react-native');
-                        Linking.openURL(c.file_url);
-                      }}
+                      onPress={() => Linking.openURL(certificate.file_url)}
                       style={s.viewCertBtn}
                     >
                       <Text style={s.viewCertBtnText}>View</Text>
                     </TouchableOpacity>
+
                     <TouchableOpacity
-                      onPress={() => handleDeleteCertificate(c)}
-                      disabled={deletingCertId === c.id}
-                      style={{
-                        paddingHorizontal: 12,
-                        paddingVertical: 6,
-                        borderRadius: 8,
-                        borderWidth: 1,
-                        borderColor: '#ef444444',
-                        backgroundColor: '#ef444418',
-                        opacity: deletingCertId === c.id ? 0.5 : 1,
-                      }}
+                      onPress={() => handleDeleteCertificate(certificate)}
+                      disabled={deletingCertId === certificate.id}
+                      style={[s.deleteCertBtn, deletingCertId === certificate.id && { opacity: 0.5 }]}
                     >
-                      <Text style={{ fontSize: 12, color: '#ef4444', fontWeight: '600' }}>
-                        {deletingCertId === c.id ? '...' : 'Delete'}
+                      <Text style={s.deleteCertText}>
+                        {deletingCertId === certificate.id ? '...' : 'Delete'}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -643,20 +1136,18 @@ async function handleLogout() {
         </>
       )}
 
-      {/* ── Save Button ── */}
       <TouchableOpacity
-        style={[s.saveBtn, (saving || uploadingPhoto) && { opacity: 0.6 }]}
+        style={[s.saveBtn, (saving || uploadingPhoto) && { opacity: 0.65 }]}
         onPress={handleSave}
         disabled={saving || uploadingPhoto}
       >
-        {(saving || uploadingPhoto) ? (
+        {saving || uploadingPhoto ? (
           <ActivityIndicator color="#fff" />
         ) : (
           <Text style={s.saveBtnText}>Save Changes</Text>
         )}
       </TouchableOpacity>
 
-      {/* ── Logout ── */}
       <TouchableOpacity style={s.logoutBtn} onPress={handleLogout}>
         <Ionicons name="log-out-outline" size={18} color="#fff" style={{ marginRight: 8 }} />
         <Text style={s.logoutText}>Log Out</Text>
@@ -667,7 +1158,21 @@ async function handleLogout() {
   );
 }
 
-// ── Reusable editable field row ──
+function SectionTitle({ title }) {
+  return <Text style={sectionTitleStyles.text}>{title}</Text>;
+}
+
+const sectionTitleStyles = StyleSheet.create({
+  text: {
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+    marginLeft: 4,
+  },
+});
+
 function FieldRow({
   theme,
   icon,
@@ -678,34 +1183,21 @@ function FieldRow({
   keyboardType = 'default',
   autoCapitalize = 'words',
   maxLength,
+  helper,
   last,
 }) {
   const [focused, setFocused] = useState(false);
 
   return (
-    <View
-      style={{
-        padding: 14,
-        borderBottomWidth: last ? 0 : 1,
-        borderBottomColor: theme.border,
-      }}
-    >
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+    <View style={[fieldStyles.row, !last && { borderBottomColor: theme.border, borderBottomWidth: 1 }]}>
+      <View style={fieldStyles.labelRow}>
         <Ionicons
           name={icon}
           size={18}
           color={focused ? theme.primaryLight : theme.textMuted}
           style={{ marginRight: 10 }}
         />
-        <Text
-          style={{
-            fontSize: 12,
-            color: theme.textMuted,
-            fontWeight: '800',
-            textTransform: 'uppercase',
-            letterSpacing: 0.4,
-          }}
-        >
+        <Text style={[fieldStyles.label, { color: focused ? theme.primaryLight : theme.textMuted }]}>
           {label}
         </Text>
       </View>
@@ -720,185 +1212,494 @@ function FieldRow({
         maxLength={maxLength}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
-        style={{
-          fontSize: 15,
-          color: theme.text,
-          fontWeight: '700',
-          borderWidth: 1,
-          borderColor: focused ? theme.primary : theme.border,
-          backgroundColor: theme.bg2 || theme.bg,
-          borderRadius: 12,
-          paddingHorizontal: 12,
-          paddingVertical: 11,
-        }}
+        style={[
+          fieldStyles.input,
+          {
+            color: theme.text,
+            borderColor: focused ? theme.primary : theme.border,
+            backgroundColor: theme.bg2 || theme.bg,
+          },
+        ]}
       />
+
+      {helper ? (
+        <Text style={[fieldStyles.helper, { color: theme.textMuted }]}>
+          {helper}
+        </Text>
+      ) : null}
     </View>
   );
 }
 
-const styles = (theme) => StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.bg },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.bg },
-  content: { padding: 20, paddingBottom: 40 },
+function PasswordRow({
+  theme,
+  label,
+  value,
+  onChangeText,
+  secure,
+  onToggleSecure,
+  placeholder,
+  last,
+}) {
+  return (
+    <View style={[fieldStyles.row, !last && { borderBottomColor: theme.border, borderBottomWidth: 1 }]}>
+      <Text style={[fieldStyles.label, { color: theme.textMuted, marginBottom: 8 }]}>
+        {label}
+      </Text>
 
-  headerCard: {
-    backgroundColor: theme.card,
-    borderRadius: 18,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: theme.border,
-    marginBottom: 16,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  headerEyebrow: {
-    color: theme.primaryLight,
-    fontSize: 11,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 5,
-  },
-  headerTitle: {
-    color: theme.text,
-    fontSize: 22,
-    fontWeight: '900',
-    lineHeight: 28,
-  },
-  headerSubtitle: {
-    color: theme.textMuted,
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 3,
-  },
-  rolePill: {
-    backgroundColor: theme.primary + '18',
-    borderWidth: 1,
-    borderColor: theme.primary + '44',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  rolePillText: {
-    color: theme.primaryLight,
-    fontSize: 10,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-  },
+      <View
+        style={[
+          fieldStyles.passwordInputWrap,
+          {
+            borderColor: theme.border,
+            backgroundColor: theme.bg2 || theme.bg,
+          },
+        ]}
+      >
+        <TextInput
+          value={value}
+          onChangeText={typeof onChangeText === 'function' ? onChangeText : undefined}
+          placeholder={placeholder}
+          placeholderTextColor={theme.textMuted}
+          secureTextEntry={secure}
+          autoCapitalize="none"
+          autoCorrect={false}
+          maxLength={MAX_PASSWORD_LENGTH}
+          style={[fieldStyles.passwordInput, { color: theme.text }]}
+        />
 
-  // Photo card
-  photoCard: {
-    backgroundColor: theme.card,
-    borderRadius: 16,
-    padding: 18,
+        <TouchableOpacity onPress={onToggleSecure} style={fieldStyles.eyeButton}>
+          <Ionicons
+            name={secure ? 'eye-outline' : 'eye-off-outline'}
+            size={20}
+            color={theme.textMuted}
+          />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+const fieldStyles = StyleSheet.create({
+  row: {
+    padding: 14,
+  },
+  labelRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
-    borderWidth: 1,
-    borderColor: theme.border,
-    marginBottom: 24,
+    marginBottom: 8,
   },
-  photoWrap: { position: 'relative' },
-  avatarCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 2,
-    borderColor: theme.primary,
-  },
-  motoPhoto: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 2,
-    borderColor: theme.primary,
-  },
-  avatarPlaceholder: {
-    backgroundColor: theme.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarInitials: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
-  cameraBadge: {
-    position: 'absolute',
-    bottom: -4,
-    right: -4,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: theme.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: theme.bg,
-  },
-  photoInfo: { flex: 1 },
-  photoTitle: { fontSize: 15, fontWeight: 'bold', color: theme.text, marginBottom: 4 },
-  photoSubtitle: { fontSize: 12, color: theme.textMuted },
-  photoChanged: { fontSize: 11, color: theme.success || '#22c55e', marginTop: 6 },
-
-  // Sections
-  sectionLabel: {
+  label: {
     fontSize: 12,
-    fontWeight: 'bold',
-    color: theme.textMuted,
+    fontWeight: '900',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    marginBottom: 8,
-    marginLeft: 4,
   },
-  card: {
-    backgroundColor: theme.card,
-    borderRadius: 14,
+  input: {
+    fontSize: 15,
+    fontWeight: '700',
     borderWidth: 1,
-    borderColor: theme.border,
-    marginBottom: 20,
-    overflow: 'hidden',
-  },
-
-  // Toggle
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-  },
-  toggleLeft: { flexDirection: 'row', alignItems: 'center' },
-  toggleLabel: { fontSize: 14, color: theme.text, fontWeight: '600' },
-  toggleSub: { fontSize: 12, color: theme.textMuted, marginTop: 1 },
-
-  // Certificates
-  certRow: { flexDirection: 'row', alignItems: 'center', padding: 14 },
-  certName: { fontSize: 14, color: theme.text, fontWeight: '500' },
-  certDate: { fontSize: 11, color: theme.textMuted, marginTop: 2 },
-  viewCertBtn: {
+    borderRadius: 13,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: theme.primary + '44',
-    backgroundColor: theme.primary + '18',
+    paddingVertical: 11,
   },
-  viewCertBtnText: { fontSize: 12, color: theme.primaryLight, fontWeight: '600' },
-
-  // Buttons
-  saveBtn: {
-    backgroundColor: theme.primary,
-    borderRadius: 14,
-    padding: 16,
-    alignItems: 'center',
-    marginBottom: 12,
+  helper: {
+    marginTop: 6,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '600',
   },
-  saveBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  logoutBtn: {
+  passwordInputWrap: {
     flexDirection: 'row',
-    backgroundColor: '#DC2626',
-    padding: 16,
-    borderRadius: 12,
     alignItems: 'center',
-    justifyContent: 'center',
+    borderWidth: 1,
+    borderRadius: 13,
+    paddingHorizontal: 12,
   },
-  logoutText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
+  passwordInput: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '700',
+    paddingVertical: 11,
+  },
+  eyeButton: {
+    paddingLeft: 10,
+    paddingVertical: 8,
+  },
 });
+
+const styles = (theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.bg,
+    },
+    centered: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: theme.bg,
+    },
+    content: {
+      padding: 16,
+      paddingBottom: 40,
+    },
+
+    headerCard: {
+      backgroundColor: theme.card,
+      borderRadius: 24,
+      padding: 18,
+      borderWidth: 1,
+      borderColor: theme.border,
+      marginBottom: 20,
+    },
+    headerTop: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 12,
+      marginBottom: 18,
+    },
+    headerEyebrow: {
+      color: theme.primaryLight,
+      fontSize: 11,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+      marginBottom: 5,
+    },
+    headerTitle: {
+      color: theme.text,
+      fontSize: 24,
+      fontWeight: '900',
+      lineHeight: 30,
+    },
+    headerSubtitle: {
+      color: theme.textSub || theme.textMuted,
+      fontSize: 12,
+      fontWeight: '700',
+      marginTop: 4,
+    },
+    rolePill: {
+      backgroundColor: theme.primary + '22',
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+    },
+    rolePillText: {
+      color: theme.primaryLight,
+      fontSize: 10,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+    },
+
+    photoRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 14,
+      paddingTop: 4,
+    },
+    photoWrap: {
+      position: 'relative',
+    },
+    avatarCircle: {
+      width: 84,
+      height: 84,
+      borderRadius: 42,
+      borderWidth: 3,
+      borderColor: theme.primary,
+    },
+    avatarPlaceholder: {
+      backgroundColor: theme.primary,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    avatarInitials: {
+      color: '#fff',
+      fontSize: 24,
+      fontWeight: '900',
+    },
+    cameraBadge: {
+      position: 'absolute',
+      bottom: 0,
+      right: 0,
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      backgroundColor: theme.primary,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderWidth: 2,
+      borderColor: theme.card,
+    },
+    photoInfo: {
+      flex: 1,
+    },
+    photoTitle: {
+      fontSize: 16,
+      fontWeight: '900',
+      color: theme.text,
+      marginBottom: 4,
+    },
+    photoSubtitle: {
+      fontSize: 12,
+      color: theme.textSub || theme.textMuted,
+      lineHeight: 18,
+    },
+    photoChanged: {
+      fontSize: 11,
+      color: theme.success || '#22c55e',
+      marginTop: 7,
+      fontWeight: '800',
+    },
+    inlineLoading: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: 7,
+      gap: 8,
+    },
+    inlineLoadingText: {
+      color: theme.primaryLight,
+      fontSize: 11,
+      fontWeight: '800',
+    },
+
+    card: {
+      backgroundColor: theme.card,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.border,
+      marginBottom: 18,
+      overflow: 'hidden',
+    },
+
+    securityHeader: {
+      padding: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    securityLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      gap: 12,
+    },
+    securityIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 14,
+      backgroundColor: theme.primary + '18',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    securityTitle: {
+      color: theme.text,
+      fontSize: 14,
+      fontWeight: '900',
+    },
+    securitySub: {
+      color: theme.textSub || theme.textMuted,
+      fontSize: 12,
+      marginTop: 2,
+    },
+    passwordBox: {
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+      paddingBottom: 14,
+    },
+    passwordButton: {
+      marginHorizontal: 14,
+      marginTop: 8,
+      backgroundColor: theme.primary,
+      borderRadius: 13,
+      paddingVertical: 13,
+      alignItems: 'center',
+    },
+    passwordButtonText: {
+      color: '#fff',
+      fontWeight: '900',
+      fontSize: 14,
+    },
+
+    toggleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: 16,
+    },
+    toggleLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+    },
+    toggleIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 14,
+      backgroundColor: theme.primary + '18',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 12,
+    },
+    toggleLabel: {
+      fontSize: 14,
+      color: theme.text,
+      fontWeight: '900',
+    },
+    toggleSub: {
+      fontSize: 12,
+      color: theme.textSub || theme.textMuted,
+      marginTop: 2,
+    },
+
+    errorBox: {
+      backgroundColor: '#ef444418',
+      borderRadius: 12,
+      padding: 12,
+      margin: 14,
+      marginBottom: 0,
+    },
+    errorText: {
+      color: '#ef4444',
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    certUploadBox: {
+      padding: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    certUploadTitle: {
+      fontSize: 12,
+      fontWeight: '900',
+      color: theme.textMuted,
+      marginBottom: 10,
+      textTransform: 'uppercase',
+      letterSpacing: 0.6,
+    },
+    simpleInput: {
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 13,
+      padding: 12,
+      fontSize: 14,
+      color: theme.text,
+      backgroundColor: theme.bg2,
+      marginBottom: 10,
+      fontWeight: '700',
+    },
+    filePickerButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderRadius: 13,
+      padding: 12,
+      marginBottom: 10,
+      backgroundColor: theme.bg2,
+      gap: 8,
+    },
+    filePickerText: {
+      fontSize: 13,
+      color: theme.textSub || theme.textMuted,
+      fontWeight: '700',
+      flex: 1,
+    },
+    uploadButton: {
+      backgroundColor: theme.primary,
+      borderRadius: 13,
+      padding: 13,
+      alignItems: 'center',
+    },
+    uploadButtonText: {
+      color: '#fff',
+      fontWeight: '900',
+      fontSize: 14,
+    },
+    emptyCertBox: {
+      padding: 16,
+      alignItems: 'center',
+    },
+    emptyCertText: {
+      fontSize: 13,
+      color: theme.textMuted,
+      fontWeight: '700',
+    },
+    certRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 14,
+      gap: 12,
+    },
+    certIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 13,
+      backgroundColor: theme.primary + '16',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    certName: {
+      fontSize: 14,
+      color: theme.text,
+      fontWeight: '900',
+    },
+    certDate: {
+      fontSize: 11,
+      color: theme.textMuted,
+      marginTop: 3,
+      fontWeight: '600',
+    },
+    certActions: {
+      flexDirection: 'row',
+      gap: 8,
+      flexShrink: 0,
+    },
+    viewCertBtn: {
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 10,
+      backgroundColor: theme.primary + '18',
+    },
+    viewCertBtnText: {
+      fontSize: 12,
+      color: theme.primaryLight,
+      fontWeight: '900',
+    },
+    deleteCertBtn: {
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 10,
+      backgroundColor: '#ef444418',
+    },
+    deleteCertText: {
+      fontSize: 12,
+      color: '#ef4444',
+      fontWeight: '900',
+    },
+
+    saveBtn: {
+      backgroundColor: theme.primary,
+      borderRadius: 16,
+      padding: 16,
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    saveBtnText: {
+      color: '#fff',
+      fontWeight: '900',
+      fontSize: 16,
+    },
+    logoutBtn: {
+      flexDirection: 'row',
+      backgroundColor: '#DC2626',
+      padding: 16,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    logoutText: {
+      color: '#fff',
+      fontWeight: '900',
+      fontSize: 15,
+    },
+  });
