@@ -13,11 +13,9 @@ import {
   getConsentDefinitionSafe,
 } from '../lib/consents';
 
-const GCASH_QR_IMAGE =
-  'https://wcqqduuimpjipwvwzyzx.supabase.co/storage/v1/object/public/motorcycle-photos/MISCS/GCASH%20(1).jpg';
-
 function formatPeso(value) {
   const amount = Number(value) || 0;
+
   return `₱${amount.toLocaleString('en-PH', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -30,19 +28,60 @@ function normalizeRate(value) {
   return rate > 1 ? rate / 100 : rate;
 }
 
+function cleanText(value) {
+  return String(value || '').trim();
+}
+
+function OptionCard({ active, title, subtitle, icon, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-2xl border p-4 text-left transition active:scale-[0.99] ${
+        active
+          ? 'border-primary-500 bg-primary-50 ring-4 ring-primary-500/10 dark:border-primary-500 dark:bg-primary-900/20'
+          : 'border-gray-200 bg-gray-50 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-900/70 dark:hover:border-primary-500/40'
+      }`}
+    >
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-lg">{icon}</span>
+        <span className="text-sm font-black text-gray-950 dark:text-white">
+          {title}
+        </span>
+      </div>
+      <p className="text-xs leading-5 text-gray-600 dark:text-gray-400">
+        {subtitle}
+      </p>
+    </button>
+  );
+}
+
 export default function Checkout() {
   const { user, profile } = useAuth();
-  const { cart, total, itemCount, clearCart } = useCart();
+  const { cart, total, itemCount, clearCart, refreshCart } = useCart();
   const navigate = useNavigate();
 
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [validatingStock, setValidatingStock] = useState(false);
   const [error, setError] = useState('');
+
   const [downPaymentRate, setDownPaymentRate] = useState(0.15);
   const [agreedToOrderConsent, setAgreedToOrderConsent] = useState(false);
   const [orderConsent, setOrderConsent] = useState(null);
   const [invoiceConsent, setInvoiceConsent] = useState(null);
   const [consentLoading, setConsentLoading] = useState(true);
+
+  const [fulfillmentMethod, setFulfillmentMethod] = useState('pickup');
+  const [paymentMethod, setPaymentMethod] = useState('cash_on_pickup');
+  const [paymentReference, setPaymentReference] = useState('');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [pickupNotes, setPickupNotes] = useState('');
+  const [contactPhone, setContactPhone] = useState(profile?.phone || '');
+
+  useEffect(() => {
+    setContactPhone(profile?.phone || '');
+  }, [profile?.phone]);
 
   useEffect(() => {
     let mounted = true;
@@ -88,14 +127,95 @@ export default function Checkout() {
     };
   }, []);
 
-  const downPayment = total * downPaymentRate;
-  const remainingBalance = total - downPayment;
   const downPaymentPercent = Math.round(downPaymentRate * 100);
+  const onlinePaymentAmount =
+    paymentMethod === 'paymongo_qrph'
+      ? Number(total.toFixed(2))
+      : paymentMethod === 'gcash_manual'
+        ? Number((total * downPaymentRate).toFixed(2))
+        : 0;
+  const requiredDownPayment = onlinePaymentAmount;
+  const remainingBalance = Number((total - onlinePaymentAmount).toFixed(2));
 
   const customerName = useMemo(() => {
     const fullName = `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim();
     return fullName || 'Customer';
   }, [profile]);
+
+  async function validateCartStock() {
+    setValidatingStock(true);
+
+    try {
+      if (!cart.length) return { ok: false, message: 'Your cart is empty.' };
+
+      const ids = [...new Set(cart.map((item) => item.id).filter(Boolean))];
+
+      const { data, error: stockError } = await supabase
+        .from('parts')
+        .select('id, name, stock_quantity, is_active')
+        .in('id', ids);
+
+      if (stockError) throw stockError;
+
+      const partsById = new Map((data || []).map((part) => [part.id, part]));
+
+      for (const item of cart) {
+        const latest = partsById.get(item.id);
+
+        if (!latest || latest.is_active === false) {
+          return {
+            ok: false,
+            message: `${item.name} is no longer available. Please remove it from your cart.`,
+          };
+        }
+
+        const latestStock = Number(latest.stock_quantity) || 0;
+
+        if (latestStock <= 0) {
+          return {
+            ok: false,
+            message: `${item.name} is already out of stock.`,
+          };
+        }
+
+        if (Number(item.quantity) > latestStock) {
+          return {
+            ok: false,
+            message: `Only ${latestStock} item(s) are available for ${item.name}. Please update the quantity.`,
+          };
+        }
+      }
+
+      return { ok: true };
+    } finally {
+      setValidatingStock(false);
+    }
+  }
+
+  async function createOrderQrphCheckout(orderId) {
+    const { data, error: invokeError } = await supabase.functions.invoke(
+      'create-order-qrph-checkout',
+      {
+        body: {
+          order_id: orderId,
+        },
+      }
+    );
+
+    if (invokeError) {
+      throw new Error(invokeError.message || 'Failed to create PayMongo checkout.');
+    }
+
+    if (data?.error) {
+      throw new Error(data.error);
+    }
+
+    if (!data?.checkout_url) {
+      throw new Error('PayMongo checkout URL was not returned.');
+    }
+
+    return data;
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -112,10 +232,33 @@ export default function Checkout() {
       return;
     }
 
+    if (!cleanText(contactPhone)) {
+      setError('Please enter a contact number for this order.');
+      return;
+    }
+
+    if (fulfillmentMethod === 'delivery' && !cleanText(deliveryAddress)) {
+      setError('Please enter your delivery address.');
+      return;
+    }
+
+    if (paymentMethod === 'gcash_manual' && !cleanText(paymentReference)) {
+      setError('Please enter the GCash reference number before submitting.');
+      return;
+    }
+
     setSubmitting(true);
     setError('');
 
     try {
+      const stockCheck = await validateCartStock();
+
+      if (!stockCheck.ok) {
+        setError(stockCheck.message);
+        await refreshCart?.();
+        return;
+      }
+
       await acceptMultipleCustomerConsents({
         consentTypes: [
           CONSENT_TYPES.ORDER_PAYMENT_PROCESSING,
@@ -125,12 +268,25 @@ export default function Checkout() {
         metadata: {
           cart_item_count: itemCount,
           cart_total: total,
-          down_payment: Number(downPayment) || 0,
-          remaining_balance: Number(remainingBalance) || 0,
-          payment_method_hint: 'gcash',
-          notes_provided: Boolean(notes.trim()),
+          down_payment: requiredDownPayment,
+          remaining_balance: remainingBalance,
+          fulfillment_method: fulfillmentMethod,
+          payment_method: paymentMethod,
+          payment_reference_provided: Boolean(cleanText(paymentReference)),
+          notes_provided: Boolean(cleanText(notes)),
         },
       });
+
+      const paymentStatus =
+        paymentMethod === 'gcash_manual'
+          ? 'pending_verification'
+          : 'pending_payment';
+
+      let checkoutData = null;
+      let finalPaymentStatus = paymentStatus;
+
+      const fulfillmentStatus =
+        fulfillmentMethod === 'delivery' ? 'pending_delivery' : 'pending_pickup';
 
       const { data: order, error: orderError } = await supabase
         .from('orders')
@@ -138,7 +294,24 @@ export default function Checkout() {
           customer_id: user.id,
           total_amount: total,
           status: 'pending',
-          notes,
+
+          payment_status: paymentStatus,
+          payment_method: paymentMethod,
+          payment_reference: cleanText(paymentReference) || null,
+          // Do not count the amount as paid yet.
+          // PayMongo becomes paid only after webhook; GCash manual becomes paid only after staff/admin verification.
+          down_payment_amount: 0,
+          remaining_balance: total,
+
+          fulfillment_method: fulfillmentMethod,
+          fulfillment_status: fulfillmentStatus,
+          delivery_address:
+            fulfillmentMethod === 'delivery' ? cleanText(deliveryAddress) : null,
+          pickup_notes:
+            fulfillmentMethod === 'pickup' ? cleanText(pickupNotes) || null : null,
+          customer_contact_phone: cleanText(contactPhone),
+
+          notes: cleanText(notes) || null,
         })
         .select()
         .single();
@@ -166,51 +339,77 @@ export default function Checkout() {
           partId: item.id,
           movementType: 'sold_order',
           quantity: item.quantity,
-          reason: 'Part sold through customer checkout',
+          reason: 'Product sold through customer checkout',
           relatedOrderId: order.id,
         });
       }
 
-      await notifyUser({
-        userId: user.id,
-        title: 'Order Submitted',
-        message:
-          'Your parts order has been submitted. Please wait for admin confirmation.',
-        type: 'order',
-        relatedTable: 'orders',
-        relatedId: order.id,
-      });
+      if (paymentMethod === 'paymongo_qrph') {
+        checkoutData = await createOrderQrphCheckout(order.id);
+        finalPaymentStatus = 'checkout_created';
+      }
 
-      await notifyRole({
-        role: 'admin',
-        title: 'New Parts Order',
-        message: 'A customer submitted a new parts order.',
-        type: 'order',
-        relatedTable: 'orders',
-        relatedId: order.id,
-      });
+      await Promise.allSettled([
+        notifyUser({
+          userId: user.id,
+          title: 'Order Submitted',
+          message:
+            paymentMethod === 'paymongo_qrph'
+              ? 'Your order was submitted. Please complete your PayMongo QR Ph / GCash payment.'
+              : paymentMethod === 'gcash_manual'
+                ? 'Your order was submitted and is waiting for GCash payment verification.'
+                : 'Your order was submitted. Please pay at the shop during pickup or release.',
+          type: 'order',
+          relatedTable: 'orders',
+          relatedId: order.id,
+        }),
 
-      await notifyRole({
-        role: 'staff',
-        title: 'New Parts Order',
-        message: 'A new parts order is waiting for processing.',
-        type: 'order',
-        relatedTable: 'orders',
-        relatedId: order.id,
-      });
+        notifyRole({
+          role: 'admin',
+          title: 'New Product Order',
+          message:
+            paymentMethod === 'paymongo_qrph'
+              ? 'A customer submitted a product order and PayMongo checkout was created.'
+              : paymentMethod === 'gcash_manual'
+                ? 'A customer submitted a product order with GCash payment reference for verification.'
+                : 'A customer submitted a product order for counter payment.',
+          type: 'order',
+          relatedTable: 'orders',
+          relatedId: order.id,
+        }),
 
-      clearCart();
+        notifyRole({
+          role: 'staff',
+          title: 'New Product Order',
+          message: 'A new product order is waiting for staff processing.',
+          type: 'order',
+          relatedTable: 'orders',
+          relatedId: order.id,
+        }),
+      ]);
+
+      const submittedItems = cart.map((item) => ({ ...item }));
+
+      await clearCart();
 
       navigate('/order-confirmation', {
         state: {
           order,
-          items: cart,
+          items: submittedItems,
           total,
-          downPayment,
-          remainingBalance,
+          downPayment: 0,
+          remainingBalance: total,
           downPaymentRate,
+          fulfillmentMethod,
+          paymentMethod,
+          paymentStatus: finalPaymentStatus,
+          checkoutUrl: checkoutData?.checkout_url || null,
         },
       });
+
+      if (checkoutData?.checkout_url) {
+        window.open(checkoutData.checkout_url, '_blank', 'noopener,noreferrer');
+      }
     } catch (err) {
       setError(err.message || 'Failed to submit order.');
     } finally {
@@ -230,9 +429,10 @@ export default function Checkout() {
               Your cart is empty
             </h1>
             <p className="mb-6 text-sm leading-6 text-gray-600 dark:text-gray-400">
-              Browse our shop and add motorcycle parts before checking out.
+              Browse products before checking out.
             </p>
             <button
+              type="button"
               onClick={() => navigate('/shop')}
               className="rounded-2xl bg-primary-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 active:scale-[0.98]"
             >
@@ -250,44 +450,34 @@ export default function Checkout() {
       className="min-h-[calc(100vh-65px)] bg-gray-50 px-4 py-8 text-gray-900 dark:bg-dark-900 dark:text-white sm:px-6 lg:py-10"
     >
       <div className="mx-auto max-w-6xl">
-        {/* Header */}
-        <div className="mb-8 flex flex-col gap-4 rounded-3xl border border-gray-200 bg-white p-6 shadow-sm dark:border-dark-700 dark:bg-dark-800/70">
-          <div>
-            <p className="mb-2 text-xs font-bold uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
-              MotoFix Checkout
-            </p>
-            <h1 className="text-3xl font-black tracking-tight text-gray-950 dark:text-white md:text-4xl">
-              Review your order
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
-              Check your items, confirm your details, and scan the GCash QR for your required down payment.
-            </p>
-          </div>
+        <div className="mb-8 rounded-3xl border border-gray-200 bg-white p-6 shadow-sm dark:border-dark-700 dark:bg-dark-800/70">
+          <p className="mb-2 text-xs font-bold uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
+            MotoFix Checkout
+          </p>
+          <h1 className="text-3xl font-black tracking-tight text-gray-950 dark:text-white md:text-4xl">
+            Review and place order
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
+            Confirm your products, choose pickup or delivery, then select your payment option.
+          </p>
         </div>
 
         {error && (
-          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
             {error}
           </div>
         )}
 
         <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
-          {/* Left column */}
           <div className="space-y-6">
-            {/* Customer info */}
             <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-black uppercase tracking-wider text-gray-800 dark:text-gray-100">
-                    Customer Info
-                  </h2>
-                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    Used for your order record.
-                  </p>
-                </div>
-                <span className="rounded-full bg-primary-50 px-3 py-1 text-xs font-bold text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
-                  Account
-                </span>
+              <div className="mb-4">
+                <h2 className="text-sm font-black uppercase tracking-wider text-gray-800 dark:text-gray-100">
+                  Customer Details
+                </h2>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  These details are used for order processing and staff contact.
+                </p>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-3">
@@ -299,6 +489,7 @@ export default function Checkout() {
                     {customerName}
                   </p>
                 </div>
+
                 <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
                   <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     Email
@@ -307,18 +498,21 @@ export default function Checkout() {
                     {profile?.email || user?.email || 'No email on file'}
                   </p>
                 </div>
-                <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
+
+                <label className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
                   <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    Phone
+                    Contact Number
                   </p>
-                  <p className="truncate text-sm font-semibold text-gray-800 dark:text-gray-200">
-                    {profile?.phone || 'No phone on file'}
-                  </p>
-                </div>
+                  <input
+                    value={contactPhone}
+                    onChange={(event) => setContactPhone(event.target.value)}
+                    placeholder="09XXXXXXXXX"
+                    className="w-full bg-transparent text-sm font-semibold text-gray-900 outline-none placeholder:text-gray-400 dark:text-white"
+                  />
+                </label>
               </div>
             </section>
 
-            {/* Order items */}
             <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
@@ -369,7 +563,7 @@ export default function Checkout() {
                               {item.name}
                             </p>
                             <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
-                              {item.category || 'Part'} · {formatPeso(price)} × {item.quantity}
+                              {item.category || 'Product'} · {formatPeso(price)} × {item.quantity}
                             </p>
                           </div>
                           <p className="shrink-0 text-sm font-black text-accent-600 dark:text-accent-400">
@@ -377,14 +571,9 @@ export default function Checkout() {
                           </p>
                         </div>
 
-                        {item.compatible_models?.length > 0 && (
-                          <p className="mt-2 rounded-full bg-primary-50 px-3 py-1 text-xs font-semibold text-primary-700 dark:bg-primary-900/25 dark:text-primary-300">
-                            For: {item.compatible_models.slice(0, 2).join(', ')}
-                            {item.compatible_models.length > 2
-                              ? ` +${item.compatible_models.length - 2} more`
-                              : ''}
-                          </p>
-                        )}
+                        <p className="mt-2 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                          Stock available: {item.stock_quantity}
+                        </p>
                       </div>
                     </div>
                   );
@@ -392,79 +581,124 @@ export default function Checkout() {
               </div>
             </section>
 
-            {/* Notes */}
+            <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+              <h2 className="mb-3 text-sm font-black uppercase tracking-wider text-gray-800 dark:text-gray-100">
+                Fulfillment Method
+              </h2>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <OptionCard
+                  active={fulfillmentMethod === 'pickup'}
+                  icon="🏪"
+                  title="Pickup at Shop"
+                  subtitle="Customer will pick up the products at the MotoFix shop."
+                  onClick={() => setFulfillmentMethod('pickup')}
+                />
+
+                <OptionCard
+                  active={fulfillmentMethod === 'delivery'}
+                  icon="🛵"
+                  title="Delivery"
+                  subtitle="Staff will process the order for delivery or release."
+                  onClick={() => setFulfillmentMethod('delivery')}
+                />
+              </div>
+
+              {fulfillmentMethod === 'delivery' ? (
+                <label className="mt-4 block">
+                  <span className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Delivery Address
+                  </span>
+                  <textarea
+                    value={deliveryAddress}
+                    onChange={(event) => setDeliveryAddress(event.target.value)}
+                    rows={3}
+                    placeholder="Enter complete delivery address..."
+                    className="w-full resize-none rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500 dark:focus:border-primary-500"
+                  />
+                </label>
+              ) : (
+                <label className="mt-4 block">
+                  <span className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Pickup Notes
+                  </span>
+                  <input
+                    value={pickupNotes}
+                    onChange={(event) => setPickupNotes(event.target.value)}
+                    placeholder="Example: I will pick this up tomorrow afternoon"
+                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500 dark:focus:border-primary-500"
+                  />
+                </label>
+              )}
+            </section>
+
+            <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+              <h2 className="mb-3 text-sm font-black uppercase tracking-wider text-gray-800 dark:text-gray-100">
+                Payment Method
+              </h2>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <OptionCard
+                  active={paymentMethod === 'cash_on_pickup'}
+                  icon="💵"
+                  title="Pay at Counter"
+                  subtitle="Customer pays at the shop when the order is picked up or released."
+                  onClick={() => setPaymentMethod('cash_on_pickup')}
+                />
+
+                <OptionCard
+                  active={paymentMethod === 'paymongo_qrph'}
+                  icon="⚡"
+                  title="PayMongo QR Ph / GCash"
+                  subtitle="Pay the full order online. The system marks it paid automatically after webhook confirmation."
+                  onClick={() => setPaymentMethod('paymongo_qrph')}
+                />
+
+                <OptionCard
+                  active={paymentMethod === 'gcash_manual'}
+                  icon="📲"
+                  title="GCash Manual Verification"
+                  subtitle="Enter your GCash reference number. Staff will verify before processing."
+                  onClick={() => setPaymentMethod('gcash_manual')}
+                />
+              </div>
+
+              {paymentMethod === 'gcash_manual' && (
+                <div className="mt-4 rounded-2xl border border-primary-200 bg-primary-50 p-4 dark:border-primary-500/25 dark:bg-primary-900/10">
+                  <label>
+                    <span className="mb-2 block text-xs font-black uppercase tracking-wider text-primary-700 dark:text-primary-300">
+                      GCash Reference Number
+                    </span>
+                    <input
+                      value={paymentReference}
+                      onChange={(event) => setPaymentReference(event.target.value)}
+                      placeholder="Example: 1234567890123"
+                      className="w-full rounded-2xl border border-primary-200 bg-white px-4 py-3 text-sm font-bold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-primary-500/30 dark:bg-dark-900 dark:text-white"
+                    />
+                  </label>
+
+                  <p className="mt-3 text-xs leading-5 text-primary-700/80 dark:text-primary-300/80">
+                    Required down payment: <b>{formatPeso(requiredDownPayment)}</b>. Staff/Admin will verify this reference before marking the order as paid.
+                  </p>
+                </div>
+              )}
+            </section>
+
             <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
               <h2 className="mb-2 text-sm font-black uppercase tracking-wider text-gray-800 dark:text-gray-100">
                 Notes
               </h2>
-              <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
-                Add special instructions, preferred pickup time, or extra details.
-              </p>
               <textarea
                 value={notes}
-                onChange={(e) => setNotes(e.target.value)}
+                onChange={(event) => setNotes(event.target.value)}
                 rows={4}
-                placeholder="Example: I will pick this up tomorrow afternoon..."
+                placeholder="Special instructions..."
                 className="w-full resize-none rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500 dark:focus:border-primary-500"
               />
             </section>
           </div>
 
-          {/* Right column */}
           <aside className="space-y-6">
-            {/* GCash QR */}
-            <section className="rounded-3xl border border-primary-200 bg-primary-50 p-5 shadow-sm dark:border-primary-500/25 dark:bg-primary-900/10">
-              <div className="mb-4 flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-black uppercase tracking-wider text-primary-800 dark:text-primary-200">
-                    GCash Payment
-                  </h2>
-                  <p className="mt-1 text-xs text-primary-700/80 dark:text-primary-300/80">
-                    Scan to pay the down payment.
-                  </p>
-                </div>
-                <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300">
-                  QR
-                </span>
-              </div>
-
-              <div className="rounded-3xl bg-white p-3 shadow-inner ring-1 ring-primary-100 dark:bg-dark-800 dark:ring-primary-500/20">
-                <img
-                  src={GCASH_QR_IMAGE}
-                  alt="GCash QR code"
-                  className="aspect-square w-full rounded-2xl object-contain"
-                  onError={(e) => {
-                    e.currentTarget.style.display = 'none';
-                    e.currentTarget.nextElementSibling.style.display = 'flex';
-                  }}
-                />
-                <div className="hidden aspect-square w-full flex-col items-center justify-center rounded-2xl border border-dashed border-primary-300 bg-primary-50 p-6 text-center dark:border-primary-500/30 dark:bg-primary-900/20">
-                  <p className="text-3xl">📷</p>
-                  <p className="mt-3 text-sm font-bold text-primary-800 dark:text-primary-200">
-                    Add your GCash QR screenshot
-                  </p>
-                  <p className="mt-1 text-xs leading-5 text-primary-700/80 dark:text-primary-300/80">
-                    Save it as public/gcash-qr.png, or replace GCASH_QR_IMAGE with your image link.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 rounded-2xl bg-white/80 p-4 text-sm ring-1 ring-primary-100 dark:bg-dark-800/80 dark:ring-primary-500/20">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-semibold text-gray-700 dark:text-gray-300">
-                    Required down payment
-                  </span>
-                  <span className="text-lg font-black text-accent-600 dark:text-accent-400">
-                    {formatPeso(downPayment)}
-                  </span>
-                </div>
-                <p className="mt-2 text-xs leading-5 text-gray-600 dark:text-gray-400">
-                  {downPaymentPercent}% of total. Keep your GCash receipt for confirmation.
-                </p>
-              </div>
-            </section>
-
-            {/* Summary */}
             <section className="sticky top-24 rounded-3xl border border-gray-200 bg-white p-5 shadow-xl shadow-gray-200/60 dark:border-dark-700 dark:bg-dark-800 dark:shadow-black/20">
               <h2 className="mb-4 text-sm font-black uppercase tracking-wider text-gray-800 dark:text-gray-100">
                 Order Summary
@@ -497,10 +731,12 @@ export default function Checkout() {
 
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600 dark:text-gray-400">
-                    Down payment ({downPaymentPercent}%)
+                    Payment Due Now
+                    {paymentMethod === 'gcash_manual' ? ` (${downPaymentPercent}% manual)` : ''}
+                    {paymentMethod === 'paymongo_qrph' ? ' (full online payment)' : ''}
                   </span>
                   <span className="font-black text-accent-600 dark:text-accent-400">
-                    {formatPeso(downPayment)}
+                    {formatPeso(requiredDownPayment)}
                   </span>
                 </div>
 
@@ -540,11 +776,11 @@ export default function Checkout() {
                       <>
                         <span className="block">
                           {orderConsent?.consent_text ||
-                            'I agree that MotoFix may use my order, cart, payment, contact, and transaction information to process parts orders, payment records, invoices, and e-receipts.'}
+                            'I agree that MotoFix may use my order, cart, payment, contact, and transaction information to process product orders, payment records, invoices, and e-receipts.'}
                         </span>
                         <span className="mt-2 block">
                           {invoiceConsent?.consent_text ||
-                            'I agree that MotoFix may generate and store invoices, official receipt numbers, e-receipts, and payment history for my orders and bookings.'}
+                            'I agree that MotoFix may generate and store invoices, e-receipts, and payment history for my orders.'}
                         </span>
                       </>
                     )}
@@ -554,13 +790,13 @@ export default function Checkout() {
 
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={submitting || validatingStock}
                 className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-primary-600 px-5 py-3.5 text-sm font-black text-white shadow-lg shadow-primary-600/25 transition hover:bg-primary-700 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {submitting ? (
+                {submitting || validatingStock ? (
                   <>
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                    Placing Order...
+                    {validatingStock ? 'Checking Stock...' : 'Placing Order...'}
                   </>
                 ) : (
                   <>

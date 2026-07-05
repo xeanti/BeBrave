@@ -58,8 +58,43 @@ function formatTime(time) {
 }
 
 function getCustomerName(row) {
-  const name = `${row.profiles?.first_name || ''} ${row.profiles?.last_name || ''}`.trim();
-  return name || 'Unknown Customer';
+  if (row?.walkin_customer_name) {
+    return row.walkin_customer_name;
+  }
+
+  if (row?.guest_name) {
+    return row.guest_name;
+  }
+
+  const profile = row?.profiles || row?.customer || row;
+  const name = `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim();
+
+  if (name) return name;
+
+  if (row?.walkin_customer_phone) {
+    return `Guest ${row.walkin_customer_phone}`;
+  }
+
+  if (profile?.phone) {
+    return `Customer ${profile.phone}`;
+  }
+
+  if (profile?.email) {
+    return profile.email;
+  }
+
+  return 'Guest Customer';
+}
+
+function getCustomerContact(row) {
+  const profile = row?.profiles || row?.customer || row;
+
+  return (
+    row?.walkin_customer_phone ||
+    profile?.phone ||
+    profile?.email ||
+    'Guest customer'
+  );
 }
 
 function getMechanicName(booking) {
@@ -68,7 +103,13 @@ function getMechanicName(booking) {
 }
 
 function getBookingTotal(booking) {
-  return (Number(booking.services?.base_price) || 0) + (Number(booking.services?.labor_cost) || 0);
+  const savedTotal = Number(booking?.total_amount) || 0;
+  if (savedTotal > 0) return savedTotal;
+
+  const savedServiceTotal = Number(booking?.service_total) || 0;
+  if (savedServiceTotal > 0) return savedServiceTotal;
+
+  return (Number(booking?.services?.base_price) || 0) + (Number(booking?.services?.labor_cost) || 0);
 }
 
 function getOrderItemsLabel(order) {
@@ -77,7 +118,112 @@ function getOrderItemsLabel(order) {
   if (!items.length) return 'No items';
 
   return items
-    .map((item) => `${item.parts?.name || 'Part'} × ${item.quantity}`)
+    .map((item) => `${item.parts?.name || 'Product'} × ${item.quantity}`)
+    .join(', ');
+}
+
+function getPaymentRecordAmount(payment) {
+  return Number(
+    payment?.amount ??
+      payment?.amount_paid ??
+      payment?.paid_amount ??
+      payment?.total_paid ??
+      payment?.payment_amount ??
+      payment?.total_amount ??
+      payment?.amount_received ??
+      payment?.cash_received ??
+      0
+  );
+}
+
+function isPaidPaymentRecord(payment) {
+  const statusValues = [
+    payment?.status,
+    payment?.payment_status,
+    payment?.receipt_status,
+  ]
+    .map((value) => String(value || '').toLowerCase())
+    .filter(Boolean);
+
+  if (!statusValues.length) return true;
+
+  const paidStatuses = [
+    'paid',
+    'succeeded',
+    'success',
+    'completed',
+    'confirmed',
+    'verified',
+    'issued',
+    'settled',
+    'captured',
+  ];
+
+  const blockedStatuses = [
+    'unpaid',
+    'checkout_created',
+    'pending',
+    'pending_payment',
+    'pending_verification',
+    'failed',
+    'expired',
+    'cancelled',
+    'canceled',
+    'refunded',
+    'void',
+  ];
+
+  if (statusValues.some((status) => paidStatuses.includes(status))) return true;
+  if (statusValues.some((status) => blockedStatuses.includes(status))) return false;
+
+  return Boolean(normalizeReceiptNumber(payment) && getPaymentRecordAmount(payment) > 0);
+}
+
+function normalizeReceiptNumber(payment) {
+  return (
+    payment?.receipt_number ||
+    payment?.reference_number ||
+    payment?.payment_reference ||
+    payment?.provider_checkout_session_id ||
+    payment?.checkout_session_id ||
+    payment?.id?.slice?.(0, 8) ||
+    ''
+  );
+}
+
+function getServiceLabelFromList(value) {
+  if (!Array.isArray(value) || value.length === 0) return '';
+
+  return value
+    .map((item) => item?.service_name || item?.name || item?.title)
+    .filter(Boolean)
+    .join(', ');
+}
+
+function getBookingServiceLabel(booking) {
+  return (
+    booking?.services_summary ||
+    getServiceLabelFromList(booking?.booking_services) ||
+    booking?.services?.name ||
+    '—'
+  );
+}
+
+function getWalkinServiceLabel(queueItem) {
+  return (
+    getServiceLabelFromList(queueItem?.services) ||
+    queueItem?.services_summary ||
+    'Walk-in Service'
+  );
+}
+
+function getWalkinProductLabel(queueItem) {
+  const products = Array.isArray(queueItem?.products) ? queueItem.products : [];
+
+  if (!products.length) return 'No products';
+
+  return products
+    .map((item) => `${item.name || 'Product'} × ${item.quantity || 1}`)
     .join(', ');
 }
 
@@ -96,6 +242,8 @@ const STATUS_STYLES = {
     'bg-purple-50 text-purple-700 ring-purple-200 dark:bg-purple-500/10 dark:text-purple-300 dark:ring-purple-500/25',
   ready:
     'bg-primary-50 text-primary-700 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-400 dark:ring-primary-500/25',
+  returned:
+    'bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-500/25',
 };
 
 const ACTION_STYLES = {
@@ -117,6 +265,71 @@ const ACTION_STYLES = {
     'bg-gray-100 text-gray-700 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25',
 };
 
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+const AUDIT_LOG_LIMIT = 1000;
+
+function sanitizePlainText(value, maxLength = 160) {
+  return String(value ?? '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function sanitizeSearchText(value) {
+  return sanitizePlainText(value, 120);
+}
+
+function sanitizeDateInput(value) {
+  const text = String(value || '').trim();
+
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : '';
+}
+
+function getDateBoundary(value, endOfDay = false) {
+  const cleanDate = sanitizeDateInput(value);
+
+  if (!cleanDate) return null;
+
+  const date = new Date(`${cleanDate}T${endOfDay ? '23:59:59' : '00:00:00'}`);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function isDateRangeInvalid(from, to) {
+  const start = getDateBoundary(from);
+  const end = getDateBoundary(to, true);
+
+  return Boolean(start && end && start > end);
+}
+
+function getSafeDateRangeLabel(from, to) {
+  return `${sanitizeDateInput(from) || 'All'} to ${sanitizeDateInput(to) || 'Present'}`;
+}
+
+function sanitizeFilename(value) {
+  const text = sanitizePlainText(value, 180).replace(/[\\/:*?"<>|]+/g, '-');
+
+  return text || 'MotoFix Report.csv';
+}
+
+function normalizePageSize(value) {
+  const size = Number(value);
+
+  return PAGE_SIZE_OPTIONS.includes(size) ? size : 25;
+}
+
+function buildSearchText(values) {
+  return values
+    .map((value) => {
+      if (value === null || value === undefined) return '';
+      if (typeof value === 'object') return JSON.stringify(value);
+      return String(value);
+    })
+    .join(' ')
+    .toLowerCase();
+}
+
 function StatusBadge({ status }) {
   return (
     <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black capitalize ring-1 ${STATUS_STYLES[status] || STATUS_STYLES.pending}`}>
@@ -133,6 +346,211 @@ function ActionBadge({ action }) {
     <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ring-1 ${classes}`}>
       {action || 'ACTION'}
     </span>
+  );
+}
+
+function humanizeAuditKey(key) {
+  return String(key || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function humanizeAuditValue(value) {
+  if (value === null || value === undefined || value === '') return '—';
+
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+
+  if (typeof value === 'number') return String(value);
+
+  if (Array.isArray(value)) {
+    if (!value.length) return 'None';
+
+    return value
+      .map((item) => {
+        if (typeof item === 'object' && item !== null) {
+          const name =
+            item.name ||
+            item.part_name ||
+            item.product_name ||
+            item.service_name ||
+            item.title;
+          const quantity = item.quantity ?? item.qty;
+
+          if (name && quantity !== undefined) return `${name} × ${quantity}`;
+          if (name) return String(name);
+
+          return Object.entries(item)
+            .map(([key, val]) => `${humanizeAuditKey(key)}: ${humanizeAuditValue(val)}`)
+            .join(', ');
+        }
+
+        return String(item);
+      })
+      .join(', ');
+  }
+
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .map(([key, val]) => `${humanizeAuditKey(key)}: ${humanizeAuditValue(val)}`)
+      .join(', ');
+  }
+
+  const text = String(value);
+
+  if (/^\d{4}-\d{2}-\d{2}T/.test(text)) {
+    return formatDateTime(text);
+  }
+
+  return text.replace(/_/g, ' ');
+}
+
+function getAuditSummary(log) {
+  const action = String(log?.action || '').toLowerCase();
+  const entity = String(log?.entity || '').toLowerCase();
+  const details = log?.details || {};
+
+  if (!details || typeof details !== 'object') {
+    return 'No extra details';
+  }
+
+  if (action.includes('inventory_stock_adjusted')) {
+    const reason = details.reason || 'Stock adjusted';
+    const quantity = details.quantity ?? details.qty ?? details.stock_quantity;
+    const previousStock =
+      details.previous_stock_quantity ??
+      details.previous_stock ??
+      details.old_stock ??
+      details.from;
+    const newStock =
+      details.new_stock_quantity ??
+      details.new_stock ??
+      details.current_stock ??
+      details.to;
+    const product =
+      details.product_name ||
+      details.part_name ||
+      details.name ||
+      details.product ||
+      details.part;
+
+    const pieces = [reason];
+
+    if (product) pieces.push(`Product: ${product}`);
+    if (quantity !== undefined) pieces.push(`Quantity: ${quantity}`);
+    if (previousStock !== undefined && newStock !== undefined) {
+      pieces.push(`Stock: ${previousStock} → ${newStock}`);
+    }
+
+    return pieces.join(' • ');
+  }
+
+  if ((action.includes('create') || action.includes('insert')) && entity === 'parts') {
+    return `Created product${details.name ? `: ${details.name}` : ''}`;
+  }
+
+  if (action.includes('update') && entity === 'parts') {
+    const productName = details.name || details.product_name || details.part_name;
+    const previousStock = details.previous_stock_quantity ?? details.previous_stock;
+    const newStock = details.new_stock_quantity ?? details.new_stock;
+
+    if (previousStock !== undefined && newStock !== undefined) {
+      return `Updated product${productName ? `: ${productName}` : ''} • Stock: ${previousStock} → ${newStock}`;
+    }
+
+    return `Updated product${productName ? `: ${productName}` : ''}`;
+  }
+
+  if (action.includes('deactivate')) {
+    return `Deactivated${details.name ? `: ${details.name}` : ''}`;
+  }
+
+  if (action.includes('reactivate')) {
+    return `Reactivated${details.name ? `: ${details.name}` : ''}`;
+  }
+
+  if (action.includes('payment')) {
+    const amount = details.amount ? formatPeso(details.amount) : '';
+    const method = details.method ? humanizeAuditValue(details.method) : '';
+    const type = details.payment_type ? humanizeAuditValue(details.payment_type) : '';
+
+    return [type, amount, method].filter(Boolean).join(' • ') || 'Payment record updated';
+  }
+
+  if (action.includes('return_order')) {
+    const items = Array.isArray(details.items)
+      ? details.items
+          .map((item) => `${item.name || item.part_id || 'Product'} × ${item.quantity || 0}`)
+          .join(', ')
+      : '';
+
+    return items ? `Returned to inventory: ${items}` : 'Order returned to inventory';
+  }
+
+  if (action.includes('export')) {
+    const rows = details.rows !== undefined ? `${details.rows} row(s)` : '';
+    const tab = details.active_tab ? `Report: ${humanizeAuditValue(details.active_tab)}` : '';
+
+    return [tab, rows].filter(Boolean).join(' • ') || 'CSV exported';
+  }
+
+  if (action.includes('print')) {
+    return details.active_tab ? `Printed ${humanizeAuditValue(details.active_tab)} report` : 'Report printed';
+  }
+
+  const entries = Object.entries(details);
+
+  if (!entries.length) return 'No extra details';
+
+  return entries
+    .slice(0, 3)
+    .map(([key, value]) => `${humanizeAuditKey(key)}: ${humanizeAuditValue(value)}`)
+    .join(' • ');
+}
+
+function AuditDetails({ log }) {
+  const details = log?.details || {};
+  const entries = Object.entries(details || {});
+  const summary = getAuditSummary(log);
+
+  if (!entries.length) {
+    return <span className="text-xs font-semibold text-gray-400">—</span>;
+  }
+
+  return (
+    <details className="group max-w-lg">
+      <summary className="cursor-pointer list-none">
+        <div className="rounded-2xl border border-gray-100 bg-gray-50 px-3 py-2 transition group-open:border-primary-100 group-open:bg-primary-50/60 dark:border-dark-700 dark:bg-dark-900/70 dark:group-open:border-primary-500/25 dark:group-open:bg-primary-500/10">
+          <div className="flex items-start justify-between gap-3">
+            <p className="line-clamp-2 text-xs font-bold leading-5 text-gray-700 dark:text-gray-300">
+              {summary}
+            </p>
+
+            <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-black text-gray-500 ring-1 ring-gray-200 group-open:hidden dark:bg-dark-800 dark:text-gray-400 dark:ring-dark-700">
+              View
+            </span>
+            <span className="hidden shrink-0 rounded-full bg-primary-600 px-2 py-1 text-[10px] font-black text-white group-open:inline-flex">
+              Hide
+            </span>
+          </div>
+        </div>
+      </summary>
+
+      <div className="mt-2 grid gap-2 rounded-2xl border border-gray-100 bg-white p-3 dark:border-dark-700 dark:bg-dark-800">
+        {entries.map(([key, value]) => (
+          <div
+            key={key}
+            className="grid gap-1 rounded-xl bg-gray-50 px-3 py-2 dark:bg-dark-900/70"
+          >
+            <p className="text-[10px] font-black uppercase tracking-wider text-gray-400">
+              {humanizeAuditKey(key)}
+            </p>
+            <p className="break-words text-xs font-bold leading-5 text-gray-700 dark:text-gray-300">
+              {humanizeAuditValue(value)}
+            </p>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -153,7 +571,7 @@ function PaymentBadge({ isFullyPaid, balance }) {
 
 function ReceiptNumberList({ payments }) {
   const receiptNumbers = (payments || [])
-    .map((payment) => payment.receipt_number)
+    .map(normalizeReceiptNumber)
     .filter(Boolean);
 
   if (!receiptNumbers.length) {
@@ -205,13 +623,89 @@ function StatCard({ label, value, icon, tone = 'default' }) {
   );
 }
 
-function TableShell({ title, count, children }) {
+function TableShell({
+  title,
+  count,
+  pageSize,
+  onPageSizeChange,
+  page,
+  totalPages,
+  startIndex,
+  endIndex,
+  onFirst,
+  onPrev,
+  onNext,
+  onLast,
+  children,
+}) {
   return (
     <section className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-dark-700">
-        <h2 className="text-sm font-black uppercase tracking-wider text-gray-700 dark:text-gray-300">
-          {title} <span className="text-gray-400">({count})</span>
-        </h2>
+        <div>
+          <h2 className="text-sm font-black uppercase tracking-wider text-gray-700 dark:text-gray-300">
+            {title} <span className="text-gray-400">({count})</span>
+          </h2>
+          <p className="mt-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
+            Showing {count === 0 ? 0 : startIndex + 1}–{Math.min(endIndex, count)} of {count}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 print:hidden">
+          <label className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            Rows
+            <select
+              value={pageSize}
+              onChange={(event) => onPageSizeChange(Number(event.target.value))}
+              className="rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-black text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+            >
+              {PAGE_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <button
+            type="button"
+            onClick={onFirst}
+            disabled={page <= 1}
+            className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+          >
+            First
+          </button>
+
+          <button
+            type="button"
+            onClick={onPrev}
+            disabled={page <= 1}
+            className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+          >
+            Prev
+          </button>
+
+          <span className="rounded-xl bg-gray-100 px-3 py-2 text-xs font-black text-gray-700 dark:bg-dark-900 dark:text-gray-300">
+            {page} / {totalPages}
+          </span>
+
+          <button
+            type="button"
+            onClick={onNext}
+            disabled={page >= totalPages}
+            className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+          >
+            Next
+          </button>
+
+          <button
+            type="button"
+            onClick={onLast}
+            disabled={page >= totalPages}
+            className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+          >
+            Last
+          </button>
+        </div>
       </div>
 
       <div className="overflow-x-auto">
@@ -253,10 +747,12 @@ export default function AdminReports() {
   const [activeTab, setActiveTab] = useState('bookings');
   const [bookings, setBookings] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [walkinQueue, setWalkinQueue] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
 
   const [bookingPayments, setBookingPayments] = useState({});
   const [orderPayments, setOrderPayments] = useState({});
+  const [walkinPayments, setWalkinPayments] = useState({});
 
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState('');
@@ -269,6 +765,9 @@ export default function AdminReports() {
 
   const [sortField, setSortField] = useState(null);
   const [sortDirection, setSortDirection] = useState('asc');
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   const printRef = useRef(null);
 
@@ -284,6 +783,9 @@ export default function AdminReports() {
       'bookings',
       'orders',
       'payments',
+      'booking_payments',
+      'walkin_queue',
+      'walkin_queue_payments',
       'audit_logs',
       'order_items',
       'services',
@@ -328,6 +830,10 @@ export default function AdminReports() {
     const timeout = setTimeout(() => setToast(''), 3000);
     return () => clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, dateFrom, dateTo, search, sortField, sortDirection, pageSize]);
 
   function handleSort(field) {
     if (sortField === field) {
@@ -388,13 +894,14 @@ export default function AdminReports() {
     setFetchError('');
 
     try {
-      const [bookingResult, orderResult, auditResult] = await Promise.all([
+      const [bookingResult, orderResult, walkinResult, auditResult] = await Promise.all([
         supabase
           .from('bookings')
           .select(`
             *,
             services(name, base_price, labor_cost),
-            profiles!bookings_customer_id_fkey(first_name, last_name, email),
+            booking_services(service_name, base_price, labor_cost, quantity),
+            profiles!bookings_customer_id_fkey(first_name, last_name, email, phone),
             mechanic:profiles!bookings_mechanic_id_fkey(first_name, last_name)
           `)
           .order('created_at', { ascending: false }),
@@ -403,8 +910,17 @@ export default function AdminReports() {
           .from('orders')
           .select(`
             *,
-            profiles!orders_customer_id_fkey(first_name, last_name, email),
+            profiles!orders_customer_id_fkey(first_name, last_name, email, phone),
             order_items(quantity, unit_price, subtotal, parts(name))
+          `)
+          .order('created_at', { ascending: false }),
+
+        supabase
+          .from('walkin_queue')
+          .select(`
+            *,
+            profiles!walkin_queue_customer_id_fkey(first_name, last_name, email, phone),
+            mechanic:profiles!walkin_queue_mechanic_id_fkey(first_name, last_name)
           `)
           .order('created_at', { ascending: false }),
 
@@ -412,26 +928,30 @@ export default function AdminReports() {
           .from('audit_logs')
           .select('*, profiles!audit_logs_performed_by_fkey(first_name, last_name, email, role)')
           .order('created_at', { ascending: false })
-          .limit(150),
+          .limit(AUDIT_LOG_LIMIT),
       ]);
 
-      const firstError = [bookingResult, orderResult, auditResult].find((result) => result.error)?.error;
+      const firstError = [bookingResult, orderResult, walkinResult, auditResult].find((result) => result.error)?.error;
       if (firstError) throw firstError;
 
       const bookingRows = bookingResult.data || [];
       const orderRows = orderResult.data || [];
+      const walkinRows = walkinResult.data || [];
 
       setBookings(bookingRows);
       setOrders(orderRows);
+      setWalkinQueue(walkinRows);
       setAuditLogs(auditResult.data || []);
 
       const allPayments = await fetchReportPayments({
         bookingIds: bookingRows.map((booking) => booking.id),
         orderIds: orderRows.map((order) => order.id),
+        walkinIds: walkinRows.map((item) => item.id),
       });
 
       const groupedBookingPayments = {};
       const groupedOrderPayments = {};
+      const groupedWalkinPayments = {};
 
       (allPayments || []).forEach((payment) => {
         if (payment.booking_id) {
@@ -447,10 +967,18 @@ export default function AdminReports() {
           }
           groupedOrderPayments[payment.order_id].push(payment);
         }
+
+        if (payment.walkin_queue_id) {
+          if (!groupedWalkinPayments[payment.walkin_queue_id]) {
+            groupedWalkinPayments[payment.walkin_queue_id] = [];
+          }
+          groupedWalkinPayments[payment.walkin_queue_id].push(payment);
+        }
       });
 
       setBookingPayments(groupedBookingPayments);
       setOrderPayments(groupedOrderPayments);
+      setWalkinPayments(groupedWalkinPayments);
 
       setLastUpdated(new Date());
     } catch (err) {
@@ -462,18 +990,27 @@ export default function AdminReports() {
   }
 
   function filterByDate(items, dateField = 'created_at') {
+    const start = getDateBoundary(dateFrom);
+    const end = getDateBoundary(dateTo, true);
+
+    if (isDateRangeInvalid(dateFrom, dateTo)) return [];
+
     return items.filter((item) => {
-      const raw = item[dateField] || item.created_at;
+      const raw = item?.[dateField] || item?.created_at;
+
+      if (!raw) return false;
+
       const date = new Date(raw);
 
-      if (dateFrom && date < new Date(`${dateFrom}T00:00:00`)) return false;
-      if (dateTo && date > new Date(`${dateTo}T23:59:59`)) return false;
+      if (Number.isNaN(date.getTime())) return false;
+      if (start && date < start) return false;
+      if (end && date > end) return false;
 
       return true;
     });
   }
 
-  async function fetchReportPayments({ bookingIds = [], orderIds = [] }) {
+  async function fetchReportPayments({ bookingIds = [], orderIds = [], walkinIds = [] }) {
     const selectFields = `
       *,
       profiles!payments_processed_by_fkey(first_name, last_name, email, role)
@@ -492,6 +1029,31 @@ export default function AdminReports() {
       results.push(...(data || []));
     }
 
+    if (bookingIds.length) {
+      const { data, error } = await supabase
+        .from('booking_payments')
+        .select('*')
+        .in('booking_id', bookingIds)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.warn('booking_payments report fetch skipped:', error.message);
+      } else {
+        results.push(
+          ...(data || []).map((payment) => ({
+            ...payment,
+            amount: Number(payment.amount) || 0,
+            payment_type: 'reservation_fee',
+            payment_method: payment.payment_method || 'paymongo_qrph',
+            receipt_number: payment.reference_number || payment.provider_checkout_session_id || payment.id?.slice(0, 8),
+            receipt_issued_at: payment.paid_at || payment.created_at,
+            created_at: payment.paid_at || payment.created_at,
+            profiles: null,
+          }))
+        );
+      }
+    }
+
     if (orderIds.length) {
       const { data, error } = await supabase
         .from('payments')
@@ -503,30 +1065,98 @@ export default function AdminReports() {
       results.push(...(data || []));
     }
 
+    if (walkinIds.length) {
+      const { data, error } = await supabase
+        .from('walkin_queue_payments')
+        .select('*')
+        .in('walkin_queue_id', walkinIds)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.warn('walkin_queue_payments report fetch skipped:', error.message);
+      } else {
+        results.push(
+          ...(data || []).map((payment) => ({
+            ...payment,
+            amount: Number(payment.amount) || 0,
+            payment_type: payment.payment_type || 'walkin_payment',
+            payment_method: payment.method || payment.payment_method || 'cash',
+            receipt_number: payment.receipt_number || payment.reference_number || payment.id?.slice(0, 8),
+            receipt_issued_at: payment.receipt_issued_at || payment.created_at,
+            created_at: payment.receipt_issued_at || payment.created_at,
+            profiles: null,
+          }))
+        );
+      }
+    }
+
     return results;
   }
 
-  function getPaymentInfo(records, recordId, total) {
+  function getPaymentInfo(records, recordId, total, record = null) {
     const list = records[recordId] || [];
-    const { totalPaid } = summarizePayments(list);
-    const balance = Math.max((Number(total) || 0) - totalPaid, 0);
-    const isFullyPaid = Number(total) > 0 && balance <= 0;
-    const last = list.length ? list[list.length - 1] : null;
+    const paidList = list.filter(isPaidPaymentRecord);
+    const recordPaymentStatus = String(record?.payment_status || '').toLowerCase();
+    const recordStatus = String(record?.status || '').toLowerCase();
+
+    const paidSum = paidList.reduce(
+      (sum, payment) => sum + getPaymentRecordAmount(payment),
+      0
+    );
+
+    /*
+      Some POS/counter-sale receipts are already marked as issued/paid,
+      but the amount field can be missing or stored under a different column.
+      If a receipt exists and the order/queue/booking is marked paid, use the
+      record total as the paid amount so the report will not show a false balance.
+    */
+    const hasReceipt = list.some((payment) => normalizeReceiptNumber(payment));
+    const hasIssuedReceipt = list.some((payment) => {
+      const receiptStatus = String(payment?.receipt_status || payment?.status || '').toLowerCase();
+
+      return normalizeReceiptNumber(payment) &&
+        ['issued', 'paid', 'verified', 'confirmed', 'completed'].includes(receiptStatus);
+    });
+
+    const shouldUseRecordTotal =
+      paidSum <= 0 &&
+      Number(total) > 0 &&
+      (recordPaymentStatus === 'paid' ||
+        recordStatus === 'completed' ||
+        paidList.length > 0 ||
+        hasIssuedReceipt ||
+        hasReceipt);
+
+    const totalPaid = shouldUseRecordTotal ? Number(total) || 0 : paidSum;
+
+    const isReturnedOrCancelled = ['returned', 'cancelled', 'refunded'].includes(recordStatus);
+
+    const balance = isReturnedOrCancelled
+      ? 0
+      : Math.max((Number(total) || 0) - totalPaid, 0);
+
+    const isFullyPaid =
+      Number(total) > 0 &&
+      (balance <= 0 || recordPaymentStatus === 'paid' || shouldUseRecordTotal || hasIssuedReceipt);
+
+    const last = paidList.length ? paidList[paidList.length - 1] : list.length ? list[list.length - 1] : null;
 
     const lastProcessedBy = last?.profiles
-      ? `${last.profiles.first_name} ${last.profiles.last_name}`
+      ? `${last.profiles.first_name || ''} ${last.profiles.last_name || ''}`.trim()
       : last
+      ? 'System / Staff'
+      : recordPaymentStatus === 'paid'
       ? 'System'
       : '—';
 
     const receiptNumbers = list
-      .map((payment) => payment.receipt_number)
+      .map(normalizeReceiptNumber)
       .filter(Boolean);
 
     const receiptSummary = receiptNumbers.length ? receiptNumbers.join(', ') : '—';
-    const lastReceiptNumber = last?.receipt_number || '—';
-    const lastReceiptStatus = last?.receipt_status || '—';
-    const lastReceiptIssuedAt = last?.receipt_issued_at || last?.created_at || null;
+    const lastReceiptNumber = normalizeReceiptNumber(last) || '—';
+    const lastReceiptStatus = last?.receipt_status || last?.status || recordPaymentStatus || '—';
+    const lastReceiptIssuedAt = last?.receipt_issued_at || last?.paid_at || last?.created_at || null;
 
     return {
       totalPaid,
@@ -558,10 +1188,9 @@ export default function AdminReports() {
   }
 
   function getReportFilename(reportType) {
-    const from = dateFrom || 'All';
-    const to = dateTo || 'Present';
-
-    return `MotoFix ${reportType} Report ${from} - ${to}.csv`;
+    return sanitizeFilename(
+      `MotoFix ${reportType} Report ${getSafeDateRangeLabel(dateFrom, dateTo)}.csv`
+    );
   }
 
   async function logReportAction(action, entity, details = {}) {
@@ -576,10 +1205,21 @@ export default function AdminReports() {
   }
 
   function downloadCSV(data, filename, reportTitle) {
+    if (isDateRangeInvalid(dateFrom, dateTo)) {
+      setToast('Invalid date range. The From date must be before the To date.');
+      return;
+    }
+
     if (!data.length) {
       setToast('No rows to export.');
       return;
     }
+
+    const confirmed = window.confirm(
+      `Export ${data.length} row${data.length === 1 ? '' : 's'} from ${reportTitle}?`
+    );
+
+    if (!confirmed) return;
 
     const headers = Object.keys(data[0]);
     const headerLabels = headers.map((header) =>
@@ -589,7 +1229,7 @@ export default function AdminReports() {
     const lines = [];
 
     lines.push(escapeCSVValue(reportTitle));
-    lines.push(escapeCSVValue(`Date Range: ${dateFrom || 'All'} to ${dateTo || 'Present'}`));
+    lines.push(escapeCSVValue(`Date Range: ${getSafeDateRangeLabel(dateFrom, dateTo)}`));
     lines.push(escapeCSVValue(`Generated: ${new Date().toLocaleString('en-PH')}`));
     lines.push('');
     lines.push(headerLabels.map(escapeCSVValue).join(','));
@@ -606,33 +1246,42 @@ export default function AdminReports() {
     const anchor = document.createElement('a');
 
     anchor.href = url;
-    anchor.download = filename;
+    anchor.download = sanitizeFilename(filename);
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
     anchor.click();
+    anchor.remove();
 
     URL.revokeObjectURL(url);
 
-    logReportAction('EXPORT_CSV', filename, {
+    logReportAction('EXPORT_CSV', 'reports', {
+      filename: sanitizeFilename(filename),
       rows: data.length,
       active_tab: activeTab,
-      date_from: dateFrom || null,
-      date_to: dateTo || null,
+      date_from: sanitizeDateInput(dateFrom) || null,
+      date_to: sanitizeDateInput(dateTo) || null,
     });
 
     setToast(`Exported ${data.length} rows.`);
   }
 
   function handleExport() {
+    if (isDateRangeInvalid(dateFrom, dateTo)) {
+      setToast('Invalid date range. The From date must be before the To date.');
+      return;
+    }
+
     if (activeTab === 'bookings') {
       downloadCSV(
         filteredBookings.map((booking) => {
           const total = getBookingTotal(booking);
-          const info = getPaymentInfo(bookingPayments, booking.id, total);
+          const info = getPaymentInfo(bookingPayments, booking.id, total, booking);
 
           return {
             id: booking.id?.slice(0, 8),
             customer: getCustomerName(booking),
-            email: booking.profiles?.email,
-            service: booking.services?.name,
+            contact: getCustomerContact(booking),
+            service: getBookingServiceLabel(booking),
             date: booking.booking_date,
             time: formatTime(booking.booking_time),
             status: booking.status,
@@ -657,12 +1306,12 @@ export default function AdminReports() {
     if (activeTab === 'orders') {
       downloadCSV(
         filteredOrders.map((order) => {
-          const info = getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0);
+          const info = getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0, order);
 
           return {
             id: order.id?.slice(0, 8),
             customer: getCustomerName(order),
-            email: order.profiles?.email,
+            contact: getCustomerContact(order),
             items: getOrderItemsLabel(order),
             total: Number(order.total_amount || 0).toFixed(2),
             status: order.status,
@@ -683,6 +1332,39 @@ export default function AdminReports() {
       return;
     }
 
+    if (activeTab === 'walkins') {
+      downloadCSV(
+        filteredWalkins.map((item) => {
+          const total = Number(item.total_amount) || 0;
+          const info = getPaymentInfo(walkinPayments, item.id, total, item);
+
+          return {
+            id: item.id?.slice(0, 8),
+            queue_number: item.queue_number,
+            customer: getCustomerName(item),
+            contact: getCustomerContact(item),
+            motorcycle_model: item.motorcycle_model || '',
+            services: getWalkinServiceLabel(item),
+            products: getWalkinProductLabel(item),
+            total: total.toFixed(2),
+            status: item.status,
+            total_paid: info.totalPaid.toFixed(2),
+            balance: info.balance.toFixed(2),
+            payment_status: info.isFullyPaid ? 'Fully Paid' : 'Partial/Unpaid',
+            receipt_numbers: info.receiptSummary,
+            last_receipt_number: info.lastReceiptNumber,
+            last_receipt_issued_at: info.lastReceiptIssuedAt ? formatDateTime(info.lastReceiptIssuedAt) : '',
+            processed_by: info.lastProcessedBy,
+            date: formatDate(item.queue_date || item.created_at),
+          };
+        }),
+        getReportFilename('Walk-ins'),
+        'MotoFix Walk-in Queue Report'
+      );
+
+      return;
+    }
+
     downloadCSV(
       filteredAuditLogs.map((log) => ({
         id: log.id?.slice(0, 8),
@@ -691,7 +1373,8 @@ export default function AdminReports() {
         performed_by: log.profiles ? `${log.profiles.first_name} ${log.profiles.last_name}` : 'System',
         role: log.profiles?.role || '',
         date: formatDateTime(log.created_at),
-        details: JSON.stringify(log.details || {}),
+        details: getAuditSummary(log),
+        raw_details: JSON.stringify(log.details || {}),
       })),
       getReportFilename('Audit Log'),
       'MotoFix Audit Log'
@@ -699,12 +1382,23 @@ export default function AdminReports() {
   }
 
   function handlePrint() {
+    if (isDateRangeInvalid(dateFrom, dateTo)) {
+      setToast('Invalid date range. The From date must be before the To date.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Print the ${activeTab === 'audit' ? 'Audit Logs' : activeTab} report?`
+    );
+
+    if (!confirmed) return;
+
     window.print();
 
-    logReportAction('PRINT_REPORT', activeTab, {
+    logReportAction('PRINT_REPORT', 'reports', {
       active_tab: activeTab,
-      date_from: dateFrom || null,
-      date_to: dateTo || null,
+      date_from: sanitizeDateInput(dateFrom) || null,
+      date_to: sanitizeDateInput(dateTo) || null,
     });
   }
 
@@ -712,6 +1406,7 @@ export default function AdminReports() {
     setDateFrom('');
     setDateTo('');
     setSearch('');
+    setCurrentPage(1);
   }
 
   function tabButton(tab) {
@@ -725,6 +1420,7 @@ export default function AdminReports() {
           setActiveTab(tab);
           setSortField(null);
           setSortDirection('asc');
+          setCurrentPage(1);
         }}
         className={`rounded-full px-4 py-2 text-xs font-black capitalize transition ${
           active
@@ -732,7 +1428,7 @@ export default function AdminReports() {
             : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 dark:bg-dark-900 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white'
         }`}
       >
-        {tab === 'audit' ? 'Audit Logs' : tab}
+        {tab === 'audit' ? 'Audit Logs' : tab === 'walkins' ? 'Walk-ins' : tab}
       </button>
     );
   }
@@ -754,12 +1450,24 @@ export default function AdminReports() {
   const orderAccessors = {
     customer: (order) => getCustomerName(order),
     total: (order) => Number(order.total_amount) || 0,
-    paid: (order) => getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0).totalPaid,
-    receipt: (order) => getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0).receiptSummary,
-    balance: (order) => getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0).balance,
+    paid: (order) => getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0, order).totalPaid,
+    receipt: (order) => getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0, order).receiptSummary,
+    balance: (order) => getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0, order).balance,
     status: (order) => order.status || '',
-    processed_by: (order) => getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0).lastProcessedBy,
+    processed_by: (order) => getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0, order).lastProcessedBy,
     date: (order) => order.created_at || '',
+  };
+
+  const walkinAccessors = {
+    queue_number: (item) => item.queue_number || '',
+    customer: (item) => getCustomerName(item),
+    service: (item) => getWalkinServiceLabel(item),
+    total: (item) => Number(item.total_amount) || 0,
+    paid: (item) => getPaymentInfo(walkinPayments, item.id, Number(item.total_amount) || 0, item).totalPaid,
+    receipt: (item) => getPaymentInfo(walkinPayments, item.id, Number(item.total_amount) || 0, item).receiptSummary,
+    balance: (item) => getPaymentInfo(walkinPayments, item.id, Number(item.total_amount) || 0, item).balance,
+    status: (item) => item.status || '',
+    date: (item) => item.queue_date || item.created_at || '',
   };
 
   const auditAccessors = {
@@ -772,26 +1480,26 @@ export default function AdminReports() {
   };
 
   const filteredBookings = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const query = sanitizeSearchText(search).toLowerCase();
 
     const dateFiltered = filterByDate(bookings, 'booking_date');
 
     const searched = dateFiltered.filter((booking) => {
       const total = getBookingTotal(booking);
-      const info = getPaymentInfo(bookingPayments, booking.id, total);
-      const haystack = [
+      const info = getPaymentInfo(bookingPayments, booking.id, total, booking);
+      const haystack = buildSearchText([
         booking.id,
         getCustomerName(booking),
         booking.profiles?.email,
-        booking.services?.name,
+        booking.profiles?.phone,
+        booking.walkin_customer_phone,
+        getBookingServiceLabel(booking),
         getMechanicName(booking),
         booking.status,
         info.lastProcessedBy,
         info.receiptSummary,
         info.lastReceiptNumber,
-      ]
-        .join(' ')
-        .toLowerCase();
+      ]);
 
       return !query || haystack.includes(query);
     });
@@ -800,24 +1508,24 @@ export default function AdminReports() {
   }, [bookings, bookingPayments, dateFrom, dateTo, search, sortField, sortDirection]);
 
   const filteredOrders = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const query = sanitizeSearchText(search).toLowerCase();
 
     const dateFiltered = filterByDate(orders);
 
     const searched = dateFiltered.filter((order) => {
-      const info = getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0);
-      const haystack = [
+      const info = getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0, order);
+      const haystack = buildSearchText([
         order.id,
         getCustomerName(order),
         order.profiles?.email,
+        order.profiles?.phone,
+        order.walkin_customer_phone,
         getOrderItemsLabel(order),
         order.status,
         info.lastProcessedBy,
         info.receiptSummary,
         info.lastReceiptNumber,
-      ]
-        .join(' ')
-        .toLowerCase();
+      ]);
 
       return !query || haystack.includes(query);
     });
@@ -825,13 +1533,41 @@ export default function AdminReports() {
     return sortRows(searched, orderAccessors);
   }, [orders, orderPayments, dateFrom, dateTo, search, sortField, sortDirection]);
 
+  const filteredWalkins = useMemo(() => {
+    const query = sanitizeSearchText(search).toLowerCase();
+
+    const dateFiltered = filterByDate(walkinQueue, 'queue_date');
+
+    const searched = dateFiltered.filter((item) => {
+      const info = getPaymentInfo(walkinPayments, item.id, Number(item.total_amount) || 0, item);
+      const haystack = buildSearchText([
+        item.id,
+        item.queue_number,
+        getCustomerName(item),
+        getCustomerContact(item),
+        item.motorcycle_model,
+        getWalkinServiceLabel(item),
+        getWalkinProductLabel(item),
+        item.status,
+        item.payment_status,
+        info.lastProcessedBy,
+        info.receiptSummary,
+        info.lastReceiptNumber,
+      ]);
+
+      return !query || haystack.includes(query);
+    });
+
+    return sortRows(searched, walkinAccessors);
+  }, [walkinQueue, walkinPayments, dateFrom, dateTo, search, sortField, sortDirection]);
+
   const filteredAuditLogs = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const query = sanitizeSearchText(search).toLowerCase();
 
     const dateFiltered = filterByDate(auditLogs);
 
     const searched = dateFiltered.filter((log) => {
-      const haystack = [
+      const haystack = buildSearchText([
         log.id,
         log.action,
         log.entity,
@@ -839,9 +1575,7 @@ export default function AdminReports() {
         log.profiles?.email,
         log.profiles?.role,
         JSON.stringify(log.details || {}),
-      ]
-        .join(' ')
-        .toLowerCase();
+      ]);
 
       return !query || haystack.includes(query);
     });
@@ -851,47 +1585,90 @@ export default function AdminReports() {
 
   const reportStats = useMemo(() => {
     const bookingRevenue = filteredBookings
-      .filter((booking) => booking.status === 'completed')
+      .filter((booking) => !['cancelled', 'rejected', 'no_show', 'refunded'].includes(String(booking.status || '').toLowerCase()))
       .reduce((sum, booking) => {
         const total = getBookingTotal(booking);
-        return sum + getPaymentInfo(bookingPayments, booking.id, total).totalPaid;
+        return sum + getPaymentInfo(bookingPayments, booking.id, total, booking).totalPaid;
       }, 0);
 
     const orderRevenue = filteredOrders
-      .filter((order) => order.status === 'completed')
+      .filter((order) => !['returned', 'cancelled', 'refunded'].includes(String(order.status || '').toLowerCase()))
       .reduce(
         (sum, order) =>
-          sum + getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0).totalPaid,
+          sum + getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0, order).totalPaid,
+        0
+      );
+
+    const walkinRevenue = filteredWalkins
+      .filter((item) => !['cancelled', 'refunded'].includes(String(item.status || '').toLowerCase()))
+      .reduce(
+        (sum, item) =>
+          sum + getPaymentInfo(walkinPayments, item.id, Number(item.total_amount) || 0, item).totalPaid,
         0
       );
 
     const bookingBalance = filteredBookings.reduce((sum, booking) => {
       const total = getBookingTotal(booking);
-      return sum + getPaymentInfo(bookingPayments, booking.id, total).balance;
+      return sum + getPaymentInfo(bookingPayments, booking.id, total, booking).balance;
     }, 0);
 
     const orderBalance = filteredOrders.reduce(
       (sum, order) =>
-        sum + getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0).balance,
+        sum + getPaymentInfo(orderPayments, order.id, Number(order.total_amount) || 0, order).balance,
+      0
+    );
+
+    const walkinBalance = filteredWalkins.reduce(
+      (sum, item) =>
+        sum + getPaymentInfo(walkinPayments, item.id, Number(item.total_amount) || 0, item).balance,
       0
     );
 
     return {
       bookingRevenue,
       orderRevenue,
-      collectedRevenue: bookingRevenue + orderRevenue,
-      outstandingBalance: bookingBalance + orderBalance,
+      walkinRevenue,
+      collectedRevenue: bookingRevenue + orderRevenue + walkinRevenue,
+      outstandingBalance: bookingBalance + orderBalance + walkinBalance,
       completedBookings: filteredBookings.filter((booking) => booking.status === 'completed').length,
       completedOrders: filteredOrders.filter((order) => order.status === 'completed').length,
+      completedWalkins: filteredWalkins.filter((item) => item.status === 'completed').length,
     };
-  }, [filteredBookings, filteredOrders, bookingPayments, orderPayments]);
+  }, [filteredBookings, filteredOrders, filteredWalkins, bookingPayments, orderPayments, walkinPayments]);
 
   const currentRows =
     activeTab === 'bookings'
       ? filteredBookings.length
       : activeTab === 'orders'
       ? filteredOrders.length
+      : activeTab === 'walkins'
+      ? filteredWalkins.length
       : filteredAuditLogs.length;
+
+  const totalPages = Math.max(1, Math.ceil(currentRows / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+
+  const paginatedBookings = filteredBookings.slice(startIndex, endIndex);
+  const paginatedOrders = filteredOrders.slice(startIndex, endIndex);
+  const paginatedWalkins = filteredWalkins.slice(startIndex, endIndex);
+  const paginatedAuditLogs = filteredAuditLogs.slice(startIndex, endIndex);
+
+  const tablePaginationProps = {
+    pageSize,
+    onPageSizeChange: (size) => setPageSize(normalizePageSize(size)),
+    page: safeCurrentPage,
+    totalPages,
+    startIndex,
+    endIndex,
+    onFirst: () => setCurrentPage(1),
+    onPrev: () => setCurrentPage((page) => Math.max(page - 1, 1)),
+    onNext: () => setCurrentPage((page) => Math.min(page + 1, totalPages)),
+    onLast: () => setCurrentPage(totalPages),
+  };
+
+  const dateRangeInvalid = isDateRangeInvalid(dateFrom, dateTo);
 
   return (
     <div className="min-h-[calc(100vh-65px)] bg-gray-50 px-4 py-8 text-gray-900 dark:bg-dark-900 dark:text-white sm:px-6 lg:py-10">
@@ -959,7 +1736,7 @@ export default function AdminReports() {
         <div className="mb-6 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm print:hidden dark:border-dark-700 dark:bg-dark-800">
           <div className="grid gap-3 lg:grid-cols-[auto_auto_auto_1fr_auto] lg:items-center">
             <div className="flex flex-wrap gap-2 lg:col-span-5">
-              {['bookings', 'orders', 'audit'].map(tabButton)}
+              {['bookings', 'orders', 'walkins', 'audit'].map(tabButton)}
             </div>
 
             <div>
@@ -969,7 +1746,7 @@ export default function AdminReports() {
               <input
                 type="date"
                 value={dateFrom}
-                onChange={(event) => setDateFrom(event.target.value)}
+                onChange={(event) => setDateFrom(sanitizeDateInput(event.target.value))}
                 className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
               />
             </div>
@@ -981,7 +1758,7 @@ export default function AdminReports() {
               <input
                 type="date"
                 value={dateTo}
-                onChange={(event) => setDateTo(event.target.value)}
+                onChange={(event) => setDateTo(sanitizeDateInput(event.target.value))}
                 className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
               />
             </div>
@@ -997,7 +1774,7 @@ export default function AdminReports() {
                 <input
                   type="text"
                   value={search}
-                  onChange={(event) => setSearch(event.target.value)}
+                  onChange={(event) => setSearch(sanitizeSearchText(event.target.value))}
                   placeholder="Search customer, service, order item, action, status, or ID..."
                   className="w-full rounded-2xl border border-gray-200 bg-gray-50 py-3 pl-10 pr-10 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
                 />
@@ -1026,11 +1803,18 @@ export default function AdminReports() {
           </div>
         </div>
 
+        {dateRangeInvalid && (
+          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 print:hidden dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+            Invalid date range. The From date must be before the To date.
+          </div>
+        )}
+
         {/* Summary */}
-        <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
           <StatCard label="Report Rows" value={currentRows} icon="📄" tone="primary" />
           <StatCard label="Completed Bookings" value={reportStats.completedBookings} icon="📅" tone="green" />
           <StatCard label="Completed Orders" value={reportStats.completedOrders} icon="📦" tone="purple" />
+          <StatCard label="Completed Walk-ins" value={reportStats.completedWalkins} icon="🎫" tone="blue" />
           <StatCard label="Collected Revenue" value={formatPeso(reportStats.collectedRevenue)} icon="💰" tone="accent" />
           <StatCard label="Outstanding Balance" value={formatPeso(reportStats.outstandingBalance)} icon="⚠️" tone={reportStats.outstandingBalance > 0 ? 'yellow' : 'default'} />
         </div>
@@ -1040,7 +1824,7 @@ export default function AdminReports() {
         ) : (
           <>
             {activeTab === 'bookings' && (
-              <TableShell title="Bookings Report" count={filteredBookings.length}>
+              <TableShell title="Bookings Report" count={filteredBookings.length} {...tablePaginationProps}>
                 {filteredBookings.length === 0 ? (
                   <EmptyTable text="No bookings found." />
                 ) : (
@@ -1065,9 +1849,9 @@ export default function AdminReports() {
                     </thead>
 
                     <tbody className="divide-y divide-gray-100 dark:divide-dark-700">
-                      {filteredBookings.map((booking) => {
+                      {paginatedBookings.map((booking) => {
                         const total = getBookingTotal(booking);
-                        const info = getPaymentInfo(bookingPayments, booking.id, total);
+                        const info = getPaymentInfo(bookingPayments, booking.id, total, booking);
 
                         return (
                           <tr key={booking.id} className="transition hover:bg-gray-50 dark:hover:bg-dark-900/50">
@@ -1079,11 +1863,11 @@ export default function AdminReports() {
                                 {getCustomerName(booking)}
                               </p>
                               <p className="whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">
-                                {booking.profiles?.email || 'No email'}
+                                {getCustomerContact(booking)}
                               </p>
                             </td>
                             <td className="whitespace-nowrap px-4 py-4 font-semibold text-gray-700 dark:text-gray-300">
-                              {booking.services?.name || '—'}
+                              {getBookingServiceLabel(booking)}
                             </td>
                             <td className="whitespace-nowrap px-4 py-4 text-gray-600 dark:text-gray-400">
                               {formatDate(booking.booking_date)}
@@ -1122,7 +1906,7 @@ export default function AdminReports() {
             )}
 
             {activeTab === 'orders' && (
-              <TableShell title="Orders Report" count={filteredOrders.length}>
+              <TableShell title="Orders Report" count={filteredOrders.length} {...tablePaginationProps}>
                 {filteredOrders.length === 0 ? (
                   <EmptyTable text="No orders found." />
                 ) : (
@@ -1147,9 +1931,9 @@ export default function AdminReports() {
                     </thead>
 
                     <tbody className="divide-y divide-gray-100 dark:divide-dark-700">
-                      {filteredOrders.map((order) => {
+                      {paginatedOrders.map((order) => {
                         const total = Number(order.total_amount) || 0;
-                        const info = getPaymentInfo(orderPayments, order.id, total);
+                        const info = getPaymentInfo(orderPayments, order.id, total, order);
 
                         return (
                           <tr key={order.id} className="transition hover:bg-gray-50 dark:hover:bg-dark-900/50">
@@ -1161,7 +1945,7 @@ export default function AdminReports() {
                                 {getCustomerName(order)}
                               </p>
                               <p className="whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">
-                                {order.profiles?.email || 'No email'}
+                                {getCustomerContact(order)}
                               </p>
                             </td>
                             <td className="min-w-56 px-4 py-4">
@@ -1171,7 +1955,7 @@ export default function AdminReports() {
                                 ) : (
                                   order.order_items.map((item, index) => (
                                     <p key={`${order.id}-${index}`} className="text-xs font-semibold text-gray-600 dark:text-gray-400">
-                                      {item.parts?.name || 'Part'} × {item.quantity}
+                                      {item.parts?.name || 'Product'} × {item.quantity}
                                     </p>
                                   ))
                                 )}
@@ -1207,8 +1991,82 @@ export default function AdminReports() {
               </TableShell>
             )}
 
+            {activeTab === 'walkins' && (
+              <TableShell title="Walk-in Queue Report" count={filteredWalkins.length} {...tablePaginationProps}>
+                {filteredWalkins.length === 0 ? (
+                  <EmptyTable text="No walk-ins found." />
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 dark:bg-dark-900/70">
+                      <tr className="border-b border-gray-200 dark:border-dark-700">
+                        <SortHeader field="queue_number" label="Queue No." />
+                        <SortHeader field="customer" label="Customer" />
+                        <SortHeader field="service" label="Services" />
+                        <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                          Products
+                        </th>
+                        <SortHeader field="total" label="Total" />
+                        <SortHeader field="paid" label="Paid" />
+                        <SortHeader field="receipt" label="Receipt No." />
+                        <SortHeader field="balance" label="Balance" />
+                        <SortHeader field="status" label="Status" />
+                        <SortHeader field="date" label="Date" />
+                      </tr>
+                    </thead>
+
+                    <tbody className="divide-y divide-gray-100 dark:divide-dark-700">
+                      {paginatedWalkins.map((item) => {
+                        const total = Number(item.total_amount) || 0;
+                        const info = getPaymentInfo(walkinPayments, item.id, total, item);
+
+                        return (
+                          <tr key={item.id} className="transition hover:bg-gray-50 dark:hover:bg-dark-900/50">
+                            <td className="whitespace-nowrap px-4 py-4 font-black text-primary-600 dark:text-primary-400">
+                              {item.queue_number || item.id?.slice(0, 8)}
+                            </td>
+                            <td className="px-4 py-4">
+                              <p className="whitespace-nowrap font-black text-gray-950 dark:text-white">
+                                {getCustomerName(item)}
+                              </p>
+                              <p className="whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">
+                                {getCustomerContact(item)}
+                              </p>
+                            </td>
+                            <td className="min-w-56 px-4 py-4 text-xs font-semibold text-gray-600 dark:text-gray-400">
+                              {getWalkinServiceLabel(item)}
+                            </td>
+                            <td className="min-w-56 px-4 py-4 text-xs font-semibold text-gray-600 dark:text-gray-400">
+                              {getWalkinProductLabel(item)}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-4 font-black text-accent-600 dark:text-accent-400">
+                              {formatPeso(total)}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-4 font-black text-green-600 dark:text-green-300">
+                              {formatPeso(info.totalPaid)}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-4">
+                              <ReceiptNumberList payments={walkinPayments[item.id] || []} />
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-4">
+                              <PaymentBadge isFullyPaid={info.isFullyPaid} balance={info.balance} />
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-4">
+                              <StatusBadge status={item.status} />
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-4 text-xs text-gray-500 dark:text-gray-400">
+                              {formatDate(item.queue_date || item.created_at)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </TableShell>
+            )}
+
             {activeTab === 'audit' && (
-              <TableShell title="Audit Logs" count={filteredAuditLogs.length}>
+              <TableShell title="Audit Logs" count={filteredAuditLogs.length} {...tablePaginationProps}>
                 {filteredAuditLogs.length === 0 ? (
                   <EmptyTable text="No audit logs found." />
                 ) : (
@@ -1227,7 +2085,7 @@ export default function AdminReports() {
                     </thead>
 
                     <tbody className="divide-y divide-gray-100 dark:divide-dark-700">
-                      {filteredAuditLogs.map((log) => (
+                      {paginatedAuditLogs.map((log) => (
                         <tr key={log.id} className="transition hover:bg-gray-50 dark:hover:bg-dark-900/50">
                           <td className="whitespace-nowrap px-4 py-4 text-xs text-gray-500 dark:text-gray-400">
                             {formatDateTime(log.created_at)}
@@ -1259,10 +2117,8 @@ export default function AdminReports() {
                               {log.profiles?.role || '—'}
                             </span>
                           </td>
-                          <td className="max-w-sm px-4 py-4">
-                            <p className="truncate text-xs text-gray-500 dark:text-gray-400" title={log.details ? JSON.stringify(log.details) : '—'}>
-                              {log.details ? JSON.stringify(log.details) : '—'}
-                            </p>
+                          <td className="max-w-lg px-4 py-4 align-top">
+                            <AuditDetails log={log} />
                           </td>
                         </tr>
                       ))}

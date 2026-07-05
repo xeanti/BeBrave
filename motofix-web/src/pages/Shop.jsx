@@ -72,6 +72,10 @@ export default function Shop() {
   const [sortBy, setSortBy] = useState('name_asc');
   const [cartMessage, setCartMessage] = useState('');
   const [quantities, setQuantities] = useState({});
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [productPage, setProductPage] = useState(1);
+
+  const PRODUCTS_PER_PAGE = 8;
 
   const profileModel = useMemo(() => {
     const value = `${profile?.moto_make || ''} ${profile?.moto_model || ''}`.trim();
@@ -95,6 +99,10 @@ export default function Shop() {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  useEffect(() => {
+    setProductPage(1);
+  }, [search, category, selectedModel, sortBy]);
 
   async function fetchParts(showLoader = true) {
     if (showLoader) setLoading(true);
@@ -146,7 +154,7 @@ export default function Shop() {
     return cart.find((item) => item.id === partId)?.quantity || 0;
   }
 
-  function handleAddToCart(part) {
+  async function handleAddToCart(part) {
     const qty = getQty(part.id);
     const alreadyInCart = getCartQty(part.id);
     const stock = Number(part.stock_quantity) || 0;
@@ -157,7 +165,14 @@ export default function Shop() {
       return;
     }
 
-    addToCart(part, qty);
+    const result = await addToCart(part, qty);
+
+    if (!result?.ok) {
+      setCartMessage(result?.error ? `Could not add ${part.name}: ${result.error}` : `Could not add ${part.name}.`);
+      setTimeout(() => setCartMessage(''), 2500);
+      return;
+    }
+
     setCartMessage(`${qty} × ${part.name} added to cart!`);
     setQuantities((previous) => ({ ...previous, [part.id]: 1 }));
     setTimeout(() => setCartMessage(''), 2500);
@@ -246,45 +261,79 @@ export default function Shop() {
     [cart]
   );
 
+  const totalPages = Math.max(1, Math.ceil(filteredParts.length / PRODUCTS_PER_PAGE));
+  const safePage = Math.min(productPage, totalPages);
+  const pageStart = (safePage - 1) * PRODUCTS_PER_PAGE;
+  const paginatedParts = filteredParts.slice(pageStart, pageStart + PRODUCTS_PER_PAGE);
+
   return (
     <div className="min-h-[calc(100vh-65px)] bg-gray-50 px-4 py-8 text-gray-900 dark:bg-dark-900 dark:text-white sm:px-6 lg:py-10">
       <div className="mx-auto max-w-7xl">
         {/* Header */}
-        <div className="mb-8 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
-          <div className="relative p-6 sm:p-8">
-            <div className="absolute -right-8 -top-14 h-36 w-36 rounded-full bg-primary-500/10 blur-3xl" />
-            <div className="absolute -bottom-16 left-10 h-36 w-36 rounded-full bg-accent-500/10 blur-3xl" />
+        <div className="mb-8 overflow-hidden rounded-3xl border border-gray-200/80 bg-white shadow-lg shadow-gray-200/40 dark:border-dark-700 dark:bg-dark-800 dark:shadow-black/20">
+          <div className="relative p-5 sm:p-6 lg:p-7">
+            <div className="absolute -right-10 -top-16 h-36 w-36 rounded-full bg-primary-500/15 blur-3xl" />
+            <div className="absolute -bottom-20 left-8 h-36 w-36 rounded-full bg-accent-500/10 blur-3xl" />
 
-            <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <p className="mb-2 text-xs font-black uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
-                  MotoFix Parts Shop
+            <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+              {/* Left text */}
+              <div className="max-w-2xl">
+                <p className="mb-2 text-[11px] font-black uppercase tracking-[0.32em] text-primary-600 dark:text-primary-400">
+                  MotoFix Products Shop
                 </p>
-                <h1 className="text-3xl font-black tracking-tight text-gray-950 dark:text-white md:text-4xl">
-                  Parts Shop
+
+                <h1 className="text-3xl font-black tracking-tight text-gray-950 dark:text-white sm:text-4xl">
+                  Products Shop
                 </h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
-                  Browse available motorcycle parts, filter by model compatibility, and add items directly to your cart.
+
+                <p className="mt-3 max-w-xl text-sm leading-6 text-gray-600 dark:text-gray-400">
+                  Browse available motorcycle products, filter by model compatibility,
+                  and add items directly to your cart.
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 sm:flex">
-                <div className="rounded-2xl bg-gray-50 px-4 py-3 text-center ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
-                  <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    Available Parts
-                  </p>
-                  <p className="text-lg font-black text-gray-950 dark:text-white">
-                    {parts.length}
-                  </p>
+              {/* Right stats + checkout */}
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="min-w-[120px] rounded-2xl border border-gray-200 bg-white/80 px-4 py-3 text-center shadow-sm ring-1 ring-gray-100 backdrop-blur dark:border-dark-700 dark:bg-dark-900/60 dark:ring-dark-700">
+                    <div className="mx-auto mb-2 grid h-9 w-9 place-items-center rounded-xl bg-primary-50 text-base text-primary-600 dark:bg-primary-900/25 dark:text-primary-300">
+                      📦
+                    </div>
+
+                    <p className="text-[10px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                      Available Products
+                    </p>
+
+                    <p className="mt-1 text-2xl font-black text-gray-950 dark:text-white">
+                      {parts.length}
+                    </p>
+                  </div>
+
+                  <div className="min-w-[120px] rounded-2xl border border-gray-200 bg-white/80 px-4 py-3 text-center shadow-sm ring-1 ring-gray-100 backdrop-blur dark:border-dark-700 dark:bg-dark-900/60 dark:ring-dark-700">
+                    <div className="mx-auto mb-2 grid h-9 w-9 place-items-center rounded-xl bg-primary-50 text-base text-primary-600 dark:bg-primary-900/25 dark:text-primary-300">
+                      🛒
+                    </div>
+
+                    <p className="text-[10px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                      In Cart
+                    </p>
+
+                    <p className="mt-1 text-2xl font-black text-gray-950 dark:text-white">
+                      {cartTotalItems}
+                    </p>
+                  </div>
                 </div>
-                <div className="rounded-2xl bg-gray-50 px-4 py-3 text-center ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
-                  <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    In Cart
-                  </p>
-                  <p className="text-lg font-black text-primary-600 dark:text-primary-400">
-                    {cartTotalItems}
-                  </p>
-                </div>
+
+                {cartTotalItems > 0 && (
+                  <a
+                    href="/checkout"
+                    className="flex min-w-[135px] items-center justify-center gap-2 rounded-2xl bg-primary-600 px-5 py-3 text-xs font-black text-white shadow-lg shadow-primary-600/25 transition hover:-translate-y-0.5 hover:bg-primary-700 hover:shadow-primary-600/35 active:scale-[0.98]"
+                  >
+                    <span className="text-base">🛒</span>
+                    <span>Checkout</span>
+                    <span>→</span>
+                  </a>
+                )}
               </div>
             </div>
           </div>
@@ -316,7 +365,7 @@ export default function Shop() {
               </span>
               <input
                 type="text"
-                placeholder="Search parts, categories, or compatible models..."
+                placeholder="Search products, categories, or compatible models..."
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-10 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500 dark:focus:border-primary-500"
@@ -417,7 +466,7 @@ export default function Shop() {
             <span className="font-black text-gray-950 dark:text-white">
               {filteredParts.length}
             </span>{' '}
-            {filteredParts.length === 1 ? 'part' : 'parts'} found
+            {filteredParts.length === 1 ? 'product' : 'products'} found
             {selectedModel !== 'all' ? (
               <span>
                 {' '}
@@ -425,9 +474,14 @@ export default function Shop() {
               </span>
             ) : null}
           </p>
+          {filteredParts.length > PRODUCTS_PER_PAGE && (
+            <p className="text-xs font-bold text-gray-500 dark:text-gray-400">
+              Page {safePage} of {totalPages}
+            </p>
+          )}
         </div>
 
-        {/* Parts grid */}
+        {/* Products grid */}
         {loading ? (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {[1, 2, 3, 4, 5, 6, 7, 8].map((item) => (
@@ -440,7 +494,7 @@ export default function Shop() {
               🔍
             </div>
             <h2 className="mb-2 text-xl font-black text-gray-950 dark:text-white">
-              No parts found
+              No products found
             </h2>
             <p className="mx-auto max-w-md text-sm leading-6 text-gray-600 dark:text-gray-400">
               Try a different search keyword, category, model, or clear all filters.
@@ -455,7 +509,7 @@ export default function Shop() {
           </div>
         ) : (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {filteredParts.map((part) => {
+            {paginatedParts.map((part) => {
               const inCart = cartItemIds.includes(part.id);
               const stockStatus = getStockStatus(part);
               const qty = getQty(part.id);
@@ -511,7 +565,7 @@ export default function Shop() {
                       {/* Compatible models */}
                       {part.compatible_models?.length > 0 ? (
                         <div className="mb-3">
-                          <p className="mb-2 text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                          <p className="mb-2 text-[10px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
                             Compatible with
                           </p>
                           <div className="flex flex-wrap gap-1.5">
@@ -541,6 +595,14 @@ export default function Shop() {
                       <p className="mb-3 text-2xl font-black text-accent-600 dark:text-accent-400">
                         {formatPeso(part.price)}
                       </p>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedProduct(part)}
+                        className="mb-3 w-full rounded-2xl border border-gray-200 px-4 py-2.5 text-xs font-black text-gray-700 transition hover:border-primary-300 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-300"
+                      >
+                        View Product Details
+                      </button>
 
                       {/* Quantity stepper */}
                       <div className="mb-3 flex items-center justify-between gap-2">
@@ -602,9 +664,142 @@ export default function Shop() {
                 </article>
               );
             })}
+
+          </div>
+        )}
+
+        {filteredParts.length > PRODUCTS_PER_PAGE && (
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => setProductPage((page) => Math.max(1, page - 1))}
+              disabled={safePage <= 1}
+              className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-300 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+            >
+              ← Previous
+            </button>
+
+            {[...Array(totalPages)].map((_, index) => {
+              const page = index + 1;
+
+              return (
+                <button
+                  key={page}
+                  type="button"
+                  onClick={() => setProductPage(page)}
+                  className={`h-10 w-10 rounded-2xl text-sm font-black transition ${
+                    safePage === page
+                      ? 'bg-primary-600 text-white shadow-lg shadow-primary-600/20'
+                      : 'border border-gray-200 bg-white text-gray-700 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300'
+                  }`}
+                >
+                  {page}
+                </button>
+              );
+            })}
+
+            <button
+              type="button"
+              onClick={() => setProductPage((page) => Math.min(totalPages, page + 1))}
+              disabled={safePage >= totalPages}
+              className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-300 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+            >
+              Next →
+            </button>
           </div>
         )}
       </div>
+
+      {selectedProduct && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800">
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-dark-700">
+              <div>
+                <p className="text-xs font-black uppercase tracking-wider text-primary-600 dark:text-primary-400">
+                  Product Details
+                </p>
+                <h2 className="text-lg font-black text-gray-950 dark:text-white">
+                  {selectedProduct.name}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedProduct(null)}
+                className="grid h-10 w-10 place-items-center rounded-2xl text-xl text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="grid gap-5 p-5 md:grid-cols-[260px_1fr]">
+              <div className="overflow-hidden rounded-3xl bg-gray-100 ring-1 ring-gray-200 dark:bg-dark-900 dark:ring-dark-700">
+                {selectedProduct.image_url ? (
+                  <img
+                    src={selectedProduct.image_url}
+                    alt={selectedProduct.name}
+                    className="h-64 w-full object-cover md:h-full"
+                  />
+                ) : (
+                  <div className="grid h-64 place-items-center text-6xl text-gray-400">⚙️</div>
+                )}
+              </div>
+
+              <div>
+                <div className="mb-4 flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-black capitalize text-gray-600 dark:bg-dark-900 dark:text-gray-400">
+                    {selectedProduct.category || 'General'}
+                  </span>
+                  <span className={`rounded-full px-3 py-1 text-xs font-black ring-1 ${getStockStatus(selectedProduct).classes}`}>
+                    {getStockStatus(selectedProduct).label}
+                  </span>
+                </div>
+
+                <p className="mb-4 text-3xl font-black text-accent-600 dark:text-accent-400">
+                  {formatPeso(selectedProduct.price)}
+                </p>
+
+                <p className="mb-5 text-sm leading-6 text-gray-600 dark:text-gray-400">
+                  {selectedProduct.description || 'No product description available.'}
+                </p>
+
+                <div className="mb-5 rounded-3xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/60">
+                  <p className="mb-2 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Compatible Models
+                  </p>
+                  {selectedProduct.compatible_models?.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {selectedProduct.compatible_models.map((model) => (
+                        <span
+                          key={model}
+                          className="rounded-full bg-primary-50 px-3 py-1 text-xs font-black text-primary-700 dark:bg-primary-900/25 dark:text-primary-300"
+                        >
+                          {model}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      No compatibility information listed yet.
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleAddToCart(selectedProduct);
+                    setSelectedProduct(null);
+                  }}
+                  disabled={Number(selectedProduct.stock_quantity) <= getCartQty(selectedProduct.id)}
+                  className="w-full rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Add to Cart
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

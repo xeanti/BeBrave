@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -45,11 +46,26 @@ function getOrderStatusConfig(theme, status) {
         bg: theme.success + '18',
       };
     case 'ready':
+    case 'ready_for_pickup':
       return {
         label: 'Ready',
         icon: 'bag-check',
         color: theme.primaryLight || theme.primary,
         bg: theme.primary + '18',
+      };
+    case 'processing':
+      return {
+        label: 'Processing',
+        icon: 'sync-circle',
+        color: theme.primaryLight || theme.primary,
+        bg: theme.primary + '18',
+      };
+    case 'confirmed':
+      return {
+        label: 'Confirmed',
+        icon: 'checkmark-circle',
+        color: theme.success,
+        bg: theme.success + '18',
       };
     case 'preparing':
       return {
@@ -75,30 +91,62 @@ function getOrderStatusConfig(theme, status) {
   }
 }
 
+function getPaymentMethodLabel(method) {
+  const value = String(method || '').toLowerCase();
+
+  if (value === 'paymongo_qrph') return 'PayMongo QR Ph / GCash';
+  if (value === 'gcash_manual') return 'GCash Manual Verification';
+  if (value === 'cash_on_pickup') return 'Pay at Counter';
+  if (value === 'qrph') return 'QR Ph / GCash';
+
+  return method ? String(method).replace(/_/g, ' ') : 'To be confirmed';
+}
+
 function getPaymentInfo(order) {
   const total = Number(order.total_amount) || 0;
-  const downPayment = Number(order.down_payment_required) || total * 0.15;
+  const paymentStatus = String(order.payment_status || '').toLowerCase();
+  const orderStatus = String(order.status || 'pending').toLowerCase();
+  const orderPayments = Array.isArray(order.order_payments) ? order.order_payments : [];
 
-  const paidAmount =
+  const paidStatuses = ['paid', 'fully_paid', 'full_paid'];
+  const unpaidStatuses = [
+    'checkout_created',
+    'pending_payment',
+    'pending_verification',
+    'unpaid',
+    'failed',
+    'expired',
+    'cancelled',
+  ];
+  const partialStatuses = ['partial', 'partially_paid', 'downpayment_paid'];
+
+  const onlinePaid = orderPayments
+    .filter((payment) => String(payment.status || '').toLowerCase() === 'paid')
+    .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
+
+  const manualPaid =
     Number(order.amount_paid) ||
     Number(order.paid_amount) ||
     Number(order.payment_amount) ||
     0;
 
-  const orderStatus = String(order.status || 'pending').toLowerCase();
-  const paymentStatus = String(order.payment_status || '').toLowerCase();
+  // down_payment_amount is only trusted after the order is marked paid/partial.
+  // Do not use it for checkout_created because it may only mean "amount requested".
+  const trustedOrderPaid = partialStatuses.includes(paymentStatus)
+    ? Number(order.down_payment_amount) || 0
+    : 0;
+
+  const paidAmountFromRecords = Math.max(onlinePaid, manualPaid, trustedOrderPaid);
 
   const fullyPaid =
-    paymentStatus === 'paid' ||
-    paymentStatus === 'fully_paid' ||
-    paymentStatus === 'full_paid' ||
-    orderStatus === 'completed' ||
-    paidAmount >= total;
+    onlinePaid >= total ||
+    (paidStatuses.includes(paymentStatus) && paidAmountFromRecords >= total) ||
+    (orderStatus === 'completed' && !unpaidStatuses.includes(paymentStatus) && paidAmountFromRecords >= total);
+
+  const paidAmount = fullyPaid ? total : paidAmountFromRecords;
 
   const partiallyPaid =
-    paymentStatus === 'partial' ||
-    paymentStatus === 'downpayment_paid' ||
-    paidAmount > 0;
+    !fullyPaid && (partialStatuses.includes(paymentStatus) || paidAmount > 0);
 
   if (fullyPaid) {
     return {
@@ -112,7 +160,7 @@ function getPaymentInfo(order) {
 
   if (partiallyPaid) {
     return {
-      label: 'Down Payment Paid',
+      label: 'Partial / Down Payment Paid',
       icon: 'card',
       paidAmount,
       remainingBalance: Math.max(0, total - paidAmount),
@@ -121,7 +169,16 @@ function getPaymentInfo(order) {
   }
 
   return {
-    label: 'Pending Payment',
+    label:
+      paymentStatus === 'checkout_created'
+        ? 'Waiting for PayMongo Payment'
+        : paymentStatus === 'pending_verification'
+          ? 'Pending Verification'
+          : paymentStatus === 'failed'
+            ? 'Payment Failed'
+            : paymentStatus === 'expired'
+              ? 'Payment Expired'
+              : 'Pending Payment',
     icon: 'wallet-outline',
     paidAmount: 0,
     remainingBalance: total,
@@ -172,7 +229,35 @@ export default function OrderHistoryScreen({ navigation }) {
       console.log('Fetch orders error:', error.message);
       setOrders([]);
     } else {
-      setOrders(data || []);
+      const orderRows = data || [];
+      const orderIds = orderRows.map((order) => order.id);
+
+      let groupedOnlinePayments = {};
+
+      if (orderIds.length > 0) {
+        const { data: onlinePayments, error: onlineError } = await supabase
+          .from('order_payments')
+          .select('*')
+          .in('order_id', orderIds)
+          .order('created_at', { ascending: true });
+
+        if (onlineError) {
+          console.log('Fetch order PayMongo payments error:', onlineError.message);
+        } else {
+          groupedOnlinePayments = (onlinePayments || []).reduce((acc, payment) => {
+            if (!acc[payment.order_id]) acc[payment.order_id] = [];
+            acc[payment.order_id].push(payment);
+            return acc;
+          }, {});
+        }
+      }
+
+      setOrders(
+        orderRows.map((order) => ({
+          ...order,
+          order_payments: groupedOnlinePayments[order.id] || [],
+        }))
+      );
     }
 
     setLoading(false);
@@ -234,7 +319,7 @@ export default function OrderHistoryScreen({ navigation }) {
           const status = getOrderStatusConfig(theme, order.status);
           const payment = getPaymentInfo(order);
           const total = Number(order.total_amount) || 0;
-          const downPayment = Number(order.down_payment_required) || total * 0.15;
+          const downPayment = Number(order.down_payment_amount) || Number(order.down_payment_required) || (String(order.payment_method || '').toLowerCase() === 'paymongo_qrph' ? total : total * 0.15);
           const receiptNumber =
             order.receipt_number ||
             `MFX-${String(order.id || '').slice(0, 8).toUpperCase()}`;
@@ -330,7 +415,7 @@ export default function OrderHistoryScreen({ navigation }) {
                 <View style={s.summaryRow}>
                   <Text style={s.summaryLabel}>Payment Method</Text>
                   <Text style={s.summaryValue}>
-                    {order.payment_method || 'To be confirmed'}
+                    {getPaymentMethodLabel(order.payment_method)}
                   </Text>
                 </View>
               </View>
@@ -346,13 +431,21 @@ export default function OrderHistoryScreen({ navigation }) {
 
                     return (
                       <View key={item.id} style={s.itemRow}>
-                        <View style={s.itemIcon}>
-                          <Ionicons
-                            name="cube-outline"
-                            size={18}
-                            color={theme.primary}
+                        {item.parts?.image_url ? (
+                          <Image
+                            source={{ uri: item.parts.image_url }}
+                            style={s.itemImage}
+                            resizeMode="cover"
                           />
-                        </View>
+                        ) : (
+                          <View style={s.itemIcon}>
+                            <Ionicons
+                              name="cube-outline"
+                              size={18}
+                              color={theme.primary}
+                            />
+                          </View>
+                        )}
 
                         <View style={{ flex: 1 }}>
                           <Text style={s.itemName}>
@@ -585,15 +678,25 @@ const styles = (theme) =>
       backgroundColor: theme.bg2,
       borderRadius: 13,
       padding: 10,
-      gap: 10,
+      gap: 11,
+    },
+    itemImage: {
+      width: 42,
+      height: 42,
+      borderRadius: 12,
+      backgroundColor: theme.card,
+      borderWidth: 1,
+      borderColor: theme.border,
     },
     itemIcon: {
-      width: 34,
-      height: 34,
-      borderRadius: 10,
+      width: 42,
+      height: 42,
+      borderRadius: 12,
       backgroundColor: theme.card,
       alignItems: 'center',
       justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: theme.border,
     },
     itemName: {
       color: theme.text,

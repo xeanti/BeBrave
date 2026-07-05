@@ -11,6 +11,28 @@ import { supabase } from '../../lib/supabase';
 import { unregisterPushToken } from '../../lib/pushNotifications';
 import { CommonActions } from '@react-navigation/native';
 
+function cleanName(value) {
+  return String(value || '').replace(/\s+/g, ' ').slice(0, 60);
+}
+
+function cleanPhone(value) {
+  return String(value || '').replace(/[^0-9]/g, '').slice(0, 11);
+}
+
+function cleanYear(value) {
+  return String(value || '').replace(/[^0-9]/g, '').slice(0, 4);
+}
+
+function isValidPhilippineMobile(value) {
+  if (!value) return true;
+  return /^09\d{9}$/.test(value);
+}
+
+function normalizeProfilePayloadText(value) {
+  const clean = String(value || '').trim();
+  return clean.length ? clean : null;
+}
+
 
 export default function ProfileScreen({ navigation }) {
   const { theme, isDark, toggleTheme } = useTheme();
@@ -44,31 +66,44 @@ export default function ProfileScreen({ navigation }) {
   useEffect(() => { fetchProfile(); }, []);
 
   async function fetchProfile() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setLoading(false); return; }
+    setLoading(true);
 
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single();
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
 
-    if (data) {
-      setProfile(data);
-      setFirstName(data.first_name || '');
-      setLastName(data.last_name || '');
-      setPhone(data.phone || '');
-      setSpecialization(data.specialization || '');
-      setMotoMake(data.moto_make || '');
-      setMotoModel(data.moto_model || '');
-      setMotoYear(data.moto_year ? String(data.moto_year) : '');
+      if (!user) {
+        setLoading(false);
+        return;
+      }
 
-      setSavedPhotoUrl(data.profile_photo_url || null);
-      setPhotoUri(data.profile_photo_url || null);
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle();
 
-      if (data.role === 'mechanic') fetchCertificates(user.id);
+      if (error) throw error;
+
+      if (data) {
+        setProfile(data);
+        setFirstName(data.first_name || '');
+        setLastName(data.last_name || '');
+        setPhone(cleanPhone(data.phone || ''));
+        setSpecialization(data.specialization || '');
+        setMotoMake(data.moto_make || '');
+        setMotoModel(data.moto_model || '');
+        setMotoYear(data.moto_year ? String(data.moto_year) : '');
+
+        setSavedPhotoUrl(data.profile_photo_url || null);
+        setPhotoUri(data.profile_photo_url || null);
+
+        if (data.role === 'mechanic') fetchCertificates(user.id);
+      }
+    } catch (error) {
+      Alert.alert('Profile Error', error.message || 'Failed to load profile.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   async function fetchCertificates(mechanicId) {
@@ -140,6 +175,32 @@ export default function ProfileScreen({ navigation }) {
 
   async function handleSave() {
     const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user?.id) {
+      Alert.alert('Login Required', 'Please login again before updating your profile.');
+      return;
+    }
+
+    const cleanFirstName = firstName.trim();
+    const cleanLastName = lastName.trim();
+    const cleanPhoneNumber = cleanPhone(phone);
+    const cleanMotoYear = cleanYear(motoYear);
+
+    if (!cleanFirstName || !cleanLastName) {
+      Alert.alert('Missing Name', 'Please enter your first name and last name.');
+      return;
+    }
+
+    if (!isValidPhilippineMobile(cleanPhoneNumber)) {
+      Alert.alert('Invalid Phone Number', 'Use an 11-digit Philippine mobile number starting with 09.');
+      return;
+    }
+
+    if (cleanMotoYear && (Number(cleanMotoYear) < 1980 || Number(cleanMotoYear) > new Date().getFullYear() + 1)) {
+      Alert.alert('Invalid Year', 'Please enter a valid motorcycle year.');
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -150,19 +211,19 @@ export default function ProfileScreen({ navigation }) {
       }
 
       const payload = {
-        first_name: firstName,
-        last_name: lastName,
-        phone: phone || null,
+        first_name: cleanFirstName,
+        last_name: cleanLastName,
+        phone: cleanPhoneNumber || null,
       };
 
       if (newPhotoUrl) payload.profile_photo_url = newPhotoUrl;
 
       if (profile?.role === 'mechanic') {
-        payload.specialization = specialization || null;
+        payload.specialization = normalizeProfilePayloadText(specialization);
       } else {
-        payload.moto_make = motoMake || null;
-        payload.moto_model = motoModel || null;
-        payload.moto_year = motoYear ? parseInt(motoYear) : null;
+        payload.moto_make = normalizeProfilePayloadText(motoMake);
+        payload.moto_model = normalizeProfilePayloadText(motoModel);
+        payload.moto_year = cleanMotoYear ? parseInt(cleanMotoYear, 10) : null;
       }
 
       const { error } = await supabase
@@ -173,6 +234,12 @@ export default function ProfileScreen({ navigation }) {
       if (error) throw error;
 
       if (newPhotoUrl) setSavedPhotoUrl(newPhotoUrl);
+
+      setProfile((current) => ({
+        ...current,
+        ...payload,
+      }));
+
       Alert.alert('✅ Success', 'Profile updated successfully!');
     } catch (err) {
       Alert.alert('Error', err.message || 'Failed to update profile.');
@@ -183,6 +250,12 @@ export default function ProfileScreen({ navigation }) {
 
 async function handleLogout() {
   try {
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (user?.id) {
+      await unregisterPushToken(user.id);
+    }
+
     await supabase.auth.signOut();
   } catch (error) {
     console.log('Logout error:', error.message);
@@ -287,6 +360,22 @@ async function handleLogout() {
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
 
+      <View style={s.headerCard}>
+        <View>
+          <Text style={s.headerEyebrow}>MotoFix Account</Text>
+          <Text style={s.headerTitle}>
+            {firstName || lastName ? `${firstName} ${lastName}`.trim() : 'My Profile'}
+          </Text>
+          <Text style={s.headerSubtitle}>
+            {profile?.email || 'Manage your account details'}
+          </Text>
+        </View>
+
+        <View style={s.rolePill}>
+          <Text style={s.rolePillText}>{String(profile?.role || 'customer').replace('_', ' ')}</Text>
+        </View>
+      </View>
+
       {/* ── Photo Section ── */}
       <View style={s.photoCard}>
         <TouchableOpacity onPress={pickPhoto} style={s.photoWrap} activeOpacity={0.8}>
@@ -330,25 +419,29 @@ async function handleLogout() {
           icon="person-outline"
           label="First Name"
           value={firstName}
-          onChange={firstName}
+          onChangeText={(value) => setFirstName(cleanName(value))}
           placeholder="First name"
+          maxLength={40}
         />
         <FieldRow
           theme={theme}
           icon="person-outline"
           label="Last Name"
           value={lastName}
-          onChange={lastName}
+          onChangeText={(value) => setLastName(cleanName(value))}
           placeholder="Last name"
+          maxLength={40}
         />
         <FieldRow
           theme={theme}
           icon="call-outline"
           label="Phone"
           value={phone}
-          onChange={phone}
-          placeholder="09XX XXX XXXX"
+          onChangeText={(value) => setPhone(cleanPhone(value))}
+          placeholder="09XXXXXXXXX"
           keyboardType="phone-pad"
+          autoCapitalize="none"
+          maxLength={11}
           last
         />
       </View>
@@ -363,8 +456,9 @@ async function handleLogout() {
               icon="construct-outline"
               label="Specialization"
               value={specialization}
-              onChange={specialization}
+              onChangeText={setSpecialization}
               placeholder="e.g. Engine Repair, Electrical"
+              maxLength={80}
               last
             />
           </View>
@@ -381,25 +475,29 @@ async function handleLogout() {
               icon="bicycle-outline"
               label="Make"
               value={motoMake}
-              onChange={motoMake}
+              onChangeText={setMotoMake}
               placeholder="e.g. Yamaha"
+              maxLength={40}
             />
             <FieldRow
               theme={theme}
               icon="bicycle-outline"
               label="Model"
               value={motoModel}
-              onChange={motoModel}
+              onChangeText={setMotoModel}
               placeholder="e.g. Aerox 155"
+              maxLength={50}
             />
             <FieldRow
               theme={theme}
               icon="calendar-outline"
               label="Year"
               value={motoYear}
-              onChange={motoYear}
+              onChangeText={(value) => setMotoYear(cleanYear(value))}
               placeholder="e.g. 2023"
               keyboardType="number-pad"
+              autoCapitalize="none"
+              maxLength={4}
               last
             />
           </View>
@@ -510,7 +608,7 @@ async function handleLogout() {
                       Uploaded {new Date(c.created_at).toLocaleDateString()}
                     </Text>
                   </View>
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <View style={{ flexDirection: 'row', gap: 8, flexShrink: 0 }}>
                     <TouchableOpacity
                       onPress={() => {
                         const { Linking } = require('react-native');
@@ -570,38 +668,70 @@ async function handleLogout() {
 }
 
 // ── Reusable editable field row ──
-function FieldRow({ theme, icon, label, value, onChange, placeholder, keyboardType = 'default', last }) {
+function FieldRow({
+  theme,
+  icon,
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  keyboardType = 'default',
+  autoCapitalize = 'words',
+  maxLength,
+  last,
+}) {
   const [focused, setFocused] = useState(false);
-  const { TextInput } = require('react-native');
 
   return (
-    <View style={{
-      flexDirection: 'row',
-      alignItems: 'center',
-      padding: 14,
-      borderBottomWidth: last ? 0 : 1,
-      borderBottomColor: theme.border,
-    }}>
-      <Ionicons name={icon} size={18} color={theme.textMuted} style={{ marginRight: 12 }} />
-      <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 11, color: theme.textMuted, marginBottom: 2 }}>{label}</Text>
-        <TextInput
-          value={value}
-          onChangeText={onChange}
-          placeholder={placeholder}
-          placeholderTextColor={theme.textMuted}
-          keyboardType={keyboardType}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          style={{
-            fontSize: 14,
-            color: theme.text,
-            paddingVertical: 0,
-            borderBottomWidth: focused ? 1 : 0,
-            borderBottomColor: theme.primary,
-          }}
+    <View
+      style={{
+        padding: 14,
+        borderBottomWidth: last ? 0 : 1,
+        borderBottomColor: theme.border,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+        <Ionicons
+          name={icon}
+          size={18}
+          color={focused ? theme.primaryLight : theme.textMuted}
+          style={{ marginRight: 10 }}
         />
+        <Text
+          style={{
+            fontSize: 12,
+            color: theme.textMuted,
+            fontWeight: '800',
+            textTransform: 'uppercase',
+            letterSpacing: 0.4,
+          }}
+        >
+          {label}
+        </Text>
       </View>
+
+      <TextInput
+        value={value}
+        onChangeText={typeof onChangeText === 'function' ? onChangeText : undefined}
+        placeholder={placeholder}
+        placeholderTextColor={theme.textMuted}
+        keyboardType={keyboardType}
+        autoCapitalize={autoCapitalize}
+        maxLength={maxLength}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={{
+          fontSize: 15,
+          color: theme.text,
+          fontWeight: '700',
+          borderWidth: 1,
+          borderColor: focused ? theme.primary : theme.border,
+          backgroundColor: theme.bg2 || theme.bg,
+          borderRadius: 12,
+          paddingHorizontal: 12,
+          paddingVertical: 11,
+        }}
+      />
     </View>
   );
 }
@@ -611,14 +741,61 @@ const styles = (theme) => StyleSheet.create({
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.bg },
   content: { padding: 20, paddingBottom: 40 },
 
+  headerCard: {
+    backgroundColor: theme.card,
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: theme.border,
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  headerEyebrow: {
+    color: theme.primaryLight,
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 5,
+  },
+  headerTitle: {
+    color: theme.text,
+    fontSize: 22,
+    fontWeight: '900',
+    lineHeight: 28,
+  },
+  headerSubtitle: {
+    color: theme.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 3,
+  },
+  rolePill: {
+    backgroundColor: theme.primary + '18',
+    borderWidth: 1,
+    borderColor: theme.primary + '44',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  rolePillText: {
+    color: theme.primaryLight,
+    fontSize: 10,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+
   // Photo card
   photoCard: {
     backgroundColor: theme.card,
     borderRadius: 16,
-    padding: 20,
+    padding: 18,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: 14,
     borderWidth: 1,
     borderColor: theme.border,
     marginBottom: 24,

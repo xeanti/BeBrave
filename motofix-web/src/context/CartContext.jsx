@@ -1,4 +1,4 @@
-import {
+import React, {
   createContext,
   useCallback,
   useContext,
@@ -14,22 +14,27 @@ function money(value) {
   return Number(value) || 0;
 }
 
-function normalizeCartRow(row) {
-  const part = row.parts || {};
-  const stock = Number(part.stock_quantity) || 0;
+function showMessage(_title, message) {
+  alert(message);
+}
+
+function normalizeCartRow(row, part) {
+  const stock = Number(part?.stock_quantity) || 0;
   const quantity = Math.max(1, Number(row.quantity) || 1);
 
   return {
     cart_item_id: row.id,
     id: row.part_id,
     part_id: row.part_id,
-    name: part.name || 'Part',
-    category: part.category || 'General',
-    description: part.description || '',
-    image_url: part.image_url || null,
-    price: money(part.price),
+    name: part?.name || 'Product',
+    category: part?.category || 'General',
+    description: part?.description || '',
+    image_url: part?.image_url || null,
+    price: money(part?.price),
     stock_quantity: stock,
-    compatible_models: part.compatible_models || [],
+    compatible_models: Array.isArray(part?.compatible_models)
+      ? part.compatible_models
+      : [],
     quantity: stock > 0 ? Math.min(quantity, stock) : quantity,
   };
 }
@@ -43,43 +48,80 @@ export function CartProvider({ children }) {
     if (!uid) {
       setCart([]);
       setLoadingCart(false);
-      return;
+      return [];
     }
 
     setLoadingCart(true);
 
-    const { data, error } = await supabase
-      .from('cart_items')
-      .select(
-        `
-        id,
-        user_id,
-        part_id,
-        quantity,
-        created_at,
-        parts (
-          id,
-          name,
-          category,
-          image_url,
-          price,
-          stock_quantity,
-          compatible_models
+    try {
+      const { data: cartRows, error: cartError } = await supabase
+        .from('cart_items')
+        .select('id, user_id, part_id, quantity, created_at, updated_at')
+        .eq('user_id', uid)
+        .order('created_at', { ascending: true });
+
+      if (cartError) throw cartError;
+
+      const rows = cartRows || [];
+
+      if (rows.length === 0) {
+        setCart([]);
+        return [];
+      }
+
+      const partIds = [...new Set(rows.map((row) => row.part_id).filter(Boolean))];
+
+      const { data: partsData, error: partsError } = await supabase
+        .from('parts')
+        .select(
+          'id, name, category, image_url, price, stock_quantity, compatible_models, is_active'
         )
-      `
-      )
-      .eq('user_id', uid)
-      .order('created_at', { ascending: true });
+        .in('id', partIds);
 
-    if (error) {
-      console.log('Fetch cart error:', error.message);
+      if (partsError) throw partsError;
+
+      const partsById = new Map((partsData || []).map((part) => [part.id, part]));
+
+      const invalidPartIds = [];
+      const normalized = [];
+
+      for (const row of rows) {
+        const part = partsById.get(row.part_id);
+
+        if (!part || part.is_active === false || Number(part.stock_quantity) <= 0) {
+          invalidPartIds.push(row.part_id);
+          continue;
+        }
+
+        normalized.push(normalizeCartRow(row, part));
+      }
+
+      if (invalidPartIds.length > 0) {
+        await supabase
+          .from('cart_items')
+          .delete()
+          .eq('user_id', uid)
+          .in('part_id', invalidPartIds);
+      }
+
+      setCart(normalized);
+      return normalized;
+    } catch (error) {
+      console.log('Fetch cart error:', error?.message || error);
       setCart([]);
-    } else {
-      setCart((data || []).map(normalizeCartRow));
+      return [];
+    } finally {
+      setLoadingCart(false);
     }
-
-    setLoadingCart(false);
   }, []);
+
+  const refreshCart = useCallback(async () => {
+    const { data } = await supabase.auth.getSession();
+    const uid = data?.session?.user?.id || null;
+
+    setUserId(uid);
+    return fetchCart(uid);
+  }, [fetchCart]);
 
   useEffect(() => {
     let mounted = true;
@@ -125,6 +167,15 @@ export function CartProvider({ children }) {
         },
         () => fetchCart(userId)
       )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'parts',
+        },
+        () => fetchCart(userId)
+      )
       .subscribe();
 
     return () => {
@@ -132,61 +183,137 @@ export function CartProvider({ children }) {
     };
   }, [userId, fetchCart]);
 
+  async function getCurrentUserId() {
+    if (userId) return userId;
+
+    const { data, error } = await supabase.auth.getSession();
+
+    if (error) {
+      console.log('Get session error:', error.message);
+      return null;
+    }
+
+    const uid = data?.session?.user?.id || null;
+    setUserId(uid);
+    return uid;
+  }
+
   async function addToCart(part, quantity = 1) {
-    if (!userId) {
-      alert('Please login before adding items to your cart.');
-      return;
+    const uid = await getCurrentUserId();
+
+    if (!uid) {
+      showMessage('Login Required', 'Please login before adding items to your cart.');
+      return { ok: false, error: 'Please login before adding items to your cart.' };
+    }
+
+    const partId = part?.id || part?.part_id;
+
+    if (!partId) {
+      showMessage('Cart Error', 'Missing product ID.');
+      return { ok: false, error: 'Missing product ID.' };
     }
 
     const qty = Math.max(1, parseInt(quantity, 10) || 1);
-    const stock = Number(part.stock_quantity) || 0;
+    const stock = Number(part?.stock_quantity) || 0;
 
     if (stock <= 0) {
-      alert(`${part.name} is currently out of stock.`);
-      return;
+      showMessage('Out of Stock', `${part?.name || 'This product'} is currently out of stock.`);
+      return { ok: false, error: 'Out of stock.' };
     }
 
-    const { error } = await supabase.rpc('add_to_cart', {
-      p_user_id: userId,
-      p_part_id: part.id,
-      p_quantity: qty,
-    });
+    const currentCart = await fetchCart(uid);
+    const currentQty =
+      currentCart.find((item) => item.id === partId || item.part_id === partId)?.quantity || 0;
 
-    if (error) {
-      alert(error.message);
-      return;
+    if (currentQty + qty > stock) {
+      const message = `Stock limit reached. Only ${stock} item(s) available for ${part?.name || 'this product'}.`;
+      showMessage('Stock Limit', message);
+      return { ok: false, error: message };
     }
 
-    await fetchCart(userId);
+    const { data: existingItem, error: existingError } = await supabase
+      .from('cart_items')
+      .select('id, quantity')
+      .eq('user_id', uid)
+      .eq('part_id', partId)
+      .maybeSingle();
+
+    if (existingError) {
+      console.log('Cart existing item error:', existingError);
+      showMessage('Cart Error', existingError.message);
+      return { ok: false, error: existingError.message };
+    }
+
+    if (existingItem) {
+      const nextQty = Math.min(Number(existingItem.quantity || 0) + qty, stock);
+
+      const { error: updateError } = await supabase
+        .from('cart_items')
+        .update({
+          quantity: nextQty,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingItem.id);
+
+      if (updateError) {
+        console.log('Cart update error:', updateError);
+        showMessage('Cart Error', updateError.message);
+        return { ok: false, error: updateError.message };
+      }
+    } else {
+      const { error: insertError } = await supabase.from('cart_items').insert({
+        user_id: uid,
+        part_id: partId,
+        quantity: qty,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      if (insertError) {
+        console.log('Cart insert error:', insertError);
+        showMessage('Cart Error', insertError.message);
+        return { ok: false, error: insertError.message };
+      }
+    }
+
+    const updatedCart = await fetchCart(uid);
+
+    return {
+      ok: true,
+      message: `${qty} × ${part?.name || 'Product'} added to cart.`,
+      cart: updatedCart,
+    };
   }
 
   async function removeFromCart(partId) {
-    if (!userId) return;
+    const uid = await getCurrentUserId();
+    if (!uid) return { ok: false, error: 'Not logged in.' };
 
     const { error } = await supabase
       .from('cart_items')
       .delete()
-      .eq('user_id', userId)
+      .eq('user_id', uid)
       .eq('part_id', partId);
 
     if (error) {
-      alert(error.message);
-      return;
+      showMessage('Cart Error', error.message);
+      return { ok: false, error: error.message };
     }
 
-    await fetchCart(userId);
+    await fetchCart(uid);
+    return { ok: true };
   }
 
   async function updateQuantity(partId, quantity) {
-    if (!userId) return;
+    const uid = await getCurrentUserId();
+    if (!uid) return { ok: false, error: 'Not logged in.' };
 
-    if (quantity < 1) {
-      await removeFromCart(partId);
-      return;
+    if (Number(quantity) < 1) {
+      return removeFromCart(partId);
     }
 
-    const item = cart.find((cartItem) => cartItem.id === partId);
-    if (!item) return;
+    const item = cart.find((cartItem) => cartItem.id === partId || cartItem.part_id === partId);
+    if (!item) return { ok: false, error: 'Item not found in cart.' };
 
     const qty = Math.max(1, parseInt(quantity, 10) || 1);
     const safeQty = Math.min(qty, item.stock_quantity || qty);
@@ -197,42 +324,46 @@ export function CartProvider({ children }) {
         quantity: safeQty,
         updated_at: new Date().toISOString(),
       })
-      .eq('user_id', userId)
+      .eq('user_id', uid)
       .eq('part_id', partId);
 
     if (error) {
-      alert(error.message);
-      return;
+      showMessage('Cart Error', error.message);
+      return { ok: false, error: error.message };
     }
 
-    await fetchCart(userId);
+    await fetchCart(uid);
+    return { ok: true };
   }
 
   async function clearCart() {
-    if (!userId) {
+    const uid = await getCurrentUserId();
+
+    if (!uid) {
       setCart([]);
-      return;
+      return { ok: true };
     }
 
     const { error } = await supabase
       .from('cart_items')
       .delete()
-      .eq('user_id', userId);
+      .eq('user_id', uid);
 
     if (error) {
-      alert(error.message);
-      return;
+      showMessage('Cart Error', error.message);
+      return { ok: false, error: error.message };
     }
 
     setCart([]);
+    return { ok: true };
   }
 
-  const total = useMemo(
+  const cartTotal = useMemo(
     () => cart.reduce((sum, item) => sum + money(item.price) * item.quantity, 0),
     [cart]
   );
 
-  const itemCount = useMemo(
+  const cartTotalItems = useMemo(
     () => cart.reduce((sum, item) => sum + item.quantity, 0),
     [cart]
   );
@@ -242,17 +373,17 @@ export function CartProvider({ children }) {
       value={{
         cart,
         loadingCart,
+        cartTotal,
+        cartTotalItems,
+
+        total: cartTotal,
+        itemCount: cartTotalItems,
+
         addToCart,
-        removeFromCart,
         updateQuantity,
+        removeFromCart,
         clearCart,
-        refreshCart: () => fetchCart(userId),
-
-        total,
-        itemCount,
-
-        cartTotal: total,
-        cartTotalItems: itemCount,
+        refreshCart,
       }}
     >
       {children}
@@ -261,11 +392,11 @@ export function CartProvider({ children }) {
 }
 
 export function useCart() {
-  const context = useContext(CartContext);
+  const value = useContext(CartContext);
 
-  if (!context) {
-    throw new Error('useCart must be used within CartProvider');
+  if (!value) {
+    throw new Error('useCart must be used inside CartProvider');
   }
 
-  return context;
+  return value;
 }

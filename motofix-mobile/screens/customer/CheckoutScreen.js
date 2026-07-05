@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Linking,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -27,25 +28,44 @@ function formatPeso(value) {
   })}`;
 }
 
+function cleanText(value) {
+  return String(value || '').trim();
+}
+
 export default function CheckoutScreen({ navigation }) {
   const { theme } = useTheme();
-const {
-  cart,
-  cartTotal,
-  updateQuantity,
-  removeFromCart,
-  clearCart,
-  refreshCart,
-} = useCart();
+  const {
+    cart,
+    cartTotal,
+    updateQuantity,
+    removeFromCart,
+    clearCart,
+    refreshCart,
+  } = useCart();
+
   const [notes, setNotes] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
+  const [fulfillmentMethod, setFulfillmentMethod] = useState('pickup');
+  const [paymentMethod, setPaymentMethod] = useState('cash_on_pickup');
+  const [paymentReference, setPaymentReference] = useState('');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [pickupNotes, setPickupNotes] = useState('');
+
   const [submitting, setSubmitting] = useState(false);
+  const [checkingStock, setCheckingStock] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   const s = styles(theme);
 
   const downPaymentRate = 0.15;
-  const downPayment = cartTotal * downPaymentRate;
-  const remainingBalance = cartTotal - downPayment;
+  const onlinePaymentAmount =
+    paymentMethod === 'paymongo_qrph'
+      ? Number(cartTotal.toFixed(2))
+      : paymentMethod === 'gcash_manual'
+        ? Number((cartTotal * downPaymentRate).toFixed(2))
+        : 0;
+  const requiredDownPayment = onlinePaymentAmount;
+  const remainingBalance = Number((cartTotal - onlinePaymentAmount).toFixed(2));
 
   async function requireCheckoutConsents() {
     const acceptedTerms = await requireCustomerConsent({
@@ -61,7 +81,7 @@ const {
       consentType: CONSENT_TYPES.DATA_PRIVACY,
       title: 'Data Privacy Consent',
       message:
-        'MotoFix will process your account details, order details, selected parts, payment records, and receipt information for order management.',
+        'MotoFix will process your account details, order details, selected products, payment records, and receipt information for order management.',
     });
 
     if (!acceptedPrivacy) return false;
@@ -77,21 +97,116 @@ const {
   }
 
   async function handleRefresh() {
-  setRefreshing(true);
+    setRefreshing(true);
 
-  try {
-    if (typeof refreshCart === 'function') {
-      await refreshCart();
+    try {
+      if (typeof refreshCart === 'function') {
+        await refreshCart();
+      }
+    } catch (error) {
+      console.log('Refresh cart error:', error);
+    } finally {
+      setRefreshing(false);
     }
-  } catch (error) {
-    console.log('Refresh cart error:', error);
-  } finally {
-    setRefreshing(false);
   }
-}
+
+  async function validateCartStock() {
+    setCheckingStock(true);
+
+    try {
+      if (!cart.length) {
+        return { ok: false, message: 'Your cart is empty.' };
+      }
+
+      const ids = [...new Set(cart.map((item) => item.id).filter(Boolean))];
+
+      const { data, error } = await supabase
+        .from('parts')
+        .select('id, name, stock_quantity, is_active')
+        .in('id', ids);
+
+      if (error) throw error;
+
+      const partsById = new Map((data || []).map((part) => [part.id, part]));
+
+      for (const item of cart) {
+        const latest = partsById.get(item.id);
+
+        if (!latest || latest.is_active === false) {
+          return {
+            ok: false,
+            message: `${item.name} is no longer available. Please remove it from your cart.`,
+          };
+        }
+
+        const stock = Number(latest.stock_quantity) || 0;
+
+        if (stock <= 0) {
+          return {
+            ok: false,
+            message: `${item.name} is already out of stock.`,
+          };
+        }
+
+        if (Number(item.quantity) > stock) {
+          return {
+            ok: false,
+            message: `Only ${stock} item(s) are available for ${item.name}. Please update the quantity.`,
+          };
+        }
+      }
+
+      return { ok: true };
+    } finally {
+      setCheckingStock(false);
+    }
+  }
+
+  async function createOrderQrphCheckout(orderId) {
+    const { data, error: invokeError } = await supabase.functions.invoke(
+      'create-order-qrph-checkout',
+      {
+        body: {
+          order_id: orderId,
+        },
+      }
+    );
+
+    if (invokeError) {
+      throw new Error(invokeError.message || 'Failed to create PayMongo checkout.');
+    }
+
+    if (data?.error) {
+      throw new Error(data.error);
+    }
+
+    if (!data?.checkout_url) {
+      throw new Error('PayMongo checkout URL was not returned.');
+    }
+
+    return data;
+  }
 
   async function placeOrder() {
     if (cart.length === 0 || submitting) return;
+
+    if (!cleanText(contactPhone)) {
+      Alert.alert('Missing Contact Number', 'Please enter your contact number.');
+      return;
+    }
+
+    if (fulfillmentMethod === 'delivery' && !cleanText(deliveryAddress)) {
+      Alert.alert('Missing Delivery Address', 'Please enter your delivery address.');
+      return;
+    }
+
+    if (paymentMethod === 'gcash_manual' && !cleanText(paymentReference)) {
+      Alert.alert(
+        'Missing GCash Reference',
+        'Please enter your GCash reference number before submitting.'
+      );
+      return;
+    }
 
     setSubmitting(true);
 
@@ -114,13 +229,47 @@ const {
         return;
       }
 
+      const stockCheck = await validateCartStock();
+
+      if (!stockCheck.ok) {
+        await refreshCart?.();
+        Alert.alert('Stock Updated', stockCheck.message);
+        return;
+      }
+
+      const paymentStatus =
+        paymentMethod === 'gcash_manual' ? 'pending_verification' : 'pending_payment';
+
+      let checkoutData = null;
+      let finalPaymentStatus = paymentStatus;
+
+      const fulfillmentStatus =
+        fulfillmentMethod === 'delivery' ? 'pending_delivery' : 'pending_pickup';
+
       const { data: order, error: orderError } = await supabase
         .from('orders')
         .insert({
           customer_id: user.id,
           total_amount: cartTotal,
           status: 'pending',
-          notes: notes.trim() || null,
+
+          payment_status: paymentStatus,
+          payment_method: paymentMethod,
+          payment_reference: cleanText(paymentReference) || null,
+          // Do not count the amount as paid yet.
+          // PayMongo becomes paid only after webhook; GCash manual becomes paid only after staff/admin verification.
+          down_payment_amount: 0,
+          remaining_balance: cartTotal,
+
+          fulfillment_method: fulfillmentMethod,
+          fulfillment_status: fulfillmentStatus,
+          delivery_address:
+            fulfillmentMethod === 'delivery' ? cleanText(deliveryAddress) : null,
+          pickup_notes:
+            fulfillmentMethod === 'pickup' ? cleanText(pickupNotes) || null : null,
+          customer_contact_phone: cleanText(contactPhone),
+
+          notes: cleanText(notes) || null,
         })
         .select()
         .single();
@@ -150,12 +299,19 @@ const {
         if (stockError) throw stockError;
       }
 
+      if (paymentMethod === 'paymongo_qrph') {
+        checkoutData = await createOrderQrphCheckout(order.id);
+        finalPaymentStatus = 'checkout_created';
+      }
+
       await Promise.allSettled([
         notifyUser({
           userId: user.id,
           title: 'Order Submitted',
           message:
-            'Your parts order has been submitted. Please wait for shop confirmation.',
+            paymentMethod === 'gcash_manual'
+              ? 'Your order was submitted and is waiting for GCash payment verification.'
+              : 'Your order was submitted. Please pay at the shop during pickup or release.',
           type: 'order',
           relatedTable: 'orders',
           relatedId: order.id,
@@ -163,8 +319,11 @@ const {
 
         notifyRole({
           role: 'admin',
-          title: 'New Parts Order',
-          message: 'A customer submitted a new parts order from the mobile app.',
+          title: 'New Product Order',
+          message:
+            paymentMethod === 'gcash_manual'
+              ? 'A customer submitted a mobile product order with GCash reference for verification.'
+              : 'A customer submitted a mobile product order for counter payment.',
           type: 'order',
           relatedTable: 'orders',
           relatedId: order.id,
@@ -172,8 +331,8 @@ const {
 
         notifyRole({
           role: 'staff',
-          title: 'New Parts Order',
-          message: 'A customer submitted a new parts order from the mobile app.',
+          title: 'New Product Order',
+          message: 'A customer submitted a mobile product order.',
           type: 'order',
           relatedTable: 'orders',
           relatedId: order.id,
@@ -195,7 +354,7 @@ const {
         },
       }));
 
-      clearCart();
+      await clearCart();
 
       navigation.replace('OrderConfirmation', {
         orderId: order.id,
@@ -209,9 +368,24 @@ const {
           0
         ),
         totalAmount: cartTotal,
+        downPayment: 0,
+        remainingBalance: cartTotal,
         status: 'pending',
-        receiptStatus: 'Pending shop confirmation',
+        paymentStatus: finalPaymentStatus,
+        paymentMethod,
+        fulfillmentMethod,
+        checkoutUrl: checkoutData?.checkout_url || null,
+        receiptStatus:
+          paymentMethod === 'paymongo_qrph'
+            ? 'Waiting for PayMongo payment'
+            : paymentMethod === 'gcash_manual'
+              ? 'Pending GCash verification'
+              : 'Pending counter payment',
       });
+
+      if (checkoutData?.checkout_url) {
+        await Linking.openURL(checkoutData.checkout_url);
+      }
     } catch (error) {
       Alert.alert('Checkout Failed', error.message || 'Unable to submit order.');
     } finally {
@@ -219,12 +393,27 @@ const {
     }
   }
 
+  function OptionButton({ active, icon, title, subtitle, onPress }) {
+    return (
+      <TouchableOpacity
+        style={[s.optionCard, active && s.optionCardActive]}
+        onPress={onPress}
+      >
+        <View style={s.optionTitleRow}>
+          <Text style={s.optionIcon}>{icon}</Text>
+          <Text style={s.optionTitle}>{title}</Text>
+        </View>
+        <Text style={s.optionSubtitle}>{subtitle}</Text>
+      </TouchableOpacity>
+    );
+  }
+
   if (cart.length === 0) {
     return (
       <View style={s.centered}>
         <Ionicons name="cart-outline" size={54} color={theme.textMuted} />
         <Text style={s.emptyTitle}>Your cart is empty</Text>
-        <Text style={s.emptyText}>Add parts from the shop before checking out.</Text>
+        <Text style={s.emptyText}>Add products from the shop before checking out.</Text>
 
         <TouchableOpacity
           style={s.primaryButton}
@@ -237,19 +426,20 @@ const {
   }
 
   return (
-<ScrollView
-  style={s.container}
-  contentContainerStyle={s.content}
-  refreshControl={
-    <RefreshControl
-      refreshing={refreshing}
-      onRefresh={handleRefresh}
-      tintColor={theme.primary}
-      colors={[theme.primary]}
-    />
-  }
->      <Text style={s.title}>Checkout</Text>
-      <Text style={s.subtitle}>Review your parts order before submitting.</Text>
+    <ScrollView
+      style={s.container}
+      contentContainerStyle={s.content}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor={theme.primary}
+          colors={[theme.primary]}
+        />
+      }
+    >
+      <Text style={s.title}>Checkout</Text>
+      <Text style={s.subtitle}>Review your cart, payment, and release method.</Text>
 
       {cart.map((item) => (
         <View key={item.id} style={s.itemCard}>
@@ -274,6 +464,8 @@ const {
               {formatPeso((Number(item.price) || 0) * item.quantity)}
             </Text>
 
+            <Text style={s.stockText}>Stock: {item.stock_quantity}</Text>
+
             <View style={s.qtyRow}>
               <TouchableOpacity
                 style={[
@@ -289,8 +481,12 @@ const {
               <Text style={s.qtyText}>{item.quantity}</Text>
 
               <TouchableOpacity
-                style={s.qtyButton}
+                style={[
+                  s.qtyButton,
+                  item.quantity >= item.stock_quantity && { opacity: 0.45 },
+                ]}
                 onPress={() => updateQuantity(item.id, item.quantity + 1)}
+                disabled={item.quantity >= item.stock_quantity}
               >
                 <Text style={s.qtyButtonText}>+</Text>
               </TouchableOpacity>
@@ -306,15 +502,111 @@ const {
         </View>
       ))}
 
-      <View style={s.notesCard}>
-        <Text style={s.label}>Order Notes</Text>
+      <View style={s.sectionCard}>
+        <Text style={s.sectionTitle}>Contact Number</Text>
+        <TextInput
+          value={contactPhone}
+          onChangeText={setContactPhone}
+          placeholder="09XXXXXXXXX"
+          placeholderTextColor={theme.textMuted}
+          keyboardType="phone-pad"
+          style={s.input}
+        />
+      </View>
+
+      <View style={s.sectionCard}>
+        <Text style={s.sectionTitle}>Fulfillment Method</Text>
+
+        <OptionButton
+          active={fulfillmentMethod === 'pickup'}
+          icon="🏪"
+          title="Pickup at Shop"
+          subtitle="Pick up your products at the MotoFix shop."
+          onPress={() => setFulfillmentMethod('pickup')}
+        />
+
+        <OptionButton
+          active={fulfillmentMethod === 'delivery'}
+          icon="🛵"
+          title="Delivery"
+          subtitle="Staff will process the order for delivery/release."
+          onPress={() => setFulfillmentMethod('delivery')}
+        />
+
+        {fulfillmentMethod === 'delivery' ? (
+          <TextInput
+            value={deliveryAddress}
+            onChangeText={setDeliveryAddress}
+            placeholder="Complete delivery address..."
+            placeholderTextColor={theme.textMuted}
+            style={[s.input, s.textArea]}
+            multiline
+          />
+        ) : (
+          <TextInput
+            value={pickupNotes}
+            onChangeText={setPickupNotes}
+            placeholder="Pickup note, preferred time, or instruction..."
+            placeholderTextColor={theme.textMuted}
+            style={s.input}
+          />
+        )}
+      </View>
+
+      <View style={s.sectionCard}>
+        <Text style={s.sectionTitle}>Payment Method</Text>
+
+        <OptionButton
+          active={paymentMethod === 'cash_on_pickup'}
+          icon="💵"
+          title="Pay at Counter"
+          subtitle="Pay at the shop during pickup/release."
+          onPress={() => setPaymentMethod('cash_on_pickup')}
+        />
+
+        <OptionButton
+          active={paymentMethod === 'paymongo_qrph'}
+          icon="⚡"
+          title="PayMongo QR Ph / GCash"
+          subtitle="Pay the full order online. The system updates after webhook confirmation."
+          onPress={() => setPaymentMethod('paymongo_qrph')}
+        />
+
+        <OptionButton
+          active={paymentMethod === 'gcash_manual'}
+          icon="📲"
+          title="GCash Manual Verification"
+          subtitle="Submit your GCash reference number for staff verification."
+          onPress={() => setPaymentMethod('gcash_manual')}
+        />
+
+        {paymentMethod === 'gcash_manual' && (
+          <View style={s.gcashBox}>
+            <Text style={s.gcashLabel}>GCash Reference Number</Text>
+            <TextInput
+              value={paymentReference}
+              onChangeText={setPaymentReference}
+              placeholder="Example: 1234567890123"
+              placeholderTextColor={theme.textMuted}
+              keyboardType="number-pad"
+              style={s.input}
+            />
+            <Text style={s.gcashHelp}>
+              Required down payment: {formatPeso(requiredDownPayment)}. Staff will verify this before processing.
+            </Text>
+          </View>
+        )}
+      </View>
+
+      <View style={s.sectionCard}>
+        <Text style={s.sectionTitle}>Order Notes</Text>
 
         <TextInput
           value={notes}
           onChangeText={setNotes}
-          placeholder="Example: Please prepare for pickup this weekend."
+          placeholder="Special instructions..."
           placeholderTextColor={theme.textMuted}
-          style={s.notesInput}
+          style={[s.input, s.textArea]}
           multiline
         />
       </View>
@@ -330,9 +622,9 @@ const {
           </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={s.summaryTitle}>Payment Summary</Text>
+            <Text style={s.summaryTitle}>Order Summary</Text>
             <Text style={s.summarySubtitle}>
-              Payment and official e-receipt will be confirmed by the shop.
+              Stock is checked again before your order is submitted.
             </Text>
           </View>
         </View>
@@ -343,8 +635,8 @@ const {
         </View>
 
         <View style={s.summaryRow}>
-          <Text style={s.summaryLabel}>Suggested Down Payment 15%</Text>
-          <Text style={s.summaryValue}>{formatPeso(downPayment)}</Text>
+          <Text style={s.summaryLabel}>Down Payment</Text>
+          <Text style={s.summaryValue}>{formatPeso(requiredDownPayment)}</Text>
         </View>
 
         <View style={s.summaryRow}>
@@ -359,33 +651,21 @@ const {
             color={theme.textMuted}
           />
           <Text style={s.paymentNote}>
-            This order will be sent to admin and staff. The payment status,
-            invoice, and e-receipt will appear in Order History once recorded.
-          </Text>
-        </View>
-
-        <View style={s.consentNoteBox}>
-          <Ionicons
-            name="shield-checkmark-outline"
-            size={17}
-            color={theme.primaryLight}
-          />
-          <Text style={s.consentNote}>
-            Before submitting, you may be asked to accept the checkout policy,
-            terms, and data privacy consent.
+            Staff/Admin will process the order, payment verification, invoice,
+            and e-receipt after submission.
           </Text>
         </View>
       </View>
 
       <TouchableOpacity
-        style={[s.submitButton, submitting && { opacity: 0.7 }]}
+        style={[s.submitButton, (submitting || checkingStock) && { opacity: 0.7 }]}
         onPress={placeOrder}
-        disabled={submitting}
+        disabled={submitting || checkingStock}
       >
-        {submitting ? (
+        {submitting || checkingStock ? (
           <ActivityIndicator color="#fff" />
         ) : (
-          <Text style={s.submitButtonText}>Submit Order</Text>
+          <Text style={s.submitButtonText}>Place Order</Text>
         )}
       </TouchableOpacity>
 
@@ -462,6 +742,11 @@ const styles = (theme) =>
       fontWeight: '900',
       marginTop: 5,
     },
+    stockText: {
+      color: theme.textMuted,
+      fontSize: 11,
+      marginTop: 4,
+    },
     qtyRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -481,7 +766,7 @@ const styles = (theme) =>
     qtyText: { color: theme.text, fontWeight: '900', marginHorizontal: 12 },
     removeButton: { marginLeft: 14 },
     removeText: { color: theme.danger, fontWeight: '800', fontSize: 12 },
-    notesCard: {
+    sectionCard: {
       backgroundColor: theme.card,
       borderWidth: 1,
       borderColor: theme.border,
@@ -490,14 +775,72 @@ const styles = (theme) =>
       marginTop: 4,
       marginBottom: 12,
     },
-    label: { color: theme.text, fontWeight: '900', marginBottom: 8 },
-    notesInput: {
-      minHeight: 90,
+    sectionTitle: {
       color: theme.text,
-      textAlignVertical: 'top',
+      fontWeight: '900',
+      marginBottom: 10,
+    },
+    input: {
+      color: theme.text,
       backgroundColor: theme.bg2,
       borderRadius: 12,
       padding: 12,
+      borderWidth: 1,
+      borderColor: theme.border,
+      marginTop: 8,
+    },
+    textArea: {
+      minHeight: 90,
+      textAlignVertical: 'top',
+    },
+    optionCard: {
+      borderWidth: 1,
+      borderColor: theme.border,
+      backgroundColor: theme.bg2,
+      borderRadius: 14,
+      padding: 12,
+      marginBottom: 10,
+    },
+    optionCardActive: {
+      borderColor: theme.primary,
+      backgroundColor: theme.primary + '15',
+    },
+    optionTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 4,
+    },
+    optionIcon: { fontSize: 18 },
+    optionTitle: {
+      color: theme.text,
+      fontWeight: '900',
+      fontSize: 14,
+    },
+    optionSubtitle: {
+      color: theme.textSub || theme.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+    },
+    gcashBox: {
+      backgroundColor: theme.primary + '12',
+      borderWidth: 1,
+      borderColor: theme.primary + '33',
+      borderRadius: 14,
+      padding: 12,
+      marginTop: 6,
+    },
+    gcashLabel: {
+      color: theme.primaryLight,
+      fontWeight: '900',
+      fontSize: 12,
+      textTransform: 'uppercase',
+    },
+    gcashHelp: {
+      color: theme.textSub || theme.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+      marginTop: 8,
     },
     summaryCard: {
       backgroundColor: theme.card,
@@ -556,23 +899,6 @@ const styles = (theme) =>
     },
     paymentNote: {
       color: theme.textMuted,
-      fontSize: 12,
-      lineHeight: 18,
-      flex: 1,
-    },
-    consentNoteBox: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 8,
-      backgroundColor: theme.primary + '12',
-      borderRadius: 12,
-      padding: 11,
-      marginTop: 8,
-      borderWidth: 1,
-      borderColor: theme.primary + '33',
-    },
-    consentNote: {
-      color: theme.textSub || theme.textMuted,
       fontSize: 12,
       lineHeight: 18,
       flex: 1,

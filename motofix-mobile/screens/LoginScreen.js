@@ -11,6 +11,7 @@ import {
   Alert,
   ActivityIndicator,
   ScrollView,
+  Image,
 } from 'react-native';
 import { CommonActions } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
@@ -120,8 +121,13 @@ export default function LoginScreen({ navigation }) {
       >
         <View style={s.logoBlock}>
           <View style={s.logoIconWrap}>
-            <Text style={s.logoIcon}>🏍️</Text>
+            <Image
+              source={require('../assets/favicon.png')}
+              style={s.logoImage}
+              resizeMode="contain"
+            />
           </View>
+
           <Text style={s.logoText}>MotoFix</Text>
           <Text style={s.tagline}>Your motorcycle service partner</Text>
         </View>
@@ -213,9 +219,11 @@ const styles = (theme) =>
       justifyContent: 'center',
       alignItems: 'center',
       marginBottom: 14,
+      overflow: 'hidden',
     },
-    logoIcon: {
-      fontSize: 36,
+    logoImage: {
+      width: 52,
+      height: 52,
     },
     logoText: {
       fontSize: 28,

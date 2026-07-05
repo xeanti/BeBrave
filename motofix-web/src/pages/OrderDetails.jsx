@@ -35,6 +35,11 @@ function getCustomerName(order, user) {
 }
 
 const STATUS_CONFIG = {
+  processing: {
+    label: 'Processing',
+    classes:
+      'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/25',
+  },
   pending: {
     label: 'Pending',
     classes:
@@ -87,6 +92,94 @@ function DetailCard({ label, value }) {
   );
 }
 
+
+function normalizeOrderPaymentRecord(payment) {
+  return {
+    ...payment,
+    amount: Number(payment.amount) || 0,
+    payment_type: payment.payment_type || (payment.status === 'paid' ? 'full' : 'payment'),
+    method: payment.method || payment.payment_method || payment.provider || 'payment',
+    receipt_number: payment.receipt_number || payment.reference_number || payment.provider_payment_id || null,
+    receipt_status: payment.receipt_status || payment.status || null,
+    receipt_issued_at: payment.receipt_issued_at || payment.paid_at || payment.created_at || null,
+    created_at: payment.created_at || payment.paid_at,
+  };
+}
+
+function isConfirmedOrderPayment(payment) {
+  const status = String(payment?.status || payment?.receipt_status || '').toLowerCase();
+
+  if (['paid', 'completed', 'success', 'successful', 'verified'].includes(status)) {
+    return true;
+  }
+
+  if (
+    [
+      'checkout_created',
+      'pending_payment',
+      'pending_verification',
+      'unpaid',
+      'failed',
+      'expired',
+      'cancelled',
+      'canceled',
+      'refunded',
+    ].includes(status)
+  ) {
+    return false;
+  }
+
+  // Manual counter payments from the payments table may not have a status,
+  // but they have a payment_type/method/receipt and no PayMongo checkout session id.
+  return Boolean(
+    payment?.payment_type &&
+      payment?.amount &&
+      !payment?.provider_checkout_session_id
+  );
+}
+
+function getConfirmedOrderPaymentTotal(paymentList = []) {
+  return (paymentList || [])
+    .filter(isConfirmedOrderPayment)
+    .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
+}
+
+function getOrderPaidAmount(order, paymentList = []) {
+  const total = Number(order?.total_amount) || 0;
+  const confirmedPaid = getConfirmedOrderPaymentTotal(paymentList);
+
+  // Only count saved order amount when it is partial and not just checkout_created.
+  const paymentStatus = String(order?.payment_status || '').toLowerCase();
+  const partialStatuses = ['partial', 'partially_paid', 'downpayment_paid'];
+
+  const trustedOrderPaid = partialStatuses.includes(paymentStatus)
+    ? Number(order?.down_payment_amount) || 0
+    : 0;
+
+  return Math.min(Math.max(confirmedPaid, trustedOrderPaid), total);
+}
+
+function getOrderBalance(order, paymentList = []) {
+  const total = Number(order?.total_amount) || 0;
+  return Math.max(total - getOrderPaidAmount(order, paymentList), 0);
+}
+
+function getOrderPaymentSummary(order, paymentList = []) {
+  const total = Number(order?.total_amount) || 0;
+  const totalPaid = getOrderPaidAmount(order, paymentList);
+  const balance = getOrderBalance(order, paymentList);
+  const isFullyPaid = total > 0 && totalPaid >= total && balance <= 0;
+  const paymentPercent = total > 0 ? Math.min((totalPaid / total) * 100, 100) : 0;
+
+  return {
+    total,
+    totalPaid,
+    balance,
+    isFullyPaid,
+    paymentPercent,
+  };
+}
+
 export default function OrderDetails() {
   const { orderId } = useParams();
   const { user } = useAuth();
@@ -134,6 +227,20 @@ export default function OrderDetails() {
       )
       .subscribe();
 
+    const onlinePaymentsChannel = supabase
+      .channel(`order-online-payments-${orderId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'order_payments',
+          filter: `order_id=eq.${orderId}`,
+        },
+        () => fetchOrderDetails(false)
+      )
+      .subscribe();
+
     const invoicesChannel = supabase
       .channel(`order-invoices-${orderId}`)
       .on(
@@ -151,6 +258,7 @@ export default function OrderDetails() {
     return () => {
       supabase.removeChannel(ordersChannel);
       supabase.removeChannel(paymentsChannel);
+      supabase.removeChannel(onlinePaymentsChannel);
       supabase.removeChannel(invoicesChannel);
     };
   }, [user?.id, orderId]);
@@ -184,7 +292,7 @@ export default function OrderDetails() {
 
     setOrder(data);
 
-    const [paymentsResult, invoiceResult] = await Promise.all([
+    const [manualPaymentsResult, onlinePaymentsResult, invoiceResult] = await Promise.all([
       supabase
         .from('payments')
         .select(`
@@ -205,17 +313,44 @@ export default function OrderDetails() {
         .eq('order_id', orderId)
         .order('created_at', { ascending: false }),
       supabase
+        .from('order_payments')
+        .select(`
+          id,
+          order_id,
+          status,
+          amount,
+          reference_number,
+          provider_checkout_session_id,
+          provider_payment_id,
+          payment_method,
+          paid_at,
+          created_at
+        `)
+        .eq('order_id', orderId)
+        .order('created_at', { ascending: false }),
+      supabase
         .from('invoices')
         .select('*')
         .eq('order_id', orderId)
         .maybeSingle(),
     ]);
 
-    if (paymentsResult.error) {
-      console.error(paymentsResult.error);
+    if (manualPaymentsResult.error || onlinePaymentsResult.error) {
+      console.error(manualPaymentsResult.error || onlinePaymentsResult.error);
       setPayments([]);
     } else {
-      setPayments(paymentsResult.data || []);
+      const combinedPayments = [
+        ...(manualPaymentsResult.data || []),
+        ...(onlinePaymentsResult.data || []),
+      ]
+        .map(normalizeOrderPaymentRecord)
+        .sort(
+          (a, b) =>
+            new Date(b.paid_at || b.created_at || 0).getTime() -
+            new Date(a.paid_at || a.created_at || 0).getTime()
+        );
+
+      setPayments(combinedPayments);
     }
 
     if (invoiceResult.error) {
@@ -291,10 +426,7 @@ export default function OrderDetails() {
     );
   }
 
-  const total = Number(order.total_amount) || 0;
-  const { totalPaid } = summarizePayments(payments);
-  const balance = Math.max(total - totalPaid, 0);
-  const isFullyPaid = total > 0 && balance <= 0;
+  const { total, totalPaid, balance, isFullyPaid } = getOrderPaymentSummary(order, payments);
   const customerName = getCustomerName(order, user);
 
   return (

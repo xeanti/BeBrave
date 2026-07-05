@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Linking,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -28,8 +29,38 @@ function shortId(value) {
   return String(value).slice(0, 8).toUpperCase();
 }
 
+function humanize(value) {
+  if (!value) return '—';
+
+  return String(value)
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 function getItemCount(items = []) {
   return items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+}
+
+function getPaymentMethodLabel(method) {
+  const value = String(method || '').toLowerCase();
+
+  if (value === 'paymongo_qrph') return 'PayMongo QR Ph / GCash';
+  if (value === 'gcash_manual') return 'GCash Manual Verification';
+  if (value === 'cash_on_pickup') return 'Pay at Counter';
+  if (value === 'qrph') return 'QR Ph / GCash';
+
+  return method ? humanize(method) : 'To be confirmed';
+}
+
+function getStatusColor(theme, paymentStatus) {
+  const value = String(paymentStatus || '').toLowerCase();
+
+  if (value === 'paid') return theme.success || '#22c55e';
+  if (value === 'checkout_created' || value === 'pending_payment') return theme.warning || YELLOW;
+  if (value === 'pending_verification') return theme.primaryLight || YELLOW;
+  if (value === 'failed' || value === 'cancelled') return theme.danger || '#ef4444';
+
+  return theme.textMuted || '#9ca3af';
 }
 
 export default function OrderConfirmationScreen({ route, navigation }) {
@@ -39,11 +70,48 @@ export default function OrderConfirmationScreen({ route, navigation }) {
 
   const order = params.order || {};
   const orderId = params.orderId || order.id;
-  const totalAmount = params.totalAmount || order.total_amount || 0;
+  const totalAmount = Number(params.totalAmount || order.total_amount || 0);
   const itemCount = params.itemCount || getItemCount(params.items || order.order_items || []);
-  const status = params.status || order.status || 'pending';
-  const receiptStatus = params.receiptStatus || 'Pending shop confirmation';
   const orderItems = params.items || order.order_items || [];
+
+  const orderStatus = params.status || order.status || 'pending';
+  const paymentStatus = String(
+    params.paymentStatus ||
+      order.payment_status ||
+      (params.checkoutUrl ? 'checkout_created' : 'pending_payment')
+  ).toLowerCase();
+
+  const paymentMethod = params.paymentMethod || order.payment_method || 'cash_on_pickup';
+  const checkoutUrl = params.checkoutUrl || order.checkout_url || null;
+  const paidAt = params.paidAt || order.paid_at || null;
+
+  const isPaid = paymentStatus === 'paid';
+  const isCheckoutCreated = paymentStatus === 'checkout_created';
+  const isPendingVerification = paymentStatus === 'pending_verification';
+
+  const paidAmount = isPaid
+    ? totalAmount
+    : Number(params.downPayment || order.down_payment_amount || 0);
+
+  const remainingBalance = isPaid
+    ? 0
+    : Number(
+        params.remainingBalance ??
+          order.remaining_balance ??
+          Math.max(totalAmount - paidAmount, 0)
+      );
+
+  const receiptStatus =
+    params.receiptStatus ||
+    (isPaid
+      ? 'Payment received'
+      : isCheckoutCreated
+        ? 'Waiting for PayMongo payment'
+        : isPendingVerification
+          ? 'Pending GCash verification'
+          : 'Pending counter payment');
+
+  const statusColor = getStatusColor(theme, paymentStatus);
 
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content}>
@@ -53,18 +121,44 @@ export default function OrderConfirmationScreen({ route, navigation }) {
       />
 
       <View style={s.heroCard}>
-        <View style={s.successIcon}>
-          <Ionicons name="bag-check" size={40} color="#111827" />
+        <View
+          style={[
+            s.successIcon,
+            { backgroundColor: isPaid ? theme.success || '#22c55e' : YELLOW },
+          ]}
+        >
+          <Ionicons
+            name={isPaid ? 'checkmark-circle' : 'bag-check'}
+            size={40}
+            color="#111827"
+          />
         </View>
 
-        <Text style={s.title}>Order Submitted!</Text>
-        <Text style={s.subtitle}>
-          Your parts order was sent to MotoFix. Staff will verify stock and payment before release.
+        <Text style={s.title}>
+          {isPaid ? 'Payment Received!' : 'Order Submitted!'}
         </Text>
 
-        <View style={s.statusPill}>
-          <View style={s.statusDot} />
-          <Text style={s.statusText}>{String(status).toUpperCase()}</Text>
+        <Text style={s.subtitle}>
+          {isPaid
+            ? 'Your product order payment was received. MotoFix will now process your order.'
+            : isCheckoutCreated
+              ? 'Your order was submitted. Complete your PayMongo QR Ph / GCash payment to continue processing.'
+              : 'Your parts order was sent to MotoFix. Staff will verify payment and stock before release.'}
+        </Text>
+
+        <View
+          style={[
+            s.statusPill,
+            {
+              backgroundColor: statusColor + '18',
+              borderColor: statusColor + '55',
+            },
+          ]}
+        >
+          <View style={[s.statusDot, { backgroundColor: statusColor }]} />
+          <Text style={[s.statusText, { color: statusColor }]}>
+            {isPaid ? 'PAID' : humanize(paymentStatus).toUpperCase()}
+          </Text>
         </View>
       </View>
 
@@ -87,9 +181,23 @@ export default function OrderConfirmationScreen({ route, navigation }) {
 
         <InfoRow
           theme={theme}
+          icon="timer-outline"
+          label="Order Status"
+          value={humanize(orderStatus)}
+        />
+
+        <InfoRow
+          theme={theme}
           icon="card-outline"
-          label="Receipt Status"
+          label="Payment Status"
           value={receiptStatus}
+        />
+
+        <InfoRow
+          theme={theme}
+          icon="phone-portrait-outline"
+          label="Payment Method"
+          value={getPaymentMethodLabel(paymentMethod)}
         />
 
         <InfoRow
@@ -99,6 +207,60 @@ export default function OrderConfirmationScreen({ route, navigation }) {
           value={formatPeso(totalAmount)}
           strong
         />
+      </View>
+
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Payment Summary</Text>
+
+        <InfoRow
+          theme={theme}
+          icon="wallet-outline"
+          label="Amount Paid"
+          value={formatPeso(isPaid ? totalAmount : paidAmount)}
+          strong={isPaid}
+        />
+
+        <InfoRow
+          theme={theme}
+          icon="calculator-outline"
+          label="Remaining Balance"
+          value={formatPeso(remainingBalance)}
+          strong={!remainingBalance}
+        />
+
+        {order.payment_reference || params.paymentReference ? (
+          <InfoRow
+            theme={theme}
+            icon="barcode-outline"
+            label="Reference"
+            value={order.payment_reference || params.paymentReference}
+          />
+        ) : null}
+
+        {paidAt ? (
+          <InfoRow
+            theme={theme}
+            icon="checkmark-done-outline"
+            label="Paid At"
+            value={new Date(paidAt).toLocaleString('en-PH', {
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+            })}
+          />
+        ) : null}
+
+        {checkoutUrl && !isPaid ? (
+          <TouchableOpacity
+            style={s.payButton}
+            onPress={() => Linking.openURL(checkoutUrl)}
+          >
+            <Ionicons name="open-outline" size={17} color="#111827" />
+            <Text style={s.payButtonText}>Open PayMongo Checkout</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {orderItems.length > 0 && (
@@ -140,8 +302,9 @@ export default function OrderConfirmationScreen({ route, navigation }) {
       <View style={s.noticeCard}>
         <Ionicons name="information-circle-outline" size={20} color={theme.primaryLight || YELLOW} />
         <Text style={s.noticeText}>
-          Your official receipt will appear in Order Details after staff/admin records payment.
-          You can still track the order now from Order History.
+          {isPaid
+            ? 'Your PayMongo payment was recorded. You can track processing updates from Order Details.'
+            : 'Your official receipt will appear in Order Details after payment is confirmed.'}
         </Text>
       </View>
 
@@ -216,7 +379,6 @@ const styles = (theme) =>
       width: 86,
       height: 86,
       borderRadius: 43,
-      backgroundColor: YELLOW,
       alignItems: 'center',
       justifyContent: 'center',
       marginBottom: 16,
@@ -244,8 +406,6 @@ const styles = (theme) =>
       alignItems: 'center',
       gap: 7,
       marginTop: 16,
-      backgroundColor: (theme.warning || YELLOW) + '18',
-      borderColor: (theme.warning || YELLOW) + '55',
       borderWidth: 1,
       borderRadius: 999,
       paddingHorizontal: 13,
@@ -255,10 +415,8 @@ const styles = (theme) =>
       width: 7,
       height: 7,
       borderRadius: 999,
-      backgroundColor: theme.warning || YELLOW,
     },
     statusText: {
-      color: theme.warning || YELLOW,
       fontSize: 11,
       fontWeight: '900',
       letterSpacing: 0.5,
@@ -309,6 +467,22 @@ const styles = (theme) =>
     infoValueStrong: {
       color: theme.primaryLight || YELLOW,
       fontSize: 16,
+      fontWeight: '900',
+    },
+    payButton: {
+      marginTop: 14,
+      backgroundColor: YELLOW,
+      borderRadius: 14,
+      paddingVertical: 13,
+      paddingHorizontal: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: 8,
+    },
+    payButtonText: {
+      color: '#111827',
+      fontSize: 13,
       fontWeight: '900',
     },
     itemRow: {

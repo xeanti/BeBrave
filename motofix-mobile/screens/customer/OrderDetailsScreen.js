@@ -25,13 +25,17 @@ const YELLOW = '#EAB308';
 const ORDER_STEPS = [
   { key: 'pending', label: 'Pending', icon: 'time' },
   { key: 'confirmed', label: 'Confirmed', icon: 'checkmark-circle' },
-  { key: 'preparing', label: 'Preparing', icon: 'construct' },
+  { key: 'processing', label: 'Processing / Preparing', icon: 'sync-circle' },
   { key: 'ready', label: 'Ready for Pickup', icon: 'bag-check' },
   { key: 'completed', label: 'Completed', icon: 'checkmark-done-circle' },
 ];
 
 function normalizeStatus(status) {
-  return String(status || 'pending').toLowerCase();
+  const value = String(status || 'pending').toLowerCase();
+
+  if (value === 'preparing') return 'processing';
+  if (value === 'ready_for_pickup') return 'ready';
+  return value;
 }
 
 function humanize(value) {
@@ -39,6 +43,14 @@ function humanize(value) {
   return String(value)
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function getFulfillmentMethod(order) {
+  return String(order?.fulfillment_method || 'pickup').toLowerCase();
+}
+
+function getReadyLabel(order) {
+  return getFulfillmentMethod(order) === 'delivery' ? 'Ready for Delivery' : 'Ready for Pickup';
 }
 
 function peso(value) {
@@ -87,18 +99,19 @@ function getStatusConfig(theme, status) {
         bg: (theme.success || '#22c55e') + '18',
       };
     case 'ready':
+    case 'ready_for_pickup':
       return {
         label: 'Ready for Pickup',
         icon: 'bag-check',
         color: theme.primaryLight || theme.primary || YELLOW,
         bg: (theme.primary || YELLOW) + '18',
       };
-    case 'preparing':
+    case 'processing':
       return {
-        label: 'Preparing',
-        icon: 'construct',
-        color: theme.warning || '#eab308',
-        bg: (theme.warning || '#eab308') + '18',
+        label: 'Processing / Preparing',
+        icon: 'sync-circle',
+        color: theme.primaryLight || theme.primary || YELLOW,
+        bg: (theme.primary || YELLOW) + '18',
       };
     case 'confirmed':
       return {
@@ -106,6 +119,13 @@ function getStatusConfig(theme, status) {
         icon: 'checkmark-circle',
         color: theme.success || '#22c55e',
         bg: (theme.success || '#22c55e') + '18',
+      };
+    case 'returned':
+      return {
+        label: 'Returned',
+        icon: 'return-down-back',
+        color: theme.warning || '#f97316',
+        bg: (theme.warning || '#f97316') + '18',
       };
     case 'cancelled':
       return {
@@ -167,36 +187,69 @@ export default function OrderDetailsScreen({ route, navigation }) {
   const total = useMemo(() => getOrderTotal(order), [order]);
   const paymentSummary = useMemo(() => summarizePayments(payments || []), [payments]);
   const totalPaidFromPayments = Number(paymentSummary?.totalPaid) || 0;
-  const totalPaidFromOrder =
+  const paymentStatus = String(order?.payment_status || '').toLowerCase();
+  const paidStatuses = ['paid', 'fully_paid', 'full_paid'];
+  const unpaidStatuses = [
+    'checkout_created',
+    'pending_payment',
+    'pending_verification',
+    'unpaid',
+    'failed',
+    'expired',
+    'cancelled',
+  ];
+  const partialStatuses = ['partial', 'partially_paid', 'downpayment_paid'];
+
+  const manualPaidFromOrder =
     Number(order?.amount_paid) ||
     Number(order?.paid_amount) ||
     Number(order?.payment_amount) ||
     0;
 
-  const totalPaid = Math.max(totalPaidFromPayments, totalPaidFromOrder);
-  const balance = Math.max(total - totalPaid, 0);
-  const status = getStatusConfig(theme, order?.status);
-  const paymentStatus = String(order?.payment_status || '').toLowerCase();
+  const trustedOrderPaid = partialStatuses.includes(paymentStatus)
+    ? Number(order?.down_payment_amount) || 0
+    : 0;
 
-  const isFullyPaid =
-    total > 0 &&
-    (balance <= 0 ||
-      paymentStatus === 'paid' ||
-      paymentStatus === 'fully_paid' ||
-      paymentStatus === 'full_paid' ||
-      normalizeStatus(order?.status) === 'completed');
+  const paidAmountFromRecords = Math.max(
+    totalPaidFromPayments,
+    manualPaidFromOrder,
+    trustedOrderPaid
+  );
+
+  const status = getStatusConfig(theme, order?.status);
+  const displayStatusLabel = normalizeStatus(order?.status) === 'ready'
+    ? getReadyLabel(order)
+    : status.label;
+
+  const orderMarkedPaid =
+    paidStatuses.includes(paymentStatus) ||
+    totalPaidFromPayments >= total ||
+    (
+      normalizeStatus(order?.status) === 'completed' &&
+      !unpaidStatuses.includes(paymentStatus) &&
+      paidAmountFromRecords >= total
+    );
+
+  const totalPaid = orderMarkedPaid ? total : paidAmountFromRecords;
+  const balance = orderMarkedPaid ? 0 : Math.max(total - totalPaid, 0);
+  const isFullyPaid = total > 0 && orderMarkedPaid;
 
   const isPartiallyPaid =
-    !isFullyPaid &&
-    (totalPaid > 0 ||
-      paymentStatus === 'partial' ||
-      paymentStatus === 'downpayment_paid');
+    !isFullyPaid && (totalPaid > 0 || partialStatuses.includes(paymentStatus));
 
   const paymentLabel = isFullyPaid
     ? 'Fully Paid'
     : isPartiallyPaid
       ? 'Partial / Down Payment Paid'
-      : 'Pending Payment';
+      : paymentStatus === 'checkout_created'
+        ? 'Waiting for PayMongo Payment'
+        : paymentStatus === 'pending_verification'
+          ? 'Pending Verification'
+          : paymentStatus === 'failed'
+            ? 'Payment Failed'
+            : paymentStatus === 'expired'
+              ? 'Payment Expired'
+              : 'Pending Payment';
 
   const receiptAvailable = isFullyPaid || isPartiallyPaid || payments.length > 0;
   const receiptNumber = getReceiptNumber(order, payments);
@@ -215,8 +268,36 @@ export default function OrderDetailsScreen({ route, navigation }) {
       return;
     }
 
-    const list = await fetchPaymentsFor({ orderIds: [orderId] });
-    setPayments(list || []);
+    const manualList = await fetchPaymentsFor({ orderIds: [orderId] });
+
+    const { data: onlinePayments, error: onlineError } = await supabase
+      .from('order_payments')
+      .select('*')
+      .eq('order_id', orderId)
+      .order('created_at', { ascending: true });
+
+    if (onlineError) {
+      console.log('Fetch PayMongo order payments error:', onlineError.message);
+    }
+
+    const mappedOnlinePayments = (onlinePayments || []).map((payment) => ({
+      id: payment.id,
+      order_id: payment.order_id,
+      amount: Number(payment.amount) || 0,
+      payment_type: 'full',
+      method: payment.payment_method || 'paymongo_qrph',
+      notes: payment.reference_number || payment.provider_payment_id || 'PayMongo QR Ph payment',
+      created_at: payment.paid_at || payment.created_at,
+      receipt_number: payment.reference_number,
+      receipt_status: payment.status,
+      receipt_issued_at: payment.paid_at,
+      profiles: null,
+      provider: payment.provider || 'paymongo',
+      reference_number: payment.reference_number,
+      provider_payment_id: payment.provider_payment_id,
+    }));
+
+    setPayments([...(manualList || []), ...mappedOnlinePayments]);
   }, [orderId]);
 
   const fetchOrderDetails = useCallback(
@@ -262,7 +343,9 @@ export default function OrderDetailsScreen({ route, navigation }) {
         setOrder(null);
       } else {
         setOrder(data);
-        navigation.setParams({ order: data, orderId: data.id });
+        // Do not call navigation.setParams here.
+        // Some nested navigators do not handle SET_PARAMS after async refresh.
+        // The local state is already updated, so this is enough.
       }
 
       await fetchPayments();
@@ -314,9 +397,24 @@ export default function OrderDetailsScreen({ route, navigation }) {
       )
       .subscribe();
 
+    const onlinePaymentChannel = supabase
+      .channel(`customer-order-paymongo-payments-${orderId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'order_payments',
+          filter: `order_id=eq.${orderId}`,
+        },
+        () => fetchOrderDetails(false)
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(orderChannel);
       supabase.removeChannel(paymentChannel);
+      supabase.removeChannel(onlinePaymentChannel);
     };
   }, [fetchOrderDetails, fetchPayments, orderId, userId]);
 
@@ -411,7 +509,7 @@ export default function OrderDetailsScreen({ route, navigation }) {
 
             <View style={[s.statusBadge, { backgroundColor: status.bg }]}>
               <Ionicons name={status.icon} size={14} color={status.color} />
-              <Text style={[s.statusText, { color: status.color }]}>{status.label}</Text>
+              <Text style={[s.statusText, { color: status.color }]}>{displayStatusLabel}</Text>
             </View>
           </View>
 
@@ -419,6 +517,28 @@ export default function OrderDetailsScreen({ route, navigation }) {
             <Text style={s.totalLabel}>Order Total</Text>
             <Text style={s.totalValue}>{peso(total)}</Text>
           </View>
+        </View>
+
+        <Text style={s.sectionTitle}>Fulfillment</Text>
+        <View style={s.card}>
+          <MoneyRow
+            theme={theme}
+            label="Method"
+            value={humanize(order.fulfillment_method || 'pickup')}
+          />
+          {String(order.fulfillment_method || '').toLowerCase() === 'delivery' && (
+            <MoneyRow
+              theme={theme}
+              label="Delivery Address"
+              value={order.delivery_address || 'No delivery address saved'}
+            />
+          )}
+          <MoneyRow
+            theme={theme}
+            label="Contact Phone"
+            value={order.customer_contact_phone || '—'}
+            last
+          />
         </View>
 
         <Text style={s.sectionTitle}>Order Progress</Text>
@@ -429,7 +549,7 @@ export default function OrderDetailsScreen({ route, navigation }) {
                 (item) => item.key === normalizeStatus(order.status)
               );
               const isDone =
-                normalizeStatus(order.status) === 'cancelled'
+                ['cancelled', 'returned'].includes(normalizeStatus(order.status))
                   ? false
                   : currentIndex >= index;
               const isCurrent = step.key === normalizeStatus(order.status);
@@ -467,7 +587,7 @@ export default function OrderDetailsScreen({ route, navigation }) {
                         isCurrent && { color: theme.primaryLight || YELLOW },
                       ]}
                     >
-                      {step.label}
+                      {step.key === 'ready' ? getReadyLabel(order) : step.label}
                     </Text>
                     <Text style={s.stepSub}>
                       {isCurrent ? 'Current status' : isDone ? 'Completed step' : 'Waiting'}
@@ -481,6 +601,15 @@ export default function OrderDetailsScreen({ route, navigation }) {
               <View style={s.cancelBox}>
                 <Ionicons name="close-circle" size={20} color={theme.danger} />
                 <Text style={s.cancelText}>This order was cancelled.</Text>
+              </View>
+            )}
+
+            {normalizeStatus(order.status) === 'returned' && (
+              <View style={[s.cancelBox, { borderColor: (theme.warning || '#f97316') + '55', backgroundColor: (theme.warning || '#f97316') + '14' }]}>
+                <Ionicons name="return-down-back" size={20} color={theme.warning || '#f97316'} />
+                <Text style={[s.cancelText, { color: theme.warning || '#f97316' }]}>
+                  This order was returned to inventory.
+                </Text>
               </View>
             )}
           </View>
@@ -523,7 +652,11 @@ export default function OrderDetailsScreen({ route, navigation }) {
           <MoneyRow
             theme={theme}
             label="Payment Method"
-            value={order.payment_method || payments[payments.length - 1]?.method || 'To be confirmed'}
+            value={
+                order.payment_method === 'paymongo_qrph'
+                  ? 'PayMongo QR Ph / GCash'
+                  : order.payment_method || payments[payments.length - 1]?.method || 'To be confirmed'
+              }
             last
           />
 
@@ -684,7 +817,7 @@ export default function OrderDetailsScreen({ route, navigation }) {
             <View style={s.receiptDivider} />
 
             <ReceiptRow theme={theme} label="Receipt No." value={receiptNumber} />
-            <ReceiptRow theme={theme} label="Order Status" value={humanize(order.status)} />
+            <ReceiptRow theme={theme} label="Order Status" value={displayStatusLabel} />
             <ReceiptRow theme={theme} label="Payment Status" value={paymentLabel} />
             <ReceiptRow theme={theme} label="Order Total" value={peso(total)} />
             <ReceiptRow theme={theme} label="Amount Paid" value={peso(totalPaid)} />
@@ -692,7 +825,11 @@ export default function OrderDetailsScreen({ route, navigation }) {
             <ReceiptRow
               theme={theme}
               label="Payment Method"
-              value={order.payment_method || payments[payments.length - 1]?.method || 'To be confirmed'}
+              value={
+                order.payment_method === 'paymongo_qrph'
+                  ? 'PayMongo QR Ph / GCash'
+                  : order.payment_method || payments[payments.length - 1]?.method || 'To be confirmed'
+              }
             />
             <ReceiptRow theme={theme} label="Date" value={formatDateTime(order.created_at)} />
 

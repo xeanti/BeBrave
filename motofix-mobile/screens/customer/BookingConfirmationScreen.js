@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  Alert,
+  Linking,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -10,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 
 import { useTheme } from '../../lib/ThemeContext';
+import { supabase } from '../../lib/supabase';
 
 const YELLOW = '#EAB308';
 
@@ -54,6 +57,19 @@ function shortId(value) {
   return String(value).slice(0, 8).toUpperCase();
 }
 
+function formatPaymentStatus(value) {
+  const status = String(value || 'unpaid').toLowerCase();
+
+  if (status === 'paid') return 'Paid';
+  if (status === 'checkout_created') return 'Waiting for QR Ph Payment';
+  if (status === 'pending_payment') return 'Pending Payment';
+  if (status === 'failed') return 'Failed';
+  if (status === 'expired') return 'Expired';
+  if (status === 'cancelled') return 'Cancelled';
+
+  return 'Unpaid';
+}
+
 export default function BookingConfirmationScreen({ route, navigation }) {
   const { theme, isDark } = useTheme();
   const s = styles(theme);
@@ -67,6 +83,110 @@ export default function BookingConfirmationScreen({ route, navigation }) {
   const mechanicName = params.mechanicName || 'No preference / auto-assigned';
   const totalAmount = params.totalAmount || params.total || 0;
   const status = params.status || 'pending';
+
+  const initialPaymentStatus = params.paymentStatus || 'unpaid';
+  const reservationFee =
+    Number(params.reservationFee) > 0
+      ? Number(params.reservationFee)
+      : Number(totalAmount || 0) * 0.2;
+  const initialPaymentReference = params.paymentReference || null;
+  const initialPaidAt = params.paidAt || null;
+  const paymentMethod = params.paymentMethod || 'PayMongo QR Ph / GCash';
+  const checkoutUrl = params.checkoutUrl || null;
+
+  const [paymentStatus, setPaymentStatus] = useState(initialPaymentStatus);
+  const [paymentReference, setPaymentReference] = useState(initialPaymentReference);
+  const [paidAt, setPaidAt] = useState(initialPaidAt);
+  const paymentAlertShown = useRef(false);
+
+  const isPaymentPaid = String(paymentStatus).toLowerCase() === 'paid';
+  const canContinuePayment = checkoutUrl && !isPaymentPaid;
+
+  useEffect(() => {
+    if (!bookingId) return;
+
+    let mounted = true;
+
+    async function fetchLatestPaymentStatus() {
+      const { data, error } = await supabase
+        .from('bookings')
+        .select('payment_status, payment_reference, paid_at')
+        .eq('id', bookingId)
+        .maybeSingle();
+
+      if (error || !mounted || !data) return;
+
+      applyPaymentStatusUpdate(data, false);
+    }
+
+    function applyPaymentStatusUpdate(updatedBooking, showAlert = true) {
+      const nextStatus = updatedBooking?.payment_status || 'unpaid';
+
+      setPaymentStatus(nextStatus);
+      setPaymentReference(updatedBooking?.payment_reference || null);
+      setPaidAt(updatedBooking?.paid_at || null);
+
+      if (
+        showAlert &&
+        String(nextStatus).toLowerCase() === 'paid' &&
+        !paymentAlertShown.current
+      ) {
+        paymentAlertShown.current = true;
+
+        Alert.alert(
+          'Payment Received',
+          'Your QR Ph / GCash reservation payment has been received. Please wait for booking confirmation.'
+        );
+      }
+    }
+
+    fetchLatestPaymentStatus();
+
+    const channel = supabase
+      .channel(`booking-payment-${bookingId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'bookings',
+          filter: `id=eq.${bookingId}`,
+        },
+        (payload) => {
+          applyPaymentStatusUpdate(payload.new, true);
+        }
+      )
+      .subscribe();
+
+    const interval = setInterval(fetchLatestPaymentStatus, 5000);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
+  }, [bookingId]);
+
+  async function handleContinuePayment() {
+    if (!checkoutUrl) {
+      Alert.alert('Payment Link Missing', 'No PayMongo QR payment link was found for this booking.');
+      return;
+    }
+
+    try {
+      const supported = await Linking.canOpenURL(checkoutUrl);
+
+      if (!supported) {
+        Alert.alert('Cannot Open Payment Link', 'Your device cannot open the PayMongo payment page.');
+        return;
+      }
+
+      await Linking.openURL(checkoutUrl);
+    } catch (err) {
+      console.log('OPEN CHECKOUT ERROR:', err);
+      Alert.alert('Payment Error', 'Unable to open the PayMongo QR payment page.');
+    }
+  }
 
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content}>
@@ -82,7 +202,9 @@ export default function BookingConfirmationScreen({ route, navigation }) {
 
         <Text style={s.title}>Booking Submitted!</Text>
         <Text style={s.subtitle}>
-          Your service booking request was sent to MotoFix. Please wait for shop confirmation.
+          {isPaymentPaid
+            ? 'Your QR Ph / GCash reservation payment has been received. Please wait for MotoFix to confirm your booking.'
+            : 'Your booking request was created. Please complete the 20% reservation payment using PayMongo QR Ph / GCash so MotoFix can proceed with confirmation.'}
         </Text>
 
         <View style={s.statusPill}>
@@ -138,11 +260,85 @@ export default function BookingConfirmationScreen({ route, navigation }) {
         />
       </View>
 
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Reservation Payment</Text>
+
+        {isPaymentPaid ? (
+          <View style={s.paymentSuccessBox}>
+            <Ionicons name="checkmark-circle" size={22} color="#16A34A" />
+            <View style={{ flex: 1 }}>
+              <Text style={s.paymentSuccessTitle}>Payment Received</Text>
+              <Text style={s.paymentSuccessText}>
+                Your QR Ph / GCash reservation payment has been received.
+              </Text>
+            </View>
+          </View>
+        ) : (
+          <View style={s.paymentWaitingBox}>
+            <Ionicons name="time-outline" size={22} color={theme.warning || YELLOW} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.paymentWaitingTitle}>Waiting for QR Ph / GCash Payment</Text>
+              <Text style={s.paymentWaitingText}>
+                Complete the PayMongo QR Ph payment page. This screen will update automatically after PayMongo confirms payment.
+              </Text>
+            </View>
+          </View>
+        )}
+
+        <InfoRow
+          theme={theme}
+          icon="qr-code-outline"
+          label="Payment Method"
+          value={paymentMethod}
+        />
+
+        <InfoRow
+          theme={theme}
+          icon="wallet-outline"
+          label="20% Reservation Fee"
+          value={formatPeso(reservationFee)}
+          strong
+        />
+
+        <InfoRow
+          theme={theme}
+          icon="card-outline"
+          label="Payment Status"
+          value={formatPaymentStatus(paymentStatus)}
+        />
+
+        {paymentReference ? (
+          <InfoRow
+            theme={theme}
+            icon="pricetag-outline"
+            label="Payment Reference"
+            value={paymentReference}
+          />
+        ) : null}
+
+        {paidAt ? (
+          <InfoRow
+            theme={theme}
+            icon="time-outline"
+            label="Paid At"
+            value={formatDate(paidAt)}
+          />
+        ) : null}
+
+        {canContinuePayment ? (
+          <TouchableOpacity style={s.payButton} onPress={handleContinuePayment}>
+            <Ionicons name="qr-code" size={18} color="#111827" />
+            <Text style={s.payButtonText}>Continue QR Ph / GCash Payment</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
       <View style={s.noticeCard}>
         <Ionicons name="information-circle-outline" size={20} color={theme.primaryLight || YELLOW} />
         <Text style={s.noticeText}>
-          You will receive a notification once the admin confirms your booking. You can also track
-          the booking status from your appointments page.
+          {isPaymentPaid
+            ? 'Payment received. MotoFix staff can now verify and confirm your booking schedule.'
+            : 'Once PayMongo confirms your QR Ph / GCash payment, your booking payment status will automatically update to Paid. You can track the booking status from your appointments page.'}
         </Text>
       </View>
 
@@ -332,6 +528,67 @@ const styles = (theme) =>
       fontSize: 12,
       lineHeight: 18,
       fontWeight: '600',
+    },
+    paymentSuccessBox: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+      backgroundColor: '#16A34A18',
+      borderWidth: 1,
+      borderColor: '#16A34A55',
+      borderRadius: 16,
+      padding: 13,
+      marginBottom: 12,
+    },
+    paymentSuccessTitle: {
+      color: '#16A34A',
+      fontSize: 14,
+      fontWeight: '900',
+      marginBottom: 2,
+    },
+    paymentSuccessText: {
+      color: theme.textSub || theme.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '700',
+    },
+    paymentWaitingBox: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+      backgroundColor: (theme.warning || YELLOW) + '12',
+      borderWidth: 1,
+      borderColor: (theme.warning || YELLOW) + '44',
+      borderRadius: 16,
+      padding: 13,
+      marginBottom: 12,
+    },
+    paymentWaitingTitle: {
+      color: theme.warning || YELLOW,
+      fontSize: 14,
+      fontWeight: '900',
+      marginBottom: 2,
+    },
+    paymentWaitingText: {
+      color: theme.textSub || theme.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '700',
+    },
+    payButton: {
+      backgroundColor: YELLOW,
+      borderRadius: 14,
+      paddingVertical: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 12,
+    },
+    payButtonText: {
+      color: '#111827',
+      fontSize: 14,
+      fontWeight: '900',
     },
     primaryButton: {
       backgroundColor: theme.primary,

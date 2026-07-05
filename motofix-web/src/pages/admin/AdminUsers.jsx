@@ -16,7 +16,7 @@ const ROLE_CONFIG = {
       'bg-green-50 text-green-700 ring-green-200 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25',
   },
   staff: {
-    label: 'Staff',
+    label: 'Staff / Cashier',
     icon: '🧑‍💼',
     classes:
       'bg-purple-50 text-purple-700 ring-purple-200 dark:bg-purple-500/10 dark:text-purple-300 dark:ring-purple-500/25',
@@ -26,6 +26,12 @@ const ROLE_CONFIG = {
     icon: '🛡️',
     classes:
       'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25',
+  },
+  super_admin: {
+    label: 'Super Admin',
+    icon: '👑',
+    classes:
+      'bg-yellow-50 text-yellow-700 ring-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-300 dark:ring-yellow-500/25',
   },
 };
 
@@ -42,6 +48,22 @@ const EMPTY_NEW_ACCOUNT = {
 const SHOP_OPEN = 8;
 const SHOP_CLOSE = 17;
 const MAX_CERT_SIZE_MB = 10;
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+
+const STATUS_FILTERS = [
+  { key: 'active', label: 'Active' },
+  { key: 'inactive', label: 'Inactive' },
+  { key: 'all', label: 'All Status' },
+];
+
+const SORT_OPTIONS = [
+  { key: 'newest', label: 'Newest First' },
+  { key: 'oldest', label: 'Oldest First' },
+  { key: 'name_asc', label: 'Name A-Z' },
+  { key: 'name_desc', label: 'Name Z-A' },
+  { key: 'role_asc', label: 'Role A-Z' },
+];
+
 
 function generateTimeSlots() {
   const slots = [];
@@ -112,6 +134,76 @@ function formatDateTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function sanitizeSearch(value) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9ñÑ @._+\-]/g, '')
+    .slice(0, 80);
+}
+
+function sanitizeName(value) {
+  return String(value || '')
+    .replace(/[^a-zA-ZñÑ .'-]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 50);
+}
+
+function sanitizeEmail(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9@._+\-]/g, '')
+    .slice(0, 120);
+}
+
+function sanitizePhone(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 11);
+}
+
+function sanitizeSpecialization(value) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&#]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 80);
+}
+
+function sanitizeMotorcycleText(value) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 60);
+}
+
+function sanitizeYear(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 4);
+}
+
+function sanitizeCertName(value) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&#]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 80);
+}
+
+function isValidPhilippineMobile(value) {
+  if (!value) return true;
+  return /^09\d{9}$/.test(value);
+}
+
+function sanitizeRole(value) {
+  const allowed = ['customer', 'mechanic', 'staff', 'admin', 'super_admin'];
+  return allowed.includes(value) ? value : 'customer';
+}
+
+function getStatusFilterLabel(value) {
+  const match = STATUS_FILTERS.find((item) => item.key === value);
+  return match?.label || 'Active';
+}
+
+function getSortLabel(value) {
+  const match = SORT_OPTIONS.find((item) => item.key === value);
+  return match?.label || 'Newest First';
 }
 
 function getFullName(profile) {
@@ -222,6 +314,78 @@ function StatCard({ label, value, icon, tone = 'default' }) {
   );
 }
 
+function PaginationControls({
+  currentPage,
+  totalPages,
+  pageSize,
+  onPageSizeChange,
+  onFirst,
+  onPrevious,
+  onNext,
+  onLast,
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-b-3xl border-t border-gray-100 bg-gray-50 px-5 py-4 dark:border-dark-700 dark:bg-dark-900/60 sm:flex-row sm:items-center sm:justify-between">
+      <label className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+        Per page
+        <select
+          value={pageSize}
+          onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          className="rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm font-black text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-800 dark:text-white"
+        >
+          {PAGE_SIZE_OPTIONS.map((size) => (
+            <option key={size} value={size}>
+              {size}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onFirst}
+          disabled={currentPage <= 1}
+          className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300"
+        >
+          First
+        </button>
+
+        <button
+          type="button"
+          onClick={onPrevious}
+          disabled={currentPage <= 1}
+          className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300"
+        >
+          Prev
+        </button>
+
+        <span className="rounded-2xl bg-white px-4 py-2 text-sm font-black text-gray-700 ring-1 ring-gray-200 dark:bg-dark-800 dark:text-gray-300 dark:ring-dark-700">
+          {currentPage} / {totalPages}
+        </span>
+
+        <button
+          type="button"
+          onClick={onNext}
+          disabled={currentPage >= totalPages}
+          className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300"
+        >
+          Next
+        </button>
+
+        <button
+          type="button"
+          onClick={onLast}
+          disabled={currentPage >= totalPages}
+          className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300"
+        >
+          Last
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function UserSkeleton() {
   return (
     <div className="rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
@@ -239,7 +403,7 @@ function UserSkeleton() {
 }
 
 export default function AdminUsers() {
-  const { user } = useAuth();
+  const { user, profile: authProfile } = useAuth();
 
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -249,6 +413,10 @@ export default function AdminUsers() {
 
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('active');
+  const [sortBy, setSortBy] = useState('newest');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const [editingUser, setEditingUser] = useState(null);
   const [editForm, setEditForm] = useState({});
@@ -371,6 +539,10 @@ export default function AdminUsers() {
     return () => clearTimeout(timeout);
   }, [toast]);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, roleFilter, statusFilter, sortBy, pageSize]);
+
   async function fetchUsers(showLoader = true) {
     if (showLoader) setLoading(true);
 
@@ -452,7 +624,7 @@ export default function AdminUsers() {
   }
 
   async function removeFromSchedule(bookingId) {
-    if (!confirm('Unassign this mechanic from the booking?')) return;
+    if (!window.confirm('Unassign this mechanic from the booking?')) return;
 
     setUpdatingScheduleId(bookingId);
 
@@ -515,7 +687,7 @@ export default function AdminUsers() {
     setCertFile(file);
 
     if (!certName) {
-      setCertName(file.name.replace(/\.[^/.]+$/, ''));
+      setCertName(sanitizeCertName(file.name.replace(/\.[^/.]+$/, '')));
     }
   }
 
@@ -524,7 +696,7 @@ export default function AdminUsers() {
 
     setCertError('');
 
-    if (!certName.trim()) {
+    if (!sanitizeCertName(certName).trim()) {
       setCertError('Please enter a certificate name.');
       return;
     }
@@ -559,7 +731,7 @@ export default function AdminUsers() {
         .from('mechanic_certificates')
         .insert({
           mechanic_id: mechanicId,
-          name: certName.trim(),
+          name: sanitizeCertName(certName).trim(),
           file_url: urlData.publicUrl,
           uploaded_by: user?.id,
         })
@@ -569,7 +741,7 @@ export default function AdminUsers() {
       if (insertError) throw insertError;
 
       await insertAuditLog('UPLOAD_MECHANIC_CERTIFICATE', 'mechanic_certificates', data?.id || mechanicId, {
-        name: certName.trim(),
+        name: sanitizeCertName(certName).trim(),
         mechanic_id: mechanicId,
       });
 
@@ -585,7 +757,7 @@ export default function AdminUsers() {
   }
 
   async function deleteCertificate(cert) {
-    if (!confirm(`Delete certificate "${cert.name}"?`)) return;
+    if (!window.confirm(`Delete certificate "${cert.name}"?`)) return;
 
     setDeletingCertId(cert.id);
 
@@ -614,14 +786,14 @@ export default function AdminUsers() {
   function openEdit(profile) {
     setEditingUser(profile);
     setEditForm({
-      first_name: profile.first_name || '',
-      last_name: profile.last_name || '',
-      phone: profile.phone || '',
-      role: profile.role || 'customer',
-      specialization: profile.specialization || '',
-      moto_make: profile.moto_make || '',
-      moto_model: profile.moto_model || '',
-      moto_year: profile.moto_year || '',
+      first_name: sanitizeName(profile.first_name || ''),
+      last_name: sanitizeName(profile.last_name || ''),
+      phone: sanitizePhone(profile.phone || ''),
+      role: sanitizeRole(profile.role || 'customer'),
+      specialization: sanitizeSpecialization(profile.specialization || ''),
+      moto_make: sanitizeMotorcycleText(profile.moto_make || ''),
+      moto_model: sanitizeMotorcycleText(profile.moto_model || ''),
+      moto_year: sanitizeYear(profile.moto_year || ''),
     });
 
     setEditError('');
@@ -648,9 +820,22 @@ export default function AdminUsers() {
   }
 
   function validateEditForm() {
-    if (!editForm.first_name?.trim()) return 'First name is required.';
-    if (!editForm.last_name?.trim()) return 'Last name is required.';
-    if (!editForm.role) return 'Role is required.';
+    if (!sanitizeName(editForm.first_name).trim()) return 'First name is required.';
+    if (!sanitizeName(editForm.last_name).trim()) return 'Last name is required.';
+    if (!sanitizeRole(editForm.role)) return 'Role is required.';
+
+    if (editForm.phone && !isValidPhilippineMobile(editForm.phone)) {
+      return 'Phone number must be 11 digits and start with 09.';
+    }
+
+    if (editForm.moto_year) {
+      const year = Number(editForm.moto_year);
+      const nextYear = new Date().getFullYear() + 1;
+
+      if (!/^\d{4}$/.test(String(editForm.moto_year)) || year < 1980 || year > nextYear) {
+        return `Motorcycle year must be between 1980 and ${nextYear}.`;
+      }
+    }
 
     return '';
   }
@@ -670,18 +855,41 @@ export default function AdminUsers() {
       return;
     }
 
+    const roleChanged = editForm.role !== editingUser.role;
+
+    if (roleChanged && !isCurrentUserSuperAdmin) {
+      setEditError('Only super admins can change user roles.');
+      setSaving(false);
+      return;
+    }
+
+    if (roleChanged && editingUser.id === user?.id) {
+      setEditError('You cannot change your own role.');
+      setSaving(false);
+      return;
+    }
+
+    if (
+      roleChanged &&
+      !window.confirm(`Change ${getFullName(editingUser)} from ${editingUser.role} to ${editForm.role}?`)
+    ) {
+      setSaving(false);
+      return;
+    }
+
+    const cleanRole = sanitizeRole(editForm.role);
+
     const payload = {
-      first_name: editForm.first_name.trim(),
-      last_name: editForm.last_name.trim(),
-      phone: editForm.phone?.trim() || null,
-      role: editForm.role,
+      first_name: sanitizeName(editForm.first_name).trim(),
+      last_name: sanitizeName(editForm.last_name).trim(),
+      phone: sanitizePhone(editForm.phone) || null,
       specialization:
-        editForm.role === 'mechanic' ? editForm.specialization?.trim() || null : null,
-      moto_make: editForm.role === 'customer' ? editForm.moto_make?.trim() || null : null,
-      moto_model: editForm.role === 'customer' ? editForm.moto_model?.trim() || null : null,
+        cleanRole === 'mechanic' ? sanitizeSpecialization(editForm.specialization).trim() || null : null,
+      moto_make: cleanRole === 'customer' ? sanitizeMotorcycleText(editForm.moto_make).trim() || null : null,
+      moto_model: cleanRole === 'customer' ? sanitizeMotorcycleText(editForm.moto_model).trim() || null : null,
       moto_year:
-        editForm.role === 'customer' && editForm.moto_year
-          ? parseInt(editForm.moto_year, 10)
+        cleanRole === 'customer' && editForm.moto_year
+          ? parseInt(sanitizeYear(editForm.moto_year), 10)
           : null,
       updated_at: new Date().toISOString(),
     };
@@ -694,9 +902,21 @@ export default function AdminUsers() {
 
       if (error) throw error;
 
+      if (roleChanged) {
+        const { error: roleError } = await supabase.rpc('change_user_role', {
+          target_user_id: editingUser.id,
+          new_role: cleanRole,
+        });
+
+        if (roleError) throw roleError;
+      }
+
       await insertAuditLog('UPDATE_USER_PROFILE', 'profiles', editingUser.id, {
-        role: payload.role,
+        role: roleChanged ? cleanRole : editingUser.role,
         name: `${payload.first_name} ${payload.last_name}`,
+        role_changed: roleChanged,
+        old_role: editingUser.role,
+        new_role: cleanRole,
       });
 
       setEditSuccess('Profile updated successfully!');
@@ -705,6 +925,7 @@ export default function AdminUsers() {
       setEditingUser((previous) => ({
         ...previous,
         ...payload,
+        role: roleChanged ? cleanRole : previous.role,
       }));
     } catch (err) {
       setEditError(err.message || 'Failed to save user.');
@@ -762,16 +983,23 @@ export default function AdminUsers() {
   }
 
   async function handleDemote(userId, currentRole) {
-    if (!confirm(`Remove ${currentRole} access and set to customer?`)) return;
+    if (!isCurrentUserSuperAdmin) {
+      setToast('❌ Only super admins can change user roles.');
+      return;
+    }
+
+    if (userId === user?.id) {
+      setToast('❌ You cannot change your own role.');
+      return;
+    }
+
+    if (!window.confirm(`Remove ${currentRole} access and set to customer?`)) return;
 
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({
-          role: 'customer',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', userId);
+      const { error } = await supabase.rpc('change_user_role', {
+        target_user_id: userId,
+        new_role: 'customer',
+      });
 
       if (error) throw error;
 
@@ -798,19 +1026,124 @@ export default function AdminUsers() {
     }
   }
 
+
+
+  async function handleDeactivateUser(profile) {
+    if (!isCurrentUserSuperAdmin) {
+      setToast('❌ Only super admins can deactivate user accounts.');
+      return;
+    }
+
+    if (profile.id === user?.id) {
+      setToast('❌ You cannot deactivate your own account.');
+      return;
+    }
+
+    if (profile.role === 'super_admin') {
+      setToast('❌ Super admin accounts cannot be deactivated from this page.');
+      return;
+    }
+
+    if (profile.is_active === false) {
+      setToast('This user is already inactive.');
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Deactivate ${getFullName(profile)}? This user will no longer be allowed to access MotoFix, but their records will be kept.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.functions.invoke('deactivate-account', {
+        body: {
+          target_user_id: profile.id,
+        },
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      await fetchUsers(false);
+      setToast('User account deactivated.');
+
+      if (editingUser?.id === profile.id) {
+        closeEdit();
+      }
+    } catch (err) {
+      setToast(`❌ ${err.message || 'Failed to deactivate user.'}`);
+    }
+  }
+
+
+  async function handleReactivateUser(profile) {
+    if (!isCurrentUserSuperAdmin) {
+      setToast('❌ Only super admins can reactivate user accounts.');
+      return;
+    }
+
+    if (profile.is_active !== false) {
+      setToast('This user is already active.');
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Reactivate ${getFullName(profile)}? This user will be allowed to access MotoFix again.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.functions.invoke('reactivate-account', {
+        body: {
+          target_user_id: profile.id,
+        },
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      await fetchUsers(false);
+      setToast('User account reactivated.');
+    } catch (err) {
+      setToast(`❌ ${err.message || 'Failed to reactivate user.'}`);
+    }
+  }
+
   async function handleCreateAccount(event) {
     event.preventDefault();
 
     setCreateError('');
     setCreateSuccess('');
 
-    if (!newAccount.firstName.trim() || !newAccount.lastName.trim()) {
+    if (!isCurrentUserSuperAdmin) {
+      setCreateError('Only super admins can create personnel accounts from this page.');
+      return;
+    }
+
+    const cleanFirstName = sanitizeName(newAccount.firstName).trim();
+    const cleanLastName = sanitizeName(newAccount.lastName).trim();
+    const cleanEmail = sanitizeEmail(newAccount.email);
+    const cleanPhone = sanitizePhone(newAccount.phone);
+    const cleanRole = sanitizeRole(newAccount.role);
+
+    if (!cleanFirstName || !cleanLastName) {
       setCreateError('First name and last name are required.');
       return;
     }
 
-    if (!newAccount.email.trim()) {
-      setCreateError('Email is required.');
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setCreateError('Please enter a valid email address.');
+      return;
+    }
+
+    if (cleanPhone && !isValidPhilippineMobile(cleanPhone)) {
+      setCreateError('Phone number must be 11 digits and start with 09.');
       return;
     }
 
@@ -824,17 +1157,23 @@ export default function AdminUsers() {
       return;
     }
 
+    if (
+      !window.confirm(`Create ${cleanRole} account for ${cleanFirstName} ${cleanLastName}?`)
+    ) {
+      return;
+    }
+
     setCreating(true);
 
     try {
       const { data, error } = await supabase.functions.invoke('create-account', {
         body: {
-          firstName: newAccount.firstName.trim(),
-          lastName: newAccount.lastName.trim(),
-          email: newAccount.email.trim(),
-          phone: newAccount.phone.trim(),
+          firstName: cleanFirstName,
+          lastName: cleanLastName,
+          email: cleanEmail,
+          phone: cleanPhone,
           password: newAccount.password,
-          role: newAccount.role,
+          role: cleanRole,
         },
       });
 
@@ -842,11 +1181,11 @@ export default function AdminUsers() {
       if (data?.error) throw new Error(data.error);
 
       await insertAuditLog('CREATE_USER_ACCOUNT', 'profiles', data.account?.id, {
-        role: newAccount.role,
-        email: newAccount.email.trim(),
+        role: cleanRole,
+        email: cleanEmail,
       });
 
-      setCreateSuccess(`✅ ${newAccount.role} account created for ${newAccount.firstName} ${newAccount.lastName}!`);
+      setCreateSuccess(`✅ ${cleanRole} account created for ${cleanFirstName} ${cleanLastName}!`);
       setNewAccount(EMPTY_NEW_ACCOUNT);
       await fetchUsers(false);
     } catch (err) {
@@ -875,16 +1214,31 @@ export default function AdminUsers() {
     setCertError('');
   }
 
+  const currentUserProfile = useMemo(
+    () => users.find((profile) => profile.id === user?.id),
+    [users, user?.id]
+  );
+
+  const isCurrentUserSuperAdmin = authProfile?.role === 'super_admin' || currentUserProfile?.role === 'super_admin';
+
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    return users.filter((profile) => {
+    const searched = users.filter((profile) => {
       const matchRole = roleFilter === 'all' || profile.role === roleFilter;
+
+      const isActive = profile.is_active !== false;
+      const matchStatus =
+        statusFilter === 'all' ||
+        (statusFilter === 'active' && isActive) ||
+        (statusFilter === 'inactive' && !isActive);
+
       const fullName = getFullName(profile).toLowerCase();
       const email = String(profile.email || '').toLowerCase();
       const phone = String(profile.phone || '').toLowerCase();
       const specialization = String(profile.specialization || '').toLowerCase();
       const motorcycle = `${profile.moto_make || ''} ${profile.moto_model || ''} ${profile.moto_year || ''}`.toLowerCase();
+      const role = String(profile.role || '').toLowerCase();
 
       const matchSearch =
         !query ||
@@ -893,22 +1247,48 @@ export default function AdminUsers() {
         phone.includes(query) ||
         specialization.includes(query) ||
         motorcycle.includes(query) ||
+        role.includes(query) ||
         String(profile.id || '').toLowerCase().includes(query);
 
-      return matchRole && matchSearch;
+      return matchRole && matchStatus && matchSearch;
     });
-  }, [users, search, roleFilter]);
+
+    return [...searched].sort((a, b) => {
+      switch (sortBy) {
+        case 'oldest':
+          return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+        case 'name_asc':
+          return getFullName(a).localeCompare(getFullName(b));
+        case 'name_desc':
+          return getFullName(b).localeCompare(getFullName(a));
+        case 'role_asc':
+          return String(a.role || '').localeCompare(String(b.role || ''));
+        case 'newest':
+        default:
+          return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      }
+    });
+  }, [users, search, roleFilter, statusFilter, sortBy]);
 
   const counts = useMemo(() => {
     const result = {
       all: users.length,
+      active: 0,
+      inactive: 0,
       customer: 0,
       mechanic: 0,
       staff: 0,
       admin: 0,
+      super_admin: 0,
     };
 
     users.forEach((profile) => {
+      if (profile.is_active === false) {
+        result.inactive += 1;
+      } else {
+        result.active += 1;
+      }
+
       if (result[profile.role] !== undefined) {
         result[profile.role] += 1;
       }
@@ -930,63 +1310,78 @@ export default function AdminUsers() {
     };
   }, [users]);
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedUsers = filtered.slice(startIndex, endIndex);
+
+  const hasFilters =
+    search.trim() ||
+    roleFilter !== 'all' ||
+    statusFilter !== 'active' ||
+    sortBy !== 'newest';
+
+  function clearFilters() {
+    setSearch('');
+    setRoleFilter('all');
+    setStatusFilter('active');
+    setSortBy('newest');
+    setCurrentPage(1);
+  }
+
   return (
     <div className="min-h-[calc(100vh-65px)] bg-gray-50 px-4 py-8 text-gray-900 dark:bg-dark-900 dark:text-white sm:px-6 lg:py-10">
       <div className="mx-auto max-w-7xl">
         {/* Header */}
-        <div className="mb-8 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
-          <div className="relative p-6 sm:p-8">
-            <div className="absolute -right-8 -top-14 h-36 w-36 rounded-full bg-primary-500/10 blur-3xl" />
-            <div className="absolute -bottom-16 left-10 h-36 w-36 rounded-full bg-accent-500/10 blur-3xl" />
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="mb-2 text-xs font-black uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
+              MotoFix Admin
+            </p>
+            <h1 className="text-3xl font-black tracking-tight text-gray-950 dark:text-white">
+              Users
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
+              Manage customers, mechanics, staff, admins, and super admins.
+            </p>
+            {lastUpdated && (
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                Last updated: {formatDateTime(lastUpdated)}
+              </p>
+            )}
+          </div>
 
-            <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <p className="mb-2 text-xs font-black uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
-                  MotoFix Admin
-                </p>
-                <h1 className="text-3xl font-black tracking-tight text-gray-950 dark:text-white md:text-4xl">
-                  User Management
-                </h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
-                  View accounts, update roles, manage mechanics, schedules, certificates, and staff accounts.
-                </p>
-                {lastUpdated && (
-                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                    Last updated: {formatDateTime(lastUpdated)}
-                  </p>
-                )}
-              </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => fetchUsers(false)}
+              className="rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
+            >
+              Refresh
+            </button>
 
-              <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={() => fetchUsers(false)}
-                  className="rounded-2xl border border-gray-200 px-5 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
-                >
-                  Refresh
-                </button>
+            <button
+              type="button"
+              onClick={() => setShowPolicy(true)}
+              className="rounded-2xl border border-yellow-200 bg-yellow-50 px-5 py-3 text-sm font-black text-yellow-700 transition hover:bg-yellow-100 dark:border-yellow-500/25 dark:bg-yellow-500/10 dark:text-yellow-300 dark:hover:bg-yellow-500/20"
+            >
+              Access Policy
+            </button>
 
-                <button
-                  type="button"
-                  onClick={() => setShowPolicy(true)}
-                  className="rounded-2xl border border-yellow-200 bg-yellow-50 px-5 py-3 text-sm font-black text-yellow-700 transition hover:bg-yellow-100 dark:border-yellow-500/25 dark:bg-yellow-500/10 dark:text-yellow-300 dark:hover:bg-yellow-500/20"
-                >
-                  ⚠️ Access Policy
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCreate(true);
-                    setCreateError('');
-                    setCreateSuccess('');
-                  }}
-                  className="rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 active:scale-[0.99]"
-                >
-                  + Create Account
-                </button>
-              </div>
-            </div>
+            {isCurrentUserSuperAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreate(true);
+                  setCreateError('');
+                  setCreateSuccess('');
+                }}
+                className="rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 active:scale-[0.99]"
+              >
+                + Create Account
+              </button>
+            )}
           </div>
         </div>
 
@@ -1007,19 +1402,21 @@ export default function AdminUsers() {
         </div>
 
         {/* Stats */}
-        <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-7">
           <StatCard label="Total Users" value={counts.all} icon="👥" tone="primary" />
+          <StatCard label="Active" value={counts.active} icon="✅" tone="green" />
+          <StatCard label="Inactive" value={counts.inactive} icon="🚫" tone={counts.inactive > 0 ? 'red' : 'default'} />
           <StatCard label="Customers" value={counts.customer} icon="👤" tone="blue" />
           <StatCard label="Mechanics" value={counts.mechanic} icon="🔧" tone="green" />
-          <StatCard label="Staff" value={counts.staff} icon="🧑‍💼" tone="purple" />
-          <StatCard label="Active Jobs" value={mechanicStats.activeJobs} icon="📅" tone={mechanicStats.activeJobs > 0 ? 'yellow' : 'default'} />
+          <StatCard label="Staff/Admins" value={counts.staff + counts.admin} icon="🧑‍💼" tone="purple" />
+          <StatCard label="Super Admins" value={counts.super_admin} icon="👑" tone="yellow" />
         </div>
 
         {/* Filters */}
         <div className="mb-6 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="grid gap-4">
             <div className="flex flex-wrap gap-2">
-              {['all', 'customer', 'mechanic', 'staff', 'admin'].map((role) => {
+              {['all', 'customer', 'mechanic', 'staff', 'admin', 'super_admin'].map((role) => {
                 const active = roleFilter === role;
 
                 return (
@@ -1042,26 +1439,76 @@ export default function AdminUsers() {
               })}
             </div>
 
-            <div className="relative w-full lg:w-96">
-              <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-sm text-gray-400">
-                🔍
+            <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto_auto]">
+              <div className="relative">
+                <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-sm text-gray-400">
+                  🔍
+                </span>
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(event) => setSearch(sanitizeSearch(event.target.value))}
+                  placeholder="Search name, email, phone, role, specialization, motorcycle, or ID..."
+                  className="w-full rounded-2xl border border-gray-200 bg-gray-50 py-3 pl-10 pr-10 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch('')}
+                    className="absolute inset-y-0 right-0 flex items-center pr-4 text-sm font-black text-gray-400 transition hover:text-gray-900 dark:hover:text-white"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value)}
+                className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+              >
+                {STATUS_FILTERS.map((item) => (
+                  <option key={item.key} value={item.key}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={sortBy}
+                onChange={(event) => setSortBy(event.target.value)}
+                className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+              >
+                {SORT_OPTIONS.map((item) => (
+                  <option key={item.key} value={item.key}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={clearFilters}
+                disabled={!hasFilters}
+                className="rounded-2xl border border-gray-200 px-5 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+              >
+                Clear
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-gray-500 dark:text-gray-400">
+              <span className="rounded-full bg-gray-100 px-3 py-1 dark:bg-dark-900">
+                Role: {roleFilter === 'all' ? 'All roles' : ROLE_CONFIG[roleFilter]?.label || roleFilter}
               </span>
-              <input
-                type="text"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search name, email, phone, specialization, motorcycle, or ID..."
-                className="w-full rounded-2xl border border-gray-200 bg-gray-50 py-3 pl-10 pr-10 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
-              />
-              {search && (
-                <button
-                  type="button"
-                  onClick={() => setSearch('')}
-                  className="absolute inset-y-0 right-0 flex items-center pr-4 text-sm font-black text-gray-400 transition hover:text-gray-900 dark:hover:text-white"
-                >
-                  ✕
-                </button>
-              )}
+              <span className="rounded-full bg-gray-100 px-3 py-1 dark:bg-dark-900">
+                Status: {getStatusFilterLabel(statusFilter)}
+              </span>
+              <span className="rounded-full bg-gray-100 px-3 py-1 dark:bg-dark-900">
+                Sort: {getSortLabel(sortBy)}
+              </span>
+              <span className="rounded-full bg-primary-50 px-3 py-1 font-black text-primary-700 dark:bg-primary-500/10 dark:text-primary-300">
+                {filtered.length} result(s)
+              </span>
             </div>
           </div>
         </div>
@@ -1078,19 +1525,43 @@ export default function AdminUsers() {
               No users found
             </h2>
             <p className="mx-auto max-w-md text-sm leading-6 text-gray-600 dark:text-gray-400">
-              Try changing the role filter or search keyword.
+              Try changing the filters, search keyword, or status filter.
             </p>
+
+            {hasFilters && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="mt-5 rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700"
+              >
+                Clear Filters
+              </button>
+            )}
           </div>
         ) : (
           <div className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
-            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-dark-700">
-              <h2 className="text-sm font-black uppercase tracking-wider text-gray-700 dark:text-gray-300">
-                Users <span className="text-gray-400">({filtered.length})</span>
-              </h2>
+            <div className="flex flex-col gap-3 border-b border-gray-100 px-5 py-4 dark:border-dark-700 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-sm font-black uppercase tracking-wider text-gray-700 dark:text-gray-300">
+                  Users <span className="text-gray-400">({filtered.length})</span>
+                </h2>
+                <p className="mt-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                  Showing {filtered.length === 0 ? 0 : startIndex + 1}–{Math.min(endIndex, filtered.length)} of {filtered.length}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-black text-green-700 ring-1 ring-green-200 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25">
+                  {counts.active} active
+                </span>
+                <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-black text-gray-600 ring-1 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25">
+                  {counts.inactive} inactive
+                </span>
+              </div>
             </div>
 
             <div className="divide-y divide-gray-100 dark:divide-dark-700">
-              {filtered.map((profile) => {
+              {paginatedUsers.map((profile) => {
                 const mechanicBookings = profile.bookings || [];
                 const total = mechanicBookings.length;
                 const completed = mechanicBookings.filter((booking) => booking.status === 'completed').length;
@@ -1115,6 +1586,11 @@ export default function AdminUsers() {
                               )}
                             </p>
                             <RoleBadge role={profile.role} />
+                            {profile.is_active === false && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-3 py-1 text-xs font-black text-gray-600 ring-1 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25">
+                                🚫 Inactive
+                              </span>
+                            )}
                           </div>
 
                           <p className="truncate text-xs text-gray-500 dark:text-gray-400">
@@ -1162,17 +1638,46 @@ export default function AdminUsers() {
                           ✎ Edit
                         </button>
 
-                        {(profile.role === 'mechanic' || profile.role === 'staff' || (profile.role === 'admin' && !isSelf)) && (
-                          <button
-                            type="button"
-                            onClick={() => handleDemote(profile.id, profile.role)}
-                            className="rounded-2xl bg-red-50 px-4 py-2 text-xs font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25 dark:hover:bg-red-500/20"
-                          >
-                            Demote
-                          </button>
-                        )}
+                        {isCurrentUserSuperAdmin &&
+                          !isSelf &&
+                          profile.is_active !== false &&
+                          ['mechanic', 'staff', 'admin', 'super_admin'].includes(profile.role) && (
+                            <button
+                              type="button"
+                              onClick={() => handleDemote(profile.id, profile.role)}
+                              className="rounded-2xl bg-red-50 px-4 py-2 text-xs font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25 dark:hover:bg-red-500/20"
+                            >
+                              {profile.role === 'super_admin' ? 'Change Role' : 'Demote'}
+                            </button>
+                          )}
 
-                        {profile.role === 'mechanic' && (
+                        {isCurrentUserSuperAdmin &&
+                          !isSelf &&
+                          profile.role !== 'super_admin' &&
+                          profile.is_active !== false && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeactivateUser(profile)}
+                              className="rounded-2xl bg-gray-100 px-4 py-2 text-xs font-black text-gray-700 ring-1 ring-gray-200 transition hover:bg-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25 dark:hover:bg-gray-500/20"
+                            >
+                              Deactivate
+                            </button>
+                          )}
+
+                        {isCurrentUserSuperAdmin &&
+                          !isSelf &&
+                          profile.is_active === false && (
+                            <button
+                              type="button"
+                              onClick={() => handleReactivateUser(profile)}
+                              className="rounded-2xl bg-green-50 px-4 py-2 text-xs font-black text-green-700 ring-1 ring-green-200 transition hover:bg-green-100 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25 dark:hover:bg-green-500/20"
+                            >
+                              Reactivate
+                            </button>
+                          )}
+
+
+                        {profile.role === 'mechanic' && profile.is_active !== false && (
                           <button
                             type="button"
                             onClick={() => toggleMechanicPanel(profile)}
@@ -1415,7 +1920,7 @@ export default function AdminUsers() {
                               label="Certificate Name"
                               type="text"
                               value={certName}
-                              onChange={(event) => setCertName(event.target.value)}
+                              onChange={(event) => setCertName(sanitizeCertName(event.target.value))}
                               placeholder="e.g. TESDA NC II"
                             />
 
@@ -1449,6 +1954,17 @@ export default function AdminUsers() {
                 );
               })}
             </div>
+
+            <PaginationControls
+              currentPage={safeCurrentPage}
+              totalPages={totalPages}
+              pageSize={pageSize}
+              onPageSizeChange={setPageSize}
+              onFirst={() => setCurrentPage(1)}
+              onPrevious={() => setCurrentPage((page) => Math.max(page - 1, 1))}
+              onNext={() => setCurrentPage((page) => Math.min(page + 1, totalPages))}
+              onLast={() => setCurrentPage(totalPages)}
+            />
           </div>
         )}
       </div>
@@ -1556,13 +2072,20 @@ export default function AdminUsers() {
                         role: event.target.value,
                       }))
                     }
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                    disabled={!isCurrentUserSuperAdmin || editingUser.id === user?.id}
+                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
                   >
                     <option value="customer">Customer</option>
                     <option value="mechanic">Mechanic</option>
-                    <option value="staff">Staff</option>
+                    <option value="staff">Staff / Cashier</option>
                     <option value="admin">Admin</option>
+                    <option value="super_admin">Super Admin</option>
                   </select>
+                  {(!isCurrentUserSuperAdmin || editingUser.id === user?.id) && (
+                    <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                      Role changes are restricted to super admins, and users cannot change their own role.
+                    </p>
+                  )}
                 </div>
 
                 {editForm.role === 'mechanic' && (
@@ -1724,7 +2247,7 @@ export default function AdminUsers() {
           <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800">
             <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4 dark:border-dark-700">
               <h2 className="text-lg font-black text-gray-950 dark:text-white">
-                Create Staff / Mechanic Account
+                Create Personnel Account
               </h2>
 
               <button
@@ -1815,8 +2338,9 @@ export default function AdminUsers() {
                   className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
                 >
                   <option value="mechanic">Mechanic</option>
-                  <option value="staff">Operational Staff</option>
-                  <option value="admin">System Administrator</option>
+                  <option value="staff">Staff / Cashier</option>
+                  <option value="admin">Admin</option>
+                  <option value="super_admin">Super Admin</option>
                 </select>
               </div>
 

@@ -20,6 +20,10 @@ const EMPTY_FORM = {
   is_previewable: true,
 };
 
+const PRODUCT_IMAGE_BUCKET = 'product-images';
+const AI_REFERENCE_BUCKET = 'product-ai-references';
+const MAX_IMAGE_SIZE_MB = 5;
+
 const STOCK_FILTERS = [
   { key: 'all', label: 'All Stock Levels' },
   { key: 'low', label: 'Low Stock' },
@@ -30,6 +34,27 @@ const STATUS_FILTERS = [
   { key: 'active', label: 'Active' },
   { key: 'inactive', label: 'Inactive' },
   { key: 'all', label: 'All' },
+];
+
+const PAGE_SIZE_OPTIONS = [6, 9, 12, 24, 48];
+
+const INSTALL_AREA_OPTIONS = [
+  'Front wheel/rim area only',
+  'Rear wheel/rim area only',
+  'Front and rear wheel/rim area only',
+  'Visible exhaust/muffler system',
+  'Seat area',
+  'Handlebar/control area',
+  'Headlight/front lighting area',
+  'Tail light/rear lighting area',
+  'Side mirror mounting area',
+  'Brake caliper/rotor area',
+  'Suspension/shock absorber area',
+  'Engine/engine cover area',
+  'Radiator/cooling area',
+  'Body panel/fairing area',
+  'License plate holder/rear fender area',
+  'Top box/rear carrier mounting area',
 ];
 
 function formatPeso(value, decimals = 2) {
@@ -56,8 +81,74 @@ function formatDateTime(value) {
 function parseCompatibleModels(value) {
   return String(value || '')
     .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
+    .map((item) => sanitizeCompatibleModel(item))
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+function sanitizeProductName(value) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 100);
+}
+
+function sanitizeCategory(value) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 60);
+}
+
+function sanitizeCompatibleModel(value) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 80);
+}
+
+function sanitizeCompatibleModels(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => sanitizeCompatibleModel(item))
+    .filter(Boolean)
+    .join(', ')
+    .slice(0, 500);
+}
+
+function sanitizeMoneyInput(value) {
+  const clean = String(value || '')
+    .replace(/[^0-9.]/g, '')
+    .replace(/(\..*)\./g, '$1');
+
+  const [whole = '', decimal = ''] = clean.split('.');
+
+  return decimal !== undefined && clean.includes('.')
+    ? `${whole.slice(0, 8)}.${decimal.slice(0, 2)}`
+    : whole.slice(0, 8);
+}
+
+function sanitizeIntegerInput(value, maxDigits = 6) {
+  return String(value || '').replace(/\D/g, '').slice(0, maxDigits);
+}
+
+function sanitizeAiText(value, maxLength = 240) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&#:%]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, maxLength);
+}
+
+function sanitizeBasicText(value, maxLength = 80) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&#]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, maxLength);
+}
+
+function formatMotorcycleModel(model) {
+  const label = [model?.make, model?.model].filter(Boolean).join(' ');
+  return sanitizeCompatibleModel(label);
 }
 
 function getStockState(part) {
@@ -152,8 +243,10 @@ export default function AdminParts() {
   const { user } = useAuth();
 
   const [parts, setParts] = useState([]);
+  const [motorcycleModels, setMotorcycleModels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState('');
+  const [errorPopup, setErrorPopup] = useState(null);
 
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -166,6 +259,8 @@ export default function AdminParts() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadingAiReference, setUploadingAiReference] = useState(false);
 
   const [toast, setToast] = useState('');
   const [togglingId, setTogglingId] = useState(null);
@@ -182,8 +277,12 @@ export default function AdminParts() {
 
   const [lastUpdated, setLastUpdated] = useState(null);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(9);
+
   useEffect(() => {
     fetchParts();
+    fetchMotorcycleModels();
 
     /*
       Realtime refresh for inventory management.
@@ -202,10 +301,29 @@ export default function AdminParts() {
       )
       .subscribe();
 
-    const handleFocus = () => fetchParts(false);
+    const motorcycleModelsChannel = supabase
+      .channel('admin-parts-motorcycle-models')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'motorcycle_models',
+        },
+        () => fetchMotorcycleModels()
+      )
+      .subscribe();
+
+    const handleFocus = () => {
+      fetchParts(false);
+      fetchMotorcycleModels();
+    };
 
     const handleVisibilityChange = () => {
-      if (!document.hidden) fetchParts(false);
+      if (!document.hidden) {
+        fetchParts(false);
+        fetchMotorcycleModels();
+      }
     };
 
     window.addEventListener('focus', handleFocus);
@@ -213,6 +331,7 @@ export default function AdminParts() {
 
     return () => {
       supabase.removeChannel(partsChannel);
+      supabase.removeChannel(motorcycleModelsChannel);
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
@@ -225,6 +344,35 @@ export default function AdminParts() {
     return () => clearTimeout(timeout);
   }, [toast]);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, categoryFilter, stockFilter, statusFilter, sortBy, pageSize]);
+
+  function showErrorPopup(message) {
+    const cleanMessage =
+      typeof message === 'string' && message.trim()
+        ? message
+        : 'Something went wrong. Please try again.';
+
+    setFetchError(cleanMessage);
+    setErrorPopup(cleanMessage);
+  }
+
+  function showFormError(message) {
+    const cleanMessage =
+      typeof message === 'string' && message.trim()
+        ? message
+        : 'Please check the form and try again.';
+
+    setFormError(cleanMessage);
+    setErrorPopup(cleanMessage);
+  }
+
+  function clearErrorPopup() {
+    setErrorPopup(null);
+    setFetchError('');
+  }
+
   async function fetchParts(showLoader = true) {
     if (showLoader) setLoading(true);
 
@@ -236,7 +384,9 @@ export default function AdminParts() {
       .order('name', { ascending: true });
 
     if (error) {
-      setFetchError(error.message || 'Failed to load parts.');
+      const message = error.message || 'Failed to load parts.';
+      setFetchError(message);
+      if (showLoader) setErrorPopup(message);
       setParts([]);
       setLoading(false);
       return;
@@ -245,6 +395,37 @@ export default function AdminParts() {
     setParts(data || []);
     setLastUpdated(new Date());
     setLoading(false);
+  }
+
+  async function fetchMotorcycleModels() {
+    const { data, error } = await supabase
+      .from('motorcycle_models')
+      .select('id, make, model')
+      .order('make', { ascending: true })
+      .order('model', { ascending: true });
+
+    if (error) {
+      console.log('Fetch motorcycle models error:', error.message);
+      setMotorcycleModels([]);
+      return;
+    }
+
+    const uniqueModels = [];
+    const seen = new Set();
+
+    (data || []).forEach((model) => {
+      const label = formatMotorcycleModel(model);
+
+      if (!label || seen.has(label.toLowerCase())) return;
+
+      seen.add(label.toLowerCase());
+      uniqueModels.push({
+        id: model.id,
+        label,
+      });
+    });
+
+    setMotorcycleModels(uniqueModels);
   }
 
   async function insertAuditLog(action, entityId, details = {}) {
@@ -259,8 +440,133 @@ export default function AdminParts() {
     });
   }
 
+  function sanitizeFileName(name) {
+    return String(name || 'image')
+      .toLowerCase()
+      .replace(/[^a-z0-9.]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+  }
+
+  async function uploadProductImageFile({ file, bucket, folder = 'uploads' }) {
+    if (!file) return '';
+
+    if (!file.type?.startsWith('image/')) {
+      throw new Error('Please upload an image file only.');
+    }
+
+    const maxBytes = MAX_IMAGE_SIZE_MB * 1024 * 1024;
+
+    if (file.size > maxBytes) {
+      throw new Error(`Image is too large. Maximum size is ${MAX_IMAGE_SIZE_MB}MB.`);
+    }
+
+    const cleanName = sanitizeFileName(file.name);
+    const fileExt = cleanName.includes('.') ? cleanName.split('.').pop() : 'jpg';
+    const filePath = `${folder}/${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}.${fileExt}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(bucket)
+      .upload(filePath, file, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: file.type,
+      });
+
+    if (uploadError) {
+      throw uploadError;
+    }
+
+    const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
+
+    if (!data?.publicUrl) {
+      throw new Error('Image uploaded, but public URL could not be generated.');
+    }
+
+    return data.publicUrl;
+  }
+
+  async function handleProductImageUpload(event) {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    setUploadingImage(true);
+    setFormError('');
+
+    try {
+      const publicUrl = await uploadProductImageFile({
+        file,
+        bucket: PRODUCT_IMAGE_BUCKET,
+        folder: 'products',
+      });
+
+      setForm((current) => ({
+        ...current,
+        image_url: publicUrl,
+      }));
+
+      setToast('✓ Product image uploaded');
+    } catch (err) {
+      showFormError(err.message || 'Failed to upload product image.');
+    } finally {
+      setUploadingImage(false);
+      event.target.value = '';
+    }
+  }
+
+  async function handleAiReferenceUpload(event) {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    setUploadingAiReference(true);
+    setFormError('');
+
+    try {
+      const publicUrl = await uploadProductImageFile({
+        file,
+        bucket: AI_REFERENCE_BUCKET,
+        folder: 'ai-references',
+      });
+
+      setForm((current) => ({
+        ...current,
+        ai_reference_url: publicUrl,
+      }));
+
+      setToast('✓ AI reference image uploaded');
+    } catch (err) {
+      showFormError(err.message || 'Failed to upload AI reference image.');
+    } finally {
+      setUploadingAiReference(false);
+      event.target.value = '';
+    }
+  }
+
   function handleChange(event) {
-    setForm({ ...form, [event.target.name]: event.target.value });
+    const { name, value, type, checked } = event.target;
+
+    const sanitizers = {
+      name: sanitizeProductName,
+      category: sanitizeCategory,
+      price: sanitizeMoneyInput,
+      stock_quantity: (input) => sanitizeIntegerInput(input, 6),
+      reorder_threshold: (input) => sanitizeIntegerInput(input, 4),
+      compatible_models: sanitizeCompatibleModels,
+      prompt_description: (input) => sanitizeAiText(input, 240),
+      install_area: (input) => sanitizeAiText(input, 220),
+      color: (input) => sanitizeBasicText(input, 40),
+      finish: (input) => sanitizeBasicText(input, 50),
+      material: (input) => sanitizeBasicText(input, 50),
+    };
+
+    setForm((current) => ({
+      ...current,
+      [name]: type === 'checkbox' ? checked : sanitizers[name] ? sanitizers[name](value) : value,
+    }));
   }
 
   function openAddPanel() {
@@ -303,16 +609,34 @@ export default function AdminParts() {
   }
 
   function validateForm() {
-    if (!form.name.trim()) return 'Part name is required.';
-
+    const name = sanitizeProductName(form.name).trim();
+    const category = sanitizeCategory(form.category).trim();
     const price = parseFloat(form.price);
-    if (Number.isNaN(price) || price < 0) return 'Please enter a valid price.';
-
     const stock = parseInt(form.stock_quantity, 10);
-    if (Number.isNaN(stock) || stock < 0) return 'Please enter a valid stock quantity.';
-
     const threshold = parseInt(form.reorder_threshold || '5', 10);
-    if (Number.isNaN(threshold) || threshold < 0) return 'Please enter a valid reorder threshold.';
+
+    if (!name) return 'Product name is required.';
+    if (name.length < 2) return 'Product name must be at least 2 characters.';
+
+    if (category && category.length < 2) {
+      return 'Category must be at least 2 characters or left blank.';
+    }
+
+    if (Number.isNaN(price) || price < 0) return 'Please enter a valid price.';
+    if (price > 99999999) return 'Price is too high. Please check the amount.';
+
+    if (Number.isNaN(stock) || stock < 0) return 'Please enter a valid stock quantity.';
+    if (stock > 999999) return 'Stock quantity is too high.';
+
+    if (Number.isNaN(threshold) || threshold < 0) {
+      return 'Please enter a valid reorder threshold.';
+    }
+
+    if (threshold > 9999) return 'Reorder threshold is too high.';
+
+    if (form.is_previewable !== false && !INSTALL_AREA_OPTIONS.includes(form.install_area)) {
+      return 'Please select a predefined install area for AI Preview.';
+    }
 
     return '';
   }
@@ -320,32 +644,41 @@ export default function AdminParts() {
   async function handleSubmit(event) {
     event.preventDefault();
 
-    setSaving(true);
     setFormError('');
 
     const validationError = validateForm();
 
     if (validationError) {
-      setFormError(validationError);
-      setSaving(false);
+      showFormError(validationError);
       return;
     }
 
     const stockQuantity = parseInt(form.stock_quantity, 10);
+    const cleanProductName = sanitizeProductName(form.name).trim();
+
+    const confirmed = window.confirm(
+      editingId
+        ? `Save changes to "${cleanProductName}"?`
+        : `Add "${cleanProductName}" as a new product?`
+    );
+
+    if (!confirmed) return;
+
+    setSaving(true);
 
     const payload = {
-      name: form.name.trim(),
-      category: form.category.trim() || null,
-      price: parseFloat(form.price),
-      reorder_threshold: parseInt(form.reorder_threshold || '5', 10),
+      name: cleanProductName,
+      category: sanitizeCategory(form.category).trim() || null,
+      price: parseFloat(sanitizeMoneyInput(form.price)),
+      reorder_threshold: parseInt(sanitizeIntegerInput(form.reorder_threshold || '5', 4), 10),
       compatible_models: parseCompatibleModels(form.compatible_models),
-      image_url: form.image_url.trim() || null,
-      ai_reference_url: form.ai_reference_url.trim() || null,
-      prompt_description: form.prompt_description.trim() || null,
-      install_area: form.install_area.trim() || null,
-      color: form.color.trim() || null,
-      finish: form.finish.trim() || null,
-      material: form.material.trim() || null,
+      image_url: form.image_url || null,
+      ai_reference_url: form.ai_reference_url || null,
+      prompt_description: sanitizeAiText(form.prompt_description, 240).trim() || null,
+      install_area: INSTALL_AREA_OPTIONS.includes(form.install_area) ? form.install_area : null,
+      color: sanitizeBasicText(form.color, 40).trim() || null,
+      finish: sanitizeBasicText(form.finish, 50).trim() || null,
+      material: sanitizeBasicText(form.material, 50).trim() || null,
       is_previewable: form.is_previewable !== false,
     };
 
@@ -371,8 +704,8 @@ export default function AdminParts() {
             quantity: difference,
             reason:
               stockQuantity > currentStock
-                ? 'Stock increased from edit part form'
-                : 'Stock decreased from edit part form',
+                ? 'Stock increased from edit product form'
+                : 'Stock decreased from edit product form',
           });
         }
 
@@ -401,7 +734,7 @@ export default function AdminParts() {
             partId: data.id,
             movementType: 'stock_in',
             quantity: stockQuantity,
-            reason: 'Initial stock when part was created',
+            reason: 'Initial stock when product was created',
           });
         }
 
@@ -417,7 +750,7 @@ export default function AdminParts() {
       closePanel();
       await fetchParts(false);
     } catch (err) {
-      setFormError(err.message || 'Failed to save part.');
+      showFormError(err.message || 'Failed to save product.');
     } finally {
       setSaving(false);
     }
@@ -441,7 +774,9 @@ export default function AdminParts() {
       setToast(active ? `✓ ${part.name} reactivated` : `${part.name} deactivated`);
       await fetchParts(false);
     } catch (err) {
-      setToast(`❌ ${err.message || 'Failed to update part.'}`);
+      const message = err.message || 'Failed to update product.';
+      setToast(`❌ ${message}`);
+      showErrorPopup(message);
     } finally {
       setTogglingId(null);
       setDeactivateConfirm(null);
@@ -478,8 +813,10 @@ export default function AdminParts() {
       setToast(`✓ Stock updated: ${currentStock} → ${qty}`);
       await fetchParts(false);
     } catch (err) {
+      const message = err.message || 'Failed to update stock.';
       setParts(previous);
-      setToast(`❌ ${err.message || 'Failed to update stock.'}`);
+      setToast(`❌ ${message}`);
+      showErrorPopup(message);
     } finally {
       setUpdatingStockId(null);
     }
@@ -488,6 +825,15 @@ export default function AdminParts() {
   function adjustStock(part, delta) {
     const currentStock = Number(part.stock_quantity) || 0;
     const next = Math.max(0, currentStock + delta);
+
+    if (next === currentStock) return;
+
+    const actionText = delta > 0 ? 'increase' : 'decrease';
+    const confirmed = window.confirm(
+      `Are you sure you want to ${actionText} stock for "${part.name}" from ${currentStock} to ${next}?`
+    );
+
+    if (!confirmed) return;
 
     updateStock(
       part.id,
@@ -504,9 +850,16 @@ export default function AdminParts() {
     if (raw === undefined) return;
 
     const qty = parseInt(raw, 10);
+    const currentStock = Number(part.stock_quantity) || 0;
 
-    if (!Number.isNaN(qty) && qty >= 0 && qty !== part.stock_quantity) {
-      updateStock(part.id, qty, 'Stock adjusted from manual stock input');
+    if (!Number.isNaN(qty) && qty >= 0 && qty !== currentStock) {
+      const confirmed = window.confirm(
+        `Update stock for "${part.name}" from ${currentStock} to ${qty}?`
+      );
+
+      if (confirmed) {
+        updateStock(part.id, qty, 'Stock adjusted from manual stock input');
+      }
     }
 
     setStockEdits((previous) => {
@@ -528,13 +881,49 @@ export default function AdminParts() {
 
   const categories = useMemo(() => ['all', ...allCategories], [allCategories]);
 
+  const selectedCompatibleModels = useMemo(
+    () => parseCompatibleModels(form.compatible_models),
+    [form.compatible_models]
+  );
+
+  function toggleCompatibleModel(modelLabel) {
+    const cleanModel = sanitizeCompatibleModel(modelLabel).trim();
+
+    if (!cleanModel) return;
+
+    setForm((current) => {
+      const currentModels = parseCompatibleModels(current.compatible_models);
+      const exists = currentModels.some(
+        (model) => model.toLowerCase() === cleanModel.toLowerCase()
+      );
+
+      const nextModels = exists
+        ? currentModels.filter((model) => model.toLowerCase() !== cleanModel.toLowerCase())
+        : [...currentModels, cleanModel];
+
+      return {
+        ...current,
+        compatible_models: nextModels.join(', '),
+      };
+    });
+  }
+
+  function clearCompatibleModels() {
+    setForm((current) => ({
+      ...current,
+      compatible_models: '',
+    }));
+  }
+
   function addCustomCategory() {
-    const name = newCatName.trim();
+    const name = sanitizeCategory(newCatName).trim();
 
     if (!name) return;
 
     if (allCategories.map((category) => category.toLowerCase()).includes(name.toLowerCase())) {
-      setToast(`Category "${name}" already exists`);
+      const message = `Category "${name}" already exists`;
+      setToast(message);
+      setErrorPopup(message);
       return;
     }
 
@@ -544,7 +933,7 @@ export default function AdminParts() {
   }
 
   async function renameCategory(oldName, newName) {
-    const trimmed = newName.trim();
+    const trimmed = sanitizeCategory(newName).trim();
 
     if (!trimmed || trimmed === oldName) {
       setRenamingCat(null);
@@ -575,7 +964,9 @@ export default function AdminParts() {
       setToast(`✓ Renamed "${oldName}" → "${trimmed}"`);
       await fetchParts(false);
     } catch (err) {
-      setToast(`❌ ${err.message || 'Failed to rename category.'}`);
+      const message = err.message || 'Failed to rename category.';
+      setToast(`❌ ${message}`);
+      showErrorPopup(message);
     } finally {
       setRenamingCat(null);
       setCatSaving(false);
@@ -583,7 +974,7 @@ export default function AdminParts() {
   }
 
   async function deleteCategory(name) {
-    if (!confirm(`Remove category "${name}" from all parts?`)) return;
+    if (!window.confirm(`Remove category "${name}" from all products?`)) return;
 
     setCatSaving(true);
 
@@ -606,7 +997,9 @@ export default function AdminParts() {
       setToast(`Removed category "${name}"`);
       await fetchParts(false);
     } catch (err) {
-      setToast(`❌ ${err.message || 'Failed to remove category.'}`);
+      const message = err.message || 'Failed to remove category.';
+      setToast(`❌ ${message}`);
+      showErrorPopup(message);
     } finally {
       setCatSaving(false);
     }
@@ -688,11 +1081,17 @@ export default function AdminParts() {
     return result;
   }, [parts, search, categoryFilter, stockFilter, statusFilter, sortBy]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredParts.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedParts = filteredParts.slice(startIndex, endIndex);
+
   function clearFilters() {
     setSearch('');
     setCategoryFilter('all');
     setStockFilter('all');
-    setStatusFilter('all');
+    setStatusFilter('active');
     setSortBy('name');
   }
 
@@ -700,55 +1099,48 @@ export default function AdminParts() {
     <div className="min-h-[calc(100vh-65px)] bg-gray-50 px-4 py-8 text-gray-900 dark:bg-dark-900 dark:text-white sm:px-6 lg:py-10">
       <div className="mx-auto max-w-7xl">
         {/* Header */}
-        <div className="mb-8 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
-          <div className="relative p-6 sm:p-8">
-            <div className="absolute -right-8 -top-14 h-36 w-36 rounded-full bg-primary-500/10 blur-3xl" />
-            <div className="absolute -bottom-16 left-10 h-36 w-36 rounded-full bg-accent-500/10 blur-3xl" />
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="mb-2 text-xs font-black uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
+              MotoFix Admin
+            </p>
+            <h1 className="text-3xl font-black tracking-tight text-gray-950 dark:text-white">
+              Products
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
+              Add products, upload images, update stock, and manage categories.
+            </p>
+            {lastUpdated && (
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                Last updated: {formatDateTime(lastUpdated)}
+              </p>
+            )}
+          </div>
 
-            <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <p className="mb-2 text-xs font-black uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
-                  MotoFix Admin
-                </p>
-                <h1 className="text-3xl font-black tracking-tight text-gray-950 dark:text-white md:text-4xl">
-                  Manage Parts
-                </h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
-                  Add parts, update stock, manage categories, and monitor low inventory.
-                </p>
-                {lastUpdated && (
-                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                    Last updated: {formatDateTime(lastUpdated)}
-                  </p>
-                )}
-              </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => fetchParts(false)}
+              className="rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
+            >
+              Refresh
+            </button>
 
-              <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={() => fetchParts(false)}
-                  className="rounded-2xl border border-gray-200 px-5 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
-                >
-                  Refresh
-                </button>
+            <button
+              type="button"
+              onClick={() => setCatPanelOpen(true)}
+              className="rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
+            >
+              Categories
+            </button>
 
-                <button
-                  type="button"
-                  onClick={() => setCatPanelOpen(true)}
-                  className="rounded-2xl border border-gray-200 px-5 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
-                >
-                  🏷 Categories
-                </button>
-
-                <button
-                  type="button"
-                  onClick={openAddPanel}
-                  className="rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 active:scale-[0.99]"
-                >
-                  + Add Part
-                </button>
-              </div>
-            </div>
+            <button
+              type="button"
+              onClick={openAddPanel}
+              className="rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 active:scale-[0.99]"
+            >
+              + Add Product
+            </button>
           </div>
         </div>
 
@@ -760,7 +1152,7 @@ export default function AdminParts() {
 
         {/* Stats */}
         <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <StatCard label="Active Parts" value={stats.total} icon="⚙️" tone="primary" />
+          <StatCard label="Active Products" value={stats.total} icon="⚙️" tone="primary" />
           <StatCard label="Low Stock" value={stats.lowStock} icon="⚠️" tone={stats.lowStock > 0 ? 'yellow' : 'default'} />
           <StatCard label="Out of Stock" value={stats.outOfStock} icon="🚫" tone={stats.outOfStock > 0 ? 'red' : 'default'} />
           <StatCard label="Inactive" value={stats.inactive} icon="🗄️" />
@@ -769,7 +1161,7 @@ export default function AdminParts() {
 
         {/* Filters */}
         <div className="mb-6 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800">
-          <div className="mb-4 flex flex-wrap gap-2">
+          <div className="mb-4 flex gap-2 overflow-x-auto pb-2">
             {categories.map((category) => {
               const active = categoryFilter === category;
 
@@ -793,9 +1185,9 @@ export default function AdminParts() {
           <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto_auto]">
             <input
               type="text"
-              placeholder="Search name, category, or compatible model..."
+              placeholder="Search product, category, or compatible model..."
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => setSearch(sanitizeBasicText(event.target.value, 80))}
               className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
             />
 
@@ -838,19 +1230,41 @@ export default function AdminParts() {
         </div>
 
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
-            Showing {filteredParts.length} of {parts.length} {parts.length === 1 ? 'part' : 'parts'}
-          </p>
+          <div>
+            <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
+              Showing {filteredParts.length === 0 ? 0 : startIndex + 1}–{Math.min(endIndex, filteredParts.length)} of {filteredParts.length} filtered products
+            </p>
+            <p className="mt-1 text-xs font-semibold text-gray-400 dark:text-gray-500">
+              Total records: {parts.length}
+            </p>
+          </div>
 
-          {(search || categoryFilter !== 'all' || stockFilter !== 'all' || statusFilter !== 'active' || sortBy !== 'name') && (
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="text-sm font-black text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-            >
-              Clear filters
-            </button>
-          )}
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              Per page
+              <select
+                value={pageSize}
+                onChange={(event) => setPageSize(Number(event.target.value))}
+                className="rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm font-black text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-800 dark:text-white"
+              >
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {(search || categoryFilter !== 'all' || stockFilter !== 'all' || statusFilter !== 'active' || sortBy !== 'name') && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="text-sm font-black text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Parts grid */}
@@ -862,12 +1276,12 @@ export default function AdminParts() {
               🔍
             </div>
             <h2 className="mb-2 text-xl font-black text-gray-950 dark:text-white">
-              No parts found
+              No products found
             </h2>
             <p className="mx-auto mb-6 max-w-md text-sm leading-6 text-gray-600 dark:text-gray-400">
               {parts.length === 0
-                ? 'No parts in inventory yet.'
-                : 'No parts match your current filters.'}
+                ? 'No products in inventory yet.'
+                : 'No products match your current filters.'}
             </p>
             {parts.length === 0 ? (
               <button
@@ -875,7 +1289,7 @@ export default function AdminParts() {
                 onClick={openAddPanel}
                 className="rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700"
               >
-                Add your first part →
+                Add your first product →
               </button>
             ) : (
               <button
@@ -888,8 +1302,9 @@ export default function AdminParts() {
             )}
           </div>
         ) : (
+          <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredParts.map((part) => {
+            {paginatedParts.map((part) => {
               const stockState = getStockState(part);
               const inactive = part.is_active === false;
               const stock = Number(part.stock_quantity) || 0;
@@ -950,8 +1365,8 @@ export default function AdminParts() {
                         }`}
                         title={
                           part.is_previewable === false
-                            ? 'This item is for shop/inventory only and will not appear in AI Preview'
-                            : 'This item can appear in AI Preview'
+                            ? 'This product is for shop/inventory only and will not appear in AI Preview'
+                            : 'This product can appear in AI Preview'
                         }
                       >
                         {part.is_previewable === false ? 'Shop Only' : 'Previewable'}
@@ -966,7 +1381,7 @@ export default function AdminParts() {
                           }`}
                           title={
                             part.ai_reference_url
-                              ? 'Has clean AI reference photo'
+                              ? 'Has clean AI reference image'
                               : 'No AI reference photo yet'
                           }
                         >
@@ -1042,12 +1457,13 @@ export default function AdminParts() {
                       </button>
 
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="numeric"
                         value={stockEdits[part.id] ?? stock}
                         onChange={(event) =>
                           setStockEdits((previous) => ({
                             ...previous,
-                            [part.id]: event.target.value,
+                            [part.id]: sanitizeIntegerInput(event.target.value, 6),
                           }))
                         }
                         onBlur={() => commitStockInput(part)}
@@ -1081,7 +1497,10 @@ export default function AdminParts() {
                     {inactive ? (
                       <button
                         type="button"
-                        onClick={() => setPartActive(part, true)}
+                        onClick={() => {
+                          const confirmed = window.confirm(`Reactivate "${part.name}"?`);
+                          if (confirmed) setPartActive(part, true);
+                        }}
                         disabled={togglingId === part.id}
                         className="rounded-2xl bg-green-50 px-4 py-2 text-xs font-black text-green-700 ring-1 ring-green-200 transition hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25 dark:hover:bg-green-500/20"
                       >
@@ -1102,8 +1521,87 @@ export default function AdminParts() {
               );
             })}
           </div>
+
+          <div className="mt-6 flex flex-col gap-3 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm font-bold text-gray-500 dark:text-gray-400">
+              Page {safeCurrentPage} of {totalPages}
+            </p>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPage(1)}
+                disabled={safeCurrentPage <= 1}
+                className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+              >
+                First
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage((page) => Math.max(page - 1, 1))}
+                disabled={safeCurrentPage <= 1}
+                className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+              >
+                Prev
+              </button>
+
+              <span className="rounded-2xl bg-gray-100 px-4 py-2 text-sm font-black text-gray-700 dark:bg-dark-900 dark:text-gray-300">
+                {safeCurrentPage} / {totalPages}
+              </span>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage((page) => Math.min(page + 1, totalPages))}
+                disabled={safeCurrentPage >= totalPages}
+                className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+              >
+                Next
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={safeCurrentPage >= totalPages}
+                className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+              >
+                Last
+              </button>
+            </div>
+          </div>
+          </>
         )}
       </div>
+
+      {/* Error Popup */}
+      {errorPopup && (
+        <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-md rounded-3xl border border-red-200 bg-white p-6 shadow-2xl dark:border-red-500/30 dark:bg-dark-800">
+            <div className="mb-4 flex items-start gap-3">
+              <div className="grid h-11 w-11 flex-shrink-0 place-items-center rounded-2xl bg-red-50 text-2xl ring-1 ring-red-100 dark:bg-red-500/10 dark:ring-red-500/25">
+                ⚠️
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <p className="text-lg font-black text-gray-950 dark:text-white">
+                  Action Failed
+                </p>
+                <p className="mt-2 whitespace-pre-wrap text-sm font-semibold leading-6 text-red-700 dark:text-red-300">
+                  {errorPopup}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={clearErrorPopup}
+              className="w-full rounded-2xl bg-red-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-red-600/20 transition hover:bg-red-700"
+            >
+              Okay
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Toast */}
       {toast && (
@@ -1122,7 +1620,7 @@ export default function AdminParts() {
 
           <div className="relative w-full max-w-sm rounded-3xl border border-gray-200 bg-white p-6 shadow-2xl dark:border-dark-700 dark:bg-dark-800">
             <h3 className="mb-2 text-lg font-black text-gray-950 dark:text-white">
-              Deactivate Part?
+              Deactivate Product?
             </h3>
             <p className="mb-6 text-sm leading-6 text-gray-600 dark:text-gray-400">
               <span className="font-black text-gray-950 dark:text-white">
@@ -1168,7 +1666,7 @@ export default function AdminParts() {
                   Manage Categories
                 </h2>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  Rename, remove, or add inventory categories.
+                  Rename, remove, or add product categories.
                 </p>
               </div>
 
@@ -1190,7 +1688,7 @@ export default function AdminParts() {
                   <input
                     type="text"
                     value={newCatName}
-                    onChange={(event) => setNewCatName(event.target.value)}
+                    onChange={(event) => setNewCatName(sanitizeCategory(event.target.value))}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter') addCustomCategory();
                     }}
@@ -1210,7 +1708,7 @@ export default function AdminParts() {
 
               <div>
                 <p className="mb-3 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                  All Categories ({allCategories.length})
+                  Product Categories ({allCategories.length})
                 </p>
 
                 {allCategories.length === 0 ? (
@@ -1239,7 +1737,7 @@ export default function AdminParts() {
                                 onChange={(event) =>
                                   setRenamingCat({
                                     ...renamingCat,
-                                    value: event.target.value,
+                                    value: sanitizeCategory(event.target.value),
                                   })
                                 }
                                 onKeyDown={(event) => {
@@ -1273,7 +1771,7 @@ export default function AdminParts() {
                                   {category}
                                 </p>
                                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                  {partCount} {partCount === 1 ? 'part' : 'parts'}
+                                  {partCount} {partCount === 1 ? 'product' : 'products'}
                                 </p>
                               </div>
 
@@ -1310,7 +1808,7 @@ export default function AdminParts() {
         </div>
       )}
 
-      {/* Add/Edit Part */}
+      {/* Add/Edit Product */}
       {panelOpen && (
         <div className="fixed inset-0 z-[100] flex justify-end" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closePanel} />
@@ -1318,7 +1816,7 @@ export default function AdminParts() {
           <div className="relative h-full w-full overflow-y-auto bg-white shadow-2xl dark:bg-dark-800 sm:max-w-lg">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4 dark:border-dark-700 dark:bg-dark-800">
               <h2 className="text-lg font-black text-gray-950 dark:text-white">
-                {editingId ? 'Edit Part' : 'Add New Part'}
+                {editingId ? 'Edit Product' : 'Add New Product'}
               </h2>
 
               <button
@@ -1339,11 +1837,11 @@ export default function AdminParts() {
 
               <div>
                 <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                  Image URL
+                  Product Image
                 </label>
 
                 <div className="flex items-center gap-3">
-                  <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
+                  <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
                     {form.image_url ? (
                       <img
                         src={form.image_url}
@@ -1360,13 +1858,21 @@ export default function AdminParts() {
                     )}
                   </div>
 
-                  <input
-                    name="image_url"
-                    value={form.image_url}
-                    onChange={handleChange}
-                    placeholder="https://..."
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
-                  />
+                  <div className="min-w-0 flex-1">
+                    <label className="mb-2 inline-flex cursor-pointer items-center justify-center rounded-2xl bg-primary-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700">
+                      {uploadingImage ? 'Uploading...' : 'Upload Product Image'}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleProductImageUpload}
+                        disabled={uploadingImage || saving}
+                        className="hidden"
+                      />
+                    </label>
+                    <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                      Uploads directly to Supabase Storage bucket: <span className="font-black">{PRODUCT_IMAGE_BUCKET}</span>.
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -1406,11 +1912,11 @@ export default function AdminParts() {
                 <>
                   <div>
                     <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                      AI Reference URL
+                      AI Reference Image
                     </label>
 
                 <div className="flex items-center gap-3">
-                  <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
+                  <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
                     {form.ai_reference_url ? (
                       <img
                         src={form.ai_reference_url}
@@ -1427,17 +1933,22 @@ export default function AdminParts() {
                     )}
                   </div>
 
-                  <input
-                    name="ai_reference_url"
-                    value={form.ai_reference_url}
-                    onChange={handleChange}
-                    placeholder="https://... clean cropped AI reference photo"
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
-                  />
+                  <div className="min-w-0 flex-1">
+                    <label className="mb-2 inline-flex cursor-pointer items-center justify-center rounded-2xl bg-accent-500 px-4 py-3 text-sm font-black text-white shadow-lg shadow-accent-500/20 transition hover:bg-accent-600">
+                      {uploadingAiReference ? 'Uploading...' : 'Upload AI Reference'}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleAiReferenceUpload}
+                        disabled={uploadingAiReference || saving}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
                 </div>
 
                 <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                  Use one clean photo of the exact part only. For wheels, use one cropped side-view rim, not a full photo with two wheels or background boxes.
+                  Uploads directly to Supabase Storage bucket: <span className="font-black">{AI_REFERENCE_BUCKET}</span>. Use one clean cropped photo of the exact product only.
                 </p>
               </div>
 
@@ -1447,17 +1958,41 @@ export default function AdminParts() {
                 value={form.prompt_description}
                 onChange={handleChange}
                 placeholder="e.g. gold Enkei 3-spoke mags with glossy metallic alloy finish"
-                helper="Describe the exact shape, material, color, and finish. This helps the AI replace the real part instead of only recoloring it."
+                helper="Describe the exact shape, material, color, and finish. This helps the AI replace the real product instead of only recoloring it."
               />
 
-              <TextInput
-                label="Install Area"
-                name="install_area"
-                value={form.install_area}
-                onChange={handleChange}
-                placeholder="e.g. front and rear wheel/rim area only"
-                helper="Tell the AI where this part should be installed on the motorcycle."
-              />
+              <div>
+                <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                  Install Area
+                </label>
+
+                <select
+                  name="install_area"
+                  value={
+                    INSTALL_AREA_OPTIONS.includes(form.install_area)
+                      ? form.install_area
+                      : ''
+                  }
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      install_area: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                >
+                  <option value="">— Select install area —</option>
+                  {INSTALL_AREA_OPTIONS.map((area) => (
+                    <option key={area} value={area}>
+                      {area}
+                    </option>
+                  ))}
+                </select>
+
+                <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                  Choose a predefined install area so AI Preview uses consistent placement instructions.
+                </p>
+              </div>
 
               <div className="grid grid-cols-3 gap-4">
                     <TextInput
@@ -1488,12 +2023,14 @@ export default function AdminParts() {
               )}
 
               <TextInput
-                label="Part Name *"
+                label="Product Name *"
                 name="name"
                 value={form.name}
                 onChange={handleChange}
                 required
+                maxLength={100}
                 placeholder="e.g. Brake Pad Set"
+                helper="Allowed: letters, numbers, spaces, ñ, and basic symbols only."
               />
 
               <div>
@@ -1555,43 +2092,98 @@ export default function AdminParts() {
                 <TextInput
                   label="Price *"
                   name="price"
-                  type="number"
-                  step="0.01"
-                  min="0"
+                  type="text"
+                  inputMode="decimal"
                   value={form.price}
                   onChange={handleChange}
                   required
+                  placeholder="0.00"
                 />
 
                 <TextInput
                   label="Stock Quantity *"
                   name="stock_quantity"
-                  type="number"
-                  min="0"
+                  type="text"
+                  inputMode="numeric"
                   value={form.stock_quantity}
                   onChange={handleChange}
                   required
+                  placeholder="0"
                 />
               </div>
 
               <TextInput
                 label="Reorder Threshold"
                 name="reorder_threshold"
-                type="number"
-                min="0"
+                type="text"
+                inputMode="numeric"
                 value={form.reorder_threshold}
                 onChange={handleChange}
-                helper="Parts at or below this quantity are flagged as low stock."
+                helper="Products at or below this quantity are flagged as low stock. Numbers only."
               />
 
-              <TextInput
-                label="Compatible Models"
-                name="compatible_models"
-                value={form.compatible_models}
-                onChange={handleChange}
-                placeholder="Yamaha Aerox 155, Honda Click 125i"
-                helper="Separate each motorcycle model with a comma."
-              />
+              <div>
+                <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                  Compatible Models
+                </label>
+
+                <select
+                  value=""
+                  onChange={(event) => {
+                    if (!event.target.value) return;
+                    toggleCompatibleModel(event.target.value);
+                  }}
+                  className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                >
+                  <option value="">
+                    {motorcycleModels.length > 0
+                      ? '— Select compatible motorcycle model —'
+                      : 'No motorcycle models found'}
+                  </option>
+                  {motorcycleModels.map((model) => {
+                    const selected = selectedCompatibleModels.some(
+                      (item) => item.toLowerCase() === model.label.toLowerCase()
+                    );
+
+                    return (
+                      <option key={model.id || model.label} value={model.label}>
+                        {selected ? '✓ ' : ''}{model.label}
+                      </option>
+                    );
+                  })}
+                </select>
+
+                <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                  Choose from predefined motorcycle models. Click a selected model below to remove it.
+                </p>
+
+                {selectedCompatibleModels.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {selectedCompatibleModels.map((model) => (
+                      <button
+                        key={model}
+                        type="button"
+                        onClick={() => toggleCompatibleModel(model)}
+                        className="rounded-full bg-primary-100 px-3 py-1.5 text-xs font-black text-primary-700 ring-1 ring-primary-200 transition hover:bg-primary-200 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25"
+                      >
+                        {model} ✕
+                      </button>
+                    ))}
+
+                    <button
+                      type="button"
+                      onClick={clearCompatibleModels}
+                      className="rounded-full bg-red-50 px-3 py-1.5 text-xs font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-3 rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 text-center text-xs font-semibold text-gray-500 dark:border-dark-700 dark:bg-dark-900/70 dark:text-gray-400">
+                    No compatible model selected yet.
+                  </div>
+                )}
+              </div>
 
               <div className="sticky bottom-0 flex gap-3 border-t border-gray-200 bg-white pt-5 dark:border-dark-700 dark:bg-dark-800">
                 <button
@@ -1607,7 +2199,7 @@ export default function AdminParts() {
                   disabled={saving}
                   className="flex-1 rounded-2xl bg-primary-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {saving ? 'Saving...' : editingId ? 'Save Changes' : '+ Add Part'}
+                  {saving ? 'Saving...' : editingId ? 'Save Changes' : '+ Add Product'}
                 </button>
               </div>
             </form>

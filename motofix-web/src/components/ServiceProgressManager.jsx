@@ -1,434 +1,1103 @@
+// Place this file at:
+// motofix-web/src/components/ServiceProgressManager.jsx
+//
+// Simple service progress manager.
+// Includes:
+// - progress bar only, no slider
+// - service progress status buttons
+// - add parts used during scheduled service
+// - deducts stock only when parts are actually used
+// - restores deducted parts when the appointment is cancelled
+
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { adjustPartStock } from '../lib/inventory';
 
-const STATUS_OPTIONS = [
+const STATUS_STEPS = [
   {
-    value: 'confirmed',
-    label: 'Booking Confirmed',
-    progress: 25,
-    description: 'Your booking has been confirmed by MotoFix.',
+    id: 'confirmed',
+    label: 'Confirmed',
+    percent: 25,
+    icon: '✅',
+    description: 'The service booking has been confirmed.',
   },
   {
-    value: 'in_progress',
-    label: 'Service Started',
-    progress: 40,
-    description: 'The assigned mechanic has started working on your motorcycle.',
+    id: 'in_progress',
+    label: 'In Progress',
+    percent: 40,
+    icon: '🔧',
+    description: 'The motorcycle service has started.',
   },
   {
-    value: 'inspection',
-    label: 'Motorcycle Inspection',
-    progress: 50,
-    description: 'The mechanic is inspecting your motorcycle and checking the reported issue.',
+    id: 'inspection',
+    label: 'Inspection',
+    percent: 50,
+    icon: '🔍',
+    description: 'The motorcycle is being inspected.',
   },
   {
-    value: 'repairing',
-    label: 'Repair in Progress',
-    progress: 70,
-    description: 'Repair or maintenance work is currently being performed.',
+    id: 'repairing',
+    label: 'Repairing',
+    percent: 70,
+    icon: '🛠️',
+    description: 'The motorcycle is currently being repaired.',
   },
   {
-    value: 'quality_check',
+    id: 'quality_check',
     label: 'Quality Check',
-    progress: 85,
-    description: 'The service is being checked before completion.',
+    percent: 85,
+    icon: '☑️',
+    description: 'The service is being checked before release.',
   },
   {
-    value: 'ready_for_pickup',
+    id: 'ready_for_pickup',
     label: 'Ready for Pickup',
-    progress: 95,
-    description: 'Your motorcycle is ready for pickup.',
+    percent: 95,
+    icon: '🏁',
+    description: 'The motorcycle is ready for pickup.',
   },
   {
-    value: 'completed',
-    label: 'Service Completed',
-    progress: 100,
-    description: 'The service has been completed.',
-  },
-  {
-    value: 'note',
-    label: 'Progress Note Only',
-    progress: 0,
-    description: 'Add a timeline note without changing the booking status.',
+    id: 'completed',
+    label: 'Completed',
+    percent: 100,
+    icon: '🎉',
+    description: 'The service booking has been completed.',
   },
 ];
 
-function formatDateTime(value) {
-  if (!value) return '—';
-
-  return new Date(value).toLocaleString('en-PH', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
+const DEFAULT_PROGRESS_BY_STATUS = {
+  pending: 10,
+  confirmed: 25,
+  in_progress: 40,
+  inspection: 50,
+  repairing: 70,
+  quality_check: 85,
+  ready_for_pickup: 95,
+  completed: 100,
+  cancelled: 0,
+  rejected: 0,
+  no_show: 0,
+};
 
 function getStatusLabel(status) {
-  return String(status || 'note')
+  return String(status || 'pending')
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function getTimelineIcon(status) {
-  const icons = {
-    pending: '📝',
-    confirmed: '✅',
-    in_progress: '🔧',
-    inspection: '🔍',
-    repairing: '🛠️',
-    quality_check: '☑️',
-    ready_for_pickup: '🏁',
-    completed: '🎉',
-    cancelled: '✕',
-    rejected: '⚠️',
-    no_show: '🚫',
-    note: '💬',
-  };
-
-  return icons[status] || '•';
+function getStepPercent(status) {
+  return DEFAULT_PROGRESS_BY_STATUS[String(status || '').toLowerCase()] ?? 10;
 }
 
-function normalizeMetadata(metadata) {
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
-    return {};
+function clampPercent(value) {
+  return Math.max(0, Math.min(100, Number(value) || 0));
+}
+
+function formatPeso(value) {
+  const amount = Number(value) || 0;
+
+  return `₱${amount.toLocaleString('en-PH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function safeText(value) {
+  return String(value || '').toLowerCase().trim();
+}
+
+function getLatestProgress(events, bookingStatus) {
+  const latestEvent = events?.length ? events[events.length - 1] : null;
+
+  return clampPercent(
+    latestEvent?.progress_percent ||
+      getStepPercent(bookingStatus)
+  );
+}
+
+function normalizePartsUsed(value) {
+  if (Array.isArray(value)) return value;
+
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
   }
 
-  return metadata;
+  return [];
 }
 
-export default function ServiceProgressManager({
-  booking,
-  bookingId,
-  onUpdated,
-  compact = false,
-}) {
-  const targetBookingId = bookingId || booking?.id;
+function getInitialPartsUsed(booking) {
+  const partsUsed = normalizePartsUsed(booking?.parts_used);
+  if (partsUsed.length > 0) return partsUsed;
 
-  const [events, setEvents] = useState([]);
-  const [status, setStatus] = useState('inspection');
-  const [title, setTitle] = useState('Motorcycle Inspection');
-  const [description, setDescription] = useState(
-    'The mechanic is inspecting your motorcycle and checking the reported issue.'
+  return normalizePartsUsed(booking?.products);
+}
+
+function getServiceTotal(booking) {
+  return (
+    (Number(booking?.services?.base_price) || 0) +
+    (Number(booking?.services?.labor_cost) || 0)
   );
-  const [progressPercent, setProgressPercent] = useState(50);
-  const [photoUrl, setPhotoUrl] = useState('');
+}
 
-  const [loading, setLoading] = useState(false);
-  const [eventsLoading, setEventsLoading] = useState(false);
+function getPartLineTotal(item) {
+  return (Number(item?.unit_price ?? item?.price) || 0) * (Number(item?.quantity) || 1);
+}
+
+function getPartsTotal(parts = []) {
+  return parts.reduce((sum, item) => sum + getPartLineTotal(item), 0);
+}
+
+function makePartPayload(part, quantity = 1, stockDeducted = true) {
+  const qty = Math.max(1, Number(quantity) || 1);
+  const price = Number(part.price ?? part.unit_price) || 0;
+
+  return {
+    line_id: `${part.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    id: part.id,
+    part_id: part.part_id || part.id,
+    name: part.name || 'Product',
+    category: part.category || 'General',
+    quantity: qty,
+    unit_price: price,
+    price,
+    subtotal: price * qty,
+    stock_deducted: stockDeducted,
+  };
+}
+
+function normalizePartLine(item) {
+  const qty = Math.max(1, Number(item?.quantity) || 1);
+  const price = Number(item?.unit_price ?? item?.price) || 0;
+
+  return {
+    ...item,
+    line_id: item.line_id || `${item.id || item.part_id}-${Math.random().toString(36).slice(2, 9)}`,
+    id: item.id || item.part_id,
+    part_id: item.part_id || item.id,
+    name: item.name || 'Product',
+    category: item.category || 'General',
+    quantity: qty,
+    unit_price: price,
+    price,
+    subtotal: price * qty,
+    stock_deducted: item.stock_deducted === true,
+  };
+}
+
+function ProductImage({ product }) {
+  if (product?.image_url) {
+    return (
+      <img
+        src={product.image_url}
+        alt={product.name || 'Product'}
+        className="h-12 w-12 rounded-2xl object-cover ring-1 ring-gray-200 dark:ring-dark-700"
+      />
+    );
+  }
+
+  return (
+    <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gray-100 text-xl ring-1 ring-gray-200 dark:bg-dark-900 dark:ring-dark-700">
+      📦
+    </div>
+  );
+}
+
+export default function ServiceProgressManager({ booking, onUpdated, compact = false }) {
+  const [events, setEvents] = useState([]);
+  const [parts, setParts] = useState([]);
+  const [partsUsed, setPartsUsed] = useState(() =>
+    getInitialPartsUsed(booking).map(normalizePartLine)
+  );
+
+  const [partSearch, setPartSearch] = useState('');
+  const [note, setNote] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [partsLoading, setPartsLoading] = useState(true);
+  const [savingStatus, setSavingStatus] = useState('');
+  const [savingPart, setSavingPart] = useState('');
   const [message, setMessage] = useState('');
-  const [messageType, setMessageType] = useState('success');
+
+  const bookingId = booking?.id;
+  const serviceTotal = getServiceTotal(booking);
+  const partsTotal = getPartsTotal(partsUsed);
+  const totalBill = serviceTotal + partsTotal;
+  const hasDeductedParts = partsUsed.some((item) => item.stock_deducted === true);
 
   useEffect(() => {
-    if (!targetBookingId) return;
+    setPartsUsed(getInitialPartsUsed(booking).map(normalizePartLine));
+  }, [booking?.id, booking?.parts_used, booking?.products]);
+
+  useEffect(() => {
+    if (!bookingId) return;
 
     fetchEvents();
+    fetchParts();
 
     const channel = supabase
-      .channel(`service-progress-manager-${targetBookingId}`)
+      .channel(`simple-service-progress-${bookingId}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'service_progress_events',
-          filter: `booking_id=eq.${targetBookingId}`,
+          filter: `booking_id=eq.${bookingId}`,
         },
         () => fetchEvents(false)
       )
       .subscribe();
 
+    const partsChannel = supabase
+      .channel('service-progress-parts')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'parts',
+        },
+        () => fetchParts(false)
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(channel);
+      supabase.removeChannel(partsChannel);
     };
-  }, [targetBookingId]);
-
-  const selectedOption = useMemo(
-    () => STATUS_OPTIONS.find((option) => option.value === status),
-    [status]
-  );
-
-  const latestEvent = events[events.length - 1];
+  }, [bookingId]);
 
   async function fetchEvents(showLoader = true) {
-    if (!targetBookingId) return;
+    if (!bookingId) return;
 
-    if (showLoader) setEventsLoading(true);
+    if (showLoader) setLoading(true);
 
     const { data, error } = await supabase
       .from('service_progress_events')
       .select('*')
-      .eq('booking_id', targetBookingId)
+      .eq('booking_id', bookingId)
       .order('created_at', { ascending: true });
 
     if (error) {
-      console.warn('Failed to fetch service progress events:', error.message);
+      setMessage(`Error: ${error.message || 'Failed to load progress events.'}`);
       setEvents([]);
     } else {
+      setMessage('');
       setEvents(data || []);
     }
 
-    setEventsLoading(false);
+    setLoading(false);
   }
 
-  function handleStatusChange(nextStatus) {
-    const option = STATUS_OPTIONS.find((item) => item.value === nextStatus);
+  async function fetchParts(showLoader = true) {
+    if (showLoader) setPartsLoading(true);
 
-    setStatus(nextStatus);
+    const { data, error } = await supabase
+      .from('parts')
+      .select('id, name, category, image_url, price, stock_quantity, is_active')
+      .eq('is_active', true)
+      .order('name', { ascending: true })
+      .limit(500);
 
-    if (option) {
-      setTitle(option.label);
-      setDescription(option.description);
-
-      if (nextStatus !== 'note') {
-        setProgressPercent(option.progress);
-      } else {
-        setProgressPercent(Number(latestEvent?.progress_percent) || 0);
-      }
+    if (error) {
+      console.warn('Failed to load parts:', error.message);
+      setParts([]);
+    } else {
+      setParts(data || []);
     }
+
+    setPartsLoading(false);
   }
 
-  async function handleSubmit(event) {
-    event.preventDefault();
+  const currentProgress = useMemo(
+    () => getLatestProgress(events, booking?.status),
+    [events, booking?.status]
+  );
 
-    if (!targetBookingId || loading) return;
+  const currentStatus = String(booking?.status || 'pending').toLowerCase();
 
-    if (!status) {
-      setMessageType('error');
-      setMessage('Please select a progress status.');
+  const filteredParts = useMemo(() => {
+    const query = safeText(partSearch);
+
+    if (!query) return parts.slice(0, 8);
+
+    return parts
+      .filter((part) => {
+        const haystack = [
+          part.name,
+          part.category,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+
+        return haystack.includes(query);
+      })
+      .slice(0, 12);
+  }, [parts, partSearch]);
+
+  function requireCustomerId() {
+    if (booking?.customer_id) return booking.customer_id;
+
+    throw new Error(
+      'This booking has no customer_id. Service progress is only for registered scheduled bookings. Walk-ins should be processed in the Walk-in Queue.'
+    );
+  }
+
+  async function getCurrentUserId() {
+    const { data } = await supabase.auth.getUser();
+    return data?.user?.id || null;
+  }
+
+  async function updateBookingParts(nextParts, extraPayload = {}) {
+    const normalized = nextParts.map(normalizePartLine);
+    const nextPartsTotal = getPartsTotal(normalized);
+    const nextTotal = serviceTotal + nextPartsTotal;
+
+    const payload = {
+      parts_used: normalized,
+      products: normalized,
+      parts_total: nextPartsTotal,
+      product_total: nextPartsTotal,
+      total_amount: nextTotal,
+      updated_at: new Date().toISOString(),
+      ...extraPayload,
+    };
+
+    const { error } = await supabase
+      .from('bookings')
+      .update(payload)
+      .eq('id', bookingId);
+
+    if (!error) {
+      setPartsUsed(normalized);
+      onUpdated?.();
       return;
     }
 
-    if (!title.trim()) {
-      setMessageType('error');
-      setMessage('Please enter a progress title.');
+    const message = String(error.message || '').toLowerCase();
+
+    if (
+      message.includes('schema cache') ||
+      message.includes('column') ||
+      message.includes('parts_used') ||
+      message.includes('products') ||
+      message.includes('parts_total') ||
+      message.includes('product_total') ||
+      message.includes('parts_stock_deducted_at')
+    ) {
+      throw new Error(
+        'Missing booking inventory columns. Run the inventory_restore_tracking_cancel_flags.sql file first.'
+      );
+    }
+
+    throw error;
+  }
+
+  async function insertProgressEvent(step) {
+    const cleanNote = note.trim();
+    const customerId = requireCustomerId();
+
+    const basePayload = {
+      booking_id: bookingId,
+      customer_id: customerId,
+      mechanic_id: booking?.mechanic_id || null,
+      service_id: booking?.service_id || null,
+      status: step.id,
+      title: step.label,
+      description: cleanNote || step.description,
+      progress_percent: step.percent,
+    };
+
+    const { error } = await supabase.from('service_progress_events').insert({
+      ...basePayload,
+      event_type: 'status_update',
+    });
+
+    if (!error) return;
+
+    const message = String(error.message || '').toLowerCase();
+
+    if (
+      message.includes('event_type') ||
+      message.includes('mechanic_id') ||
+      message.includes('service_id') ||
+      message.includes('schema cache') ||
+      message.includes('column')
+    ) {
+      const fallback = {
+        booking_id: bookingId,
+        customer_id: customerId,
+        status: step.id,
+        title: step.label,
+        description: cleanNote || step.description,
+        progress_percent: step.percent,
+      };
+
+      const retry = await supabase.from('service_progress_events').insert(fallback);
+      if (retry.error) throw retry.error;
       return;
     }
 
-    const progress = Math.max(0, Math.min(100, Number(progressPercent) || 0));
+    throw error;
+  }
 
-    setLoading(true);
+  async function updateProgress(step) {
+    if (!bookingId || !step?.id) return;
+
+    const confirmed = window.confirm(
+      `Update service progress to "${step.label}"?\n\nProgress will be set to ${step.percent}%.`
+    );
+
+    if (!confirmed) return;
+
+    setSavingStatus(step.id);
     setMessage('');
 
     try {
-      const { error } = await supabase.rpc('update_booking_service_progress', {
-        p_booking_id: targetBookingId,
-        p_status: status,
-        p_title: title.trim(),
-        p_description: description.trim() || null,
-        p_progress_percent: progress,
-        p_event_type: status === 'note' ? 'mechanic_update' : 'mechanic_update',
-        p_photo_url: photoUrl.trim() || null,
-        p_metadata: normalizeMetadata({
-          source: 'ServiceProgressManager.jsx',
-          compact,
-          selected_option_label: selectedOption?.label || null,
-        }),
-      });
+      requireCustomerId();
 
-      if (error) throw error;
+      const { error: bookingError } = await supabase
+        .from('bookings')
+        .update({
+          status: step.id,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', bookingId);
 
-      setMessageType('success');
-      setMessage('Service progress updated successfully.');
-      setPhotoUrl('');
+      if (bookingError) throw bookingError;
 
+      await insertProgressEvent(step);
+
+      setNote('');
+      setMessage(`Progress updated to ${step.label}.`);
       await fetchEvents(false);
-      if (typeof onUpdated === 'function') await onUpdated();
-    } catch (error) {
-      console.error('Service progress update error:', error);
-      setMessageType('error');
-      setMessage(error.message || 'Failed to update service progress.');
+      onUpdated?.();
+    } catch (err) {
+      setMessage(`Error: ${err.message || 'Failed to update progress.'}`);
     } finally {
-      setLoading(false);
+      setSavingStatus('');
     }
   }
 
-  return (
-    <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
-      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">
-            Service Progress Manager
-          </p>
-          <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-            Update the customer&apos;s service progress timeline.
-          </p>
-        </div>
+  async function addPartUsed(part) {
+    if (!bookingId || !part?.id) return;
 
-        {latestEvent && (
-          <span className="rounded-full bg-primary-50 px-3 py-1 text-xs font-black text-primary-700 ring-1 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25">
-            Latest: {Number(latestEvent.progress_percent) || 0}%
-          </span>
-        )}
+    const confirmed = window.confirm(
+      `Add "${part.name}" as part used and deduct 1 from inventory?`
+    );
+
+    if (!confirmed) return;
+
+    setSavingPart(part.id);
+    setMessage('');
+
+    try {
+      const existingActualIndex = partsUsed.findIndex(
+        (item) => item.id === part.id && item.stock_deducted === true
+      );
+
+      let nextParts = [];
+
+      if (existingActualIndex >= 0) {
+        nextParts = partsUsed.map((item, index) => {
+          if (index !== existingActualIndex) return item;
+
+          const nextQty = (Number(item.quantity) || 1) + 1;
+          const unitPrice = Number(item.unit_price ?? item.price) || 0;
+
+          return {
+            ...item,
+            quantity: nextQty,
+            subtotal: unitPrice * nextQty,
+            stock_deducted: true,
+          };
+        });
+      } else {
+        nextParts = [...partsUsed, makePartPayload(part, 1, true)];
+      }
+
+      await adjustPartStock({
+        partId: part.id,
+        movementType: 'stock_out',
+        quantity: 1,
+        reason: `Part used in scheduled booking ${String(bookingId).slice(0, 8).toUpperCase()}`,
+        relatedOrderId: null,
+      });
+
+      await updateBookingParts(nextParts, {
+        parts_stock_deducted_at: booking?.parts_stock_deducted_at || new Date().toISOString(),
+      });
+
+      await supabase.from('audit_logs').insert({
+        action: 'ADD_BOOKING_PART_USED',
+        entity: 'bookings',
+        entity_id: bookingId,
+        performed_by: await getCurrentUserId(),
+        details: {
+          part_id: part.id,
+          part_name: part.name,
+          quantity: 1,
+          movement_type: 'stock_out',
+        },
+      });
+
+      setPartSearch('');
+      setMessage(`${part.name} added to parts used and deducted from inventory.`);
+      await fetchParts(false);
+    } catch (err) {
+      setMessage(`Error: ${err.message || 'Failed to add part used.'}`);
+    } finally {
+      setSavingPart('');
+    }
+  }
+
+  async function deductEstimatedPart(index) {
+    const line = partsUsed[index];
+    if (!line || line.stock_deducted) return;
+
+    const quantity = Number(line.quantity) || 1;
+
+    const confirmed = window.confirm(
+      `Deduct ${quantity} x "${line.name}" from inventory as actually used?`
+    );
+
+    if (!confirmed) return;
+
+    setSavingPart(line.line_id || line.id);
+    setMessage('');
+
+    try {
+      await adjustPartStock({
+        partId: line.id || line.part_id,
+        movementType: 'stock_out',
+        quantity,
+        reason: `Estimated part confirmed as used in booking ${String(bookingId).slice(0, 8).toUpperCase()}`,
+        relatedOrderId: null,
+      });
+
+      const nextParts = partsUsed.map((item, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...item,
+              stock_deducted: true,
+              subtotal: getPartLineTotal(item),
+            }
+          : item
+      );
+
+      await updateBookingParts(nextParts, {
+        parts_stock_deducted_at: booking?.parts_stock_deducted_at || new Date().toISOString(),
+      });
+
+      await fetchParts(false);
+      setMessage(`${line.name} deducted from inventory.`);
+    } catch (err) {
+      setMessage(`Error: ${err.message || 'Failed to deduct part.'}`);
+    } finally {
+      setSavingPart('');
+    }
+  }
+
+  async function removePartLine(index) {
+    const line = partsUsed[index];
+    if (!line) return;
+
+    const quantity = Number(line.quantity) || 1;
+    const deducted = line.stock_deducted === true;
+
+    const confirmed = window.confirm(
+      deducted
+        ? `Remove ${line.name} and return ${quantity} to inventory?`
+        : `Remove ${line.name} from the estimated parts list?`
+    );
+
+    if (!confirmed) return;
+
+    setSavingPart(line.line_id || line.id);
+    setMessage('');
+
+    try {
+      if (deducted) {
+        await adjustPartStock({
+          partId: line.id || line.part_id,
+          movementType: 'stock_in',
+          quantity,
+          reason: `Returned part after removing from booking ${String(bookingId).slice(0, 8).toUpperCase()}`,
+          relatedOrderId: null,
+        });
+      }
+
+      const nextParts = partsUsed.filter((_, itemIndex) => itemIndex !== index);
+
+      await updateBookingParts(nextParts);
+
+      await fetchParts(false);
+      setMessage(
+        deducted
+          ? `${line.name} removed and returned to inventory.`
+          : `${line.name} removed from estimated parts.`
+      );
+    } catch (err) {
+      setMessage(`Error: ${err.message || 'Failed to remove part.'}`);
+    } finally {
+      setSavingPart('');
+    }
+  }
+
+  async function cancelBookingRestoreInventory() {
+    if (!bookingId) return;
+
+    const restorableParts = partsUsed.filter(
+      (item) =>
+        item.stock_deducted === true ||
+        (booking?.parts_stock_deducted_at && item.stock_deducted !== false)
+    );
+
+    const confirmText =
+      restorableParts.length > 0 && !booking?.inventory_restored_at
+        ? `Cancel this appointment and return ${restorableParts.length} deducted part line(s) back to inventory?`
+        : 'Cancel this appointment?';
+
+    const confirmed = window.confirm(confirmText);
+    if (!confirmed) return;
+
+    setSavingStatus('cancelled');
+    setMessage('');
+
+    try {
+      const currentUserId = await getCurrentUserId();
+
+      if (restorableParts.length > 0 && !booking?.inventory_restored_at) {
+        for (const item of restorableParts) {
+          const partId = item.id || item.part_id;
+          const quantity = Number(item.quantity) || 0;
+
+          if (!partId || quantity <= 0) continue;
+
+          await adjustPartStock({
+            partId,
+            movementType: 'stock_in',
+            quantity,
+            reason: `Returned to inventory after cancelling booking ${String(bookingId).slice(0, 8).toUpperCase()}`,
+            relatedOrderId: null,
+          });
+        }
+      }
+
+      const { error: bookingError } = await supabase
+        .from('bookings')
+        .update({
+          status: 'cancelled',
+          inventory_restored_at:
+            restorableParts.length > 0 && !booking?.inventory_restored_at
+              ? new Date().toISOString()
+              : booking?.inventory_restored_at || null,
+          inventory_restored_by:
+            restorableParts.length > 0 && !booking?.inventory_restored_at
+              ? currentUserId
+              : booking?.inventory_restored_by || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', bookingId);
+
+      if (bookingError) throw bookingError;
+
+      try {
+        await supabase.from('service_progress_events').insert({
+          booking_id: bookingId,
+          customer_id: requireCustomerId(),
+          status: 'cancelled',
+          title: 'Booking Cancelled',
+          description:
+            restorableParts.length > 0
+              ? 'Booking was cancelled and deducted parts were returned to inventory.'
+              : 'Booking was cancelled.',
+          progress_percent: 0,
+          event_type: 'status_update',
+        });
+      } catch {
+        await supabase.from('service_progress_events').insert({
+          booking_id: bookingId,
+          customer_id: requireCustomerId(),
+          status: 'cancelled',
+          title: 'Booking Cancelled',
+          description:
+            restorableParts.length > 0
+              ? 'Booking was cancelled and deducted parts were returned to inventory.'
+              : 'Booking was cancelled.',
+          progress_percent: 0,
+        });
+      }
+
+      await supabase.from('audit_logs').insert({
+        action: 'CANCEL_BOOKING_RESTORE_INVENTORY',
+        entity: 'bookings',
+        entity_id: bookingId,
+        performed_by: currentUserId,
+        details: {
+          restored_inventory: restorableParts.length > 0 && !booking?.inventory_restored_at,
+          parts_returned: restorableParts,
+        },
+      });
+
+      setMessage(
+        restorableParts.length > 0 && !booking?.inventory_restored_at
+          ? 'Booking cancelled. Deducted parts were returned to inventory.'
+          : 'Booking cancelled.'
+      );
+
+      await fetchEvents(false);
+      await fetchParts(false);
+      onUpdated?.();
+    } catch (err) {
+      setMessage(`Error: ${err.message || 'Failed to cancel booking.'}`);
+    } finally {
+      setSavingStatus('');
+    }
+  }
+
+  if (!bookingId) {
+    return (
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+        Missing booking record.
       </div>
+    );
+  }
 
+  return (
+    <section
+      className={
+        compact
+          ? ''
+          : 'rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800'
+      }
+    >
       {message && (
         <div
-          className={`mb-4 rounded-2xl border p-3 text-sm font-semibold ${
-            messageType === 'success'
-              ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300'
-              : 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300'
+          className={`mb-4 rounded-2xl border px-4 py-3 text-sm font-semibold ${
+            message.startsWith('Error')
+              ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300'
+              : 'border-green-200 bg-green-50 text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300'
           }`}
         >
-          {message}
+          {message.replace('Error: ', '')}
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-            Progress Status
-          </label>
-          <select
-            value={status}
-            onChange={(event) => handleStatusChange(event.target.value)}
-            className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-bold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:focus:border-primary-500"
-          >
-            {STATUS_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label} {option.value !== 'note' ? `(${option.progress}%)` : ''}
-              </option>
-            ))}
-          </select>
+          <p className="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">
+            Service Progress
+          </p>
+          <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
+            Use simple status buttons. Parts used can be added during service.
+          </p>
         </div>
 
-        <div>
-          <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-            Timeline Title
-          </label>
-          <input
-            type="text"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-bold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:focus:border-primary-500"
-            placeholder="Example: Inspection Started"
+        <div className="rounded-2xl bg-primary-50 px-4 py-2 text-center ring-1 ring-primary-100 dark:bg-primary-500/10 dark:ring-primary-500/25">
+          <p className="text-[11px] font-black uppercase tracking-wider text-primary-700 dark:text-primary-300">
+            Progress
+          </p>
+          <p className="text-lg font-black text-primary-700 dark:text-primary-300">
+            {currentProgress}%
+          </p>
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <p className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            Current Status
+          </p>
+          <p className="text-xs font-black text-primary-600 dark:text-primary-400">
+            {getStatusLabel(currentStatus)}
+          </p>
+        </div>
+
+        <div className="h-4 overflow-hidden rounded-full bg-gray-100 ring-1 ring-gray-200 dark:bg-dark-900 dark:ring-dark-700">
+          <div
+            className="h-full rounded-full bg-primary-600 transition-all duration-500"
+            style={{ width: `${currentProgress}%` }}
           />
         </div>
+      </div>
 
-        <div>
-          <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-            Progress Description
-          </label>
-          <textarea
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            rows={3}
-            className="w-full resize-none rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500 dark:focus:border-primary-500"
-            placeholder="Add a short update for the customer..."
-          />
+      {!booking?.customer_id && (
+        <div className="mb-5 rounded-2xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-xs font-semibold leading-5 text-yellow-800 dark:border-yellow-500/30 dark:bg-yellow-500/10 dark:text-yellow-200">
+          This record has no registered customer. Do not use Service Progress for old walk-in booking records.
+          Walk-ins should be handled in the Walk-in Queue.
         </div>
+      )}
 
-        <div>
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <label className="block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-              Progress Percent
-            </label>
-            <span className="text-xs font-black text-primary-600 dark:text-primary-400">
-              {Math.max(0, Math.min(100, Number(progressPercent) || 0))}%
-            </span>
+      <div className="mb-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {STATUS_STEPS.map((step) => {
+          const active = currentStatus === step.id;
+          const done = currentProgress >= step.percent;
+          const saving = savingStatus === step.id;
+
+          return (
+            <button
+              key={step.id}
+              type="button"
+              onClick={() => updateProgress(step)}
+              disabled={Boolean(savingStatus) || active || !booking?.customer_id}
+              className={`rounded-2xl border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                active
+                  ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-500/15 dark:border-primary-500/40 dark:bg-primary-500/10'
+                  : done
+                    ? 'border-green-200 bg-green-50 hover:border-primary-400 dark:border-green-500/25 dark:bg-green-500/10'
+                    : 'border-gray-200 bg-gray-50 hover:border-primary-400 hover:bg-white dark:border-dark-700 dark:bg-dark-900 dark:hover:border-primary-500 dark:hover:bg-dark-800'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xl">{step.icon}</span>
+                <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black text-gray-500 ring-1 ring-gray-200 dark:bg-dark-800 dark:text-gray-400 dark:ring-dark-700">
+                  {step.percent}%
+                </span>
+              </div>
+
+              <p className="mt-2 text-sm font-black text-gray-950 dark:text-white">
+                {saving ? 'Saving...' : step.label}
+              </p>
+
+              <p className="mt-1 text-[11px] leading-4 text-gray-500 dark:text-gray-400">
+                {active ? 'Current status' : done ? 'Progress reached' : 'Click to update'}
+              </p>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mb-5 rounded-3xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/70">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">
+              Parts Used
+            </p>
+            <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
+              Add actual parts used during the service. Added parts deduct stock immediately.
+            </p>
           </div>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={progressPercent}
-            onChange={(event) => setProgressPercent(event.target.value)}
-            className="w-full accent-primary-600"
-          />
+
+          <div className="text-right">
+            <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              Total Bill
+            </p>
+            <p className="text-xl font-black text-primary-600 dark:text-primary-400">
+              {formatPeso(totalBill)}
+            </p>
+          </div>
         </div>
 
+        <div className="mb-4 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl bg-white p-3 ring-1 ring-gray-100 dark:bg-dark-800 dark:ring-dark-700">
+            <p className="text-[11px] font-black uppercase text-gray-500">Service</p>
+            <p className="text-sm font-black text-gray-950 dark:text-white">
+              {formatPeso(serviceTotal)}
+            </p>
+          </div>
+
+          <div className="rounded-2xl bg-white p-3 ring-1 ring-gray-100 dark:bg-dark-800 dark:ring-dark-700">
+            <p className="text-[11px] font-black uppercase text-gray-500">Parts</p>
+            <p className="text-sm font-black text-gray-950 dark:text-white">
+              {formatPeso(partsTotal)}
+            </p>
+          </div>
+
+          <div className="rounded-2xl bg-white p-3 ring-1 ring-gray-100 dark:bg-dark-800 dark:ring-dark-700">
+            <p className="text-[11px] font-black uppercase text-gray-500">Inventory</p>
+            <p className={`text-sm font-black ${hasDeductedParts ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'}`}>
+              {hasDeductedParts ? 'Deducted' : 'No deduction yet'}
+            </p>
+          </div>
+        </div>
+
+        <input
+          value={partSearch}
+          onChange={(event) => setPartSearch(event.target.value)}
+          placeholder="Search part/product to add as used..."
+          className="mb-3 w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-800 dark:text-white"
+        />
+
+        {partsLoading ? (
+          <div className="rounded-2xl bg-white p-4 text-sm font-semibold text-gray-500 dark:bg-dark-800 dark:text-gray-400">
+            Loading parts...
+          </div>
+        ) : filteredParts.length > 0 ? (
+          <div className="mb-4 grid max-h-72 gap-2 overflow-y-auto">
+            {filteredParts.map((part) => (
+              <button
+                key={part.id}
+                type="button"
+                onClick={() => addPartUsed(part)}
+                disabled={Boolean(savingPart) || !booking?.customer_id}
+                className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-white p-3 text-left transition hover:border-primary-400 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-700 dark:bg-dark-800"
+              >
+                <ProductImage product={part} />
+
+                <div className="min-w-0 flex-1">
+                  <p className="line-clamp-1 text-sm font-black text-gray-950 dark:text-white">
+                    {part.name}
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {part.category || 'General'} · {part.stock_quantity} stock
+                  </p>
+                </div>
+
+                <div className="text-right">
+                  <p className="text-sm font-black text-accent-600 dark:text-accent-400">
+                    {formatPeso(part.price)}
+                  </p>
+                  <p className="text-[11px] font-black text-primary-600 dark:text-primary-400">
+                    {savingPart === part.id ? 'Adding...' : '+ Add'}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="mb-4 rounded-2xl border border-dashed border-gray-300 bg-white p-4 text-center text-sm font-semibold text-gray-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400">
+            No products found. Check if the product is active and if the simple parts SELECT policy SQL was already run.
+          </div>
+        )}
+
+        {partsUsed.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-4 text-center text-sm font-semibold text-gray-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400">
+            No parts used yet.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {partsUsed.map((item, index) => {
+              const deducted = item.stock_deducted === true;
+              const saving = savingPart === (item.line_id || item.id);
+
+              return (
+                <div
+                  key={item.line_id || `${item.id}-${index}`}
+                  className="rounded-2xl border border-gray-200 bg-white p-3 dark:border-dark-700 dark:bg-dark-800"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-sm font-black text-gray-950 dark:text-white">
+                        {item.quantity} x {item.name}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        {formatPeso(item.unit_price ?? item.price)} each · {formatPeso(getPartLineTotal(item))}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`rounded-full px-3 py-1 text-[10px] font-black uppercase ring-1 ${
+                          deducted
+                            ? 'bg-green-50 text-green-700 ring-green-200 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25'
+                            : 'bg-yellow-50 text-yellow-700 ring-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-300 dark:ring-yellow-500/25'
+                        }`}
+                      >
+                        {deducted ? 'Stock deducted' : 'Estimate only'}
+                      </span>
+
+                      {!deducted && (
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => deductEstimatedPart(index)}
+                          className="rounded-xl bg-primary-600 px-3 py-2 text-xs font-black text-white transition hover:bg-primary-700 disabled:opacity-50"
+                        >
+                          Deduct
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => removePartLine(index)}
+                        className="rounded-xl bg-red-50 px-3 py-2 text-xs font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-100 disabled:opacity-50 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25"
+                      >
+                        {deducted ? 'Return' : 'Remove'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <textarea
+        value={note}
+        onChange={(event) => setNote(event.target.value.slice(0, 250))}
+        rows={3}
+        disabled={!booking?.customer_id}
+        placeholder="Optional note for the progress update..."
+        className="w-full resize-none rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
+      />
+
+      <div className="mt-5 flex flex-col gap-3 rounded-3xl border border-red-200 bg-red-50 p-4 dark:border-red-500/25 dark:bg-red-500/10 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-            Photo URL Optional
-          </label>
-          <input
-            type="url"
-            value={photoUrl}
-            onChange={(event) => setPhotoUrl(event.target.value)}
-            className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500 dark:focus:border-primary-500"
-            placeholder="https://..."
-          />
-          <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-            Use this only if you already uploaded a service progress photo somewhere public.
+          <p className="text-sm font-black text-red-800 dark:text-red-200">
+            Cancel Appointment
+          </p>
+          <p className="mt-1 text-xs font-semibold text-red-700 dark:text-red-300">
+            If deducted parts exist, they will be returned to inventory automatically.
           </p>
         </div>
 
         <button
-          type="submit"
-          disabled={loading || !targetBookingId}
-          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary-600 px-5 py-3.5 text-sm font-black text-white shadow-lg shadow-primary-600/25 transition hover:bg-primary-700 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+          type="button"
+          onClick={cancelBookingRestoreInventory}
+          disabled={savingStatus === 'cancelled' || currentStatus === 'cancelled'}
+          className="rounded-2xl bg-red-600 px-4 py-3 text-xs font-black text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading ? (
-            <>
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-              Updating...
-            </>
-          ) : (
-            <>
-              Update Service Progress
-              <span>→</span>
-            </>
-          )}
+          {savingStatus === 'cancelled' ? 'Cancelling...' : 'Cancel Booking'}
         </button>
-      </form>
+      </div>
 
-      {!compact && (
-        <div className="mt-6 border-t border-gray-200 pt-5 dark:border-dark-700">
-          <p className="mb-4 text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-            Recent Timeline Events
-          </p>
+      <div className="mt-5">
+        <p className="mb-3 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+          Recent Updates
+        </p>
 
-          {eventsLoading ? (
-            <div className="rounded-2xl bg-gray-50 p-4 text-sm text-gray-500 dark:bg-dark-900 dark:text-gray-400">
-              Loading events...
-            </div>
-          ) : events.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 text-center text-sm text-gray-500 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-400">
-              No progress events yet.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {events
-                .slice()
-                .reverse()
-                .slice(0, 5)
-                .map((event) => (
-                  <div
-                    key={event.id}
-                    className="rounded-2xl border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/70"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl bg-white text-lg ring-1 ring-gray-200 dark:bg-dark-800 dark:ring-dark-700">
-                        {getTimelineIcon(event.status)}
-                      </div>
+        {loading ? (
+          <div className="rounded-2xl bg-gray-50 p-4 text-sm font-semibold text-gray-500 dark:bg-dark-900 dark:text-gray-400">
+            Loading progress...
+          </div>
+        ) : events.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 text-center text-sm font-semibold text-gray-500 dark:border-dark-700 dark:bg-dark-900/70 dark:text-gray-400">
+            No progress updates yet.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {[...events].reverse().slice(0, 5).map((event) => (
+              <div
+                key={event.id}
+                className="rounded-2xl border border-gray-100 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/70"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-black text-gray-950 dark:text-white">
+                    {event.title || getStatusLabel(event.status)}
+                  </p>
+                  <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-primary-600 ring-1 ring-gray-200 dark:bg-dark-800 dark:text-primary-300 dark:ring-dark-700">
+                    {Number(event.progress_percent) || getStepPercent(event.status)}%
+                  </span>
+                </div>
 
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <p className="text-sm font-black text-gray-950 dark:text-white">
-                            {event.title || getStatusLabel(event.status)}
-                          </p>
-                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-black text-gray-500 ring-1 ring-gray-200 dark:bg-dark-800 dark:text-gray-400 dark:ring-dark-700">
-                            {Number(event.progress_percent) || 0}%
-                          </span>
-                        </div>
-
-                        {event.description && (
-                          <p className="mt-1 text-xs leading-5 text-gray-600 dark:text-gray-400">
-                            {event.description}
-                          </p>
-                        )}
-
-                        <p className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
-                          {formatDateTime(event.created_at)} · {getStatusLabel(event.status)}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-            </div>
-          )}
-        </div>
-      )}
+                {event.description && (
+                  <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                    {event.description}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </section>
   );
 }

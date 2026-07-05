@@ -11,6 +11,8 @@ import {
   RefreshControl,
   Alert,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+
 import { supabase } from '../../lib/supabase';
 import { notifyRole, notifyUser } from '../../lib/notifications';
 import { useTheme } from '../../lib/ThemeContext';
@@ -20,7 +22,7 @@ const YELLOW = '#EAB308';
 const FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'pending', label: 'Pending' },
-  { key: 'confirmed', label: 'Confirmed' },
+  { key: 'confirmed', label: 'Approved' },
   { key: 'in_progress', label: 'In Progress' },
   { key: 'inspection', label: 'Inspection' },
   { key: 'repairing', label: 'Repairing' },
@@ -30,15 +32,14 @@ const FILTERS = [
   { key: 'cancelled', label: 'Cancelled' },
 ];
 
-const ACTION_STATUSES = [
-  { key: 'confirmed', label: 'Confirmed' },
-  { key: 'in_progress', label: 'In Progress' },
-  { key: 'inspection', label: 'Inspection' },
-  { key: 'repairing', label: 'Repairing' },
-  { key: 'quality_check', label: 'Quality Check' },
-  { key: 'ready_for_pickup', label: 'Ready' },
-  { key: 'completed', label: 'Completed' },
-];
+const MECHANIC_PROGRESS_FLOW = {
+  confirmed: { next: 'in_progress', label: 'Start Service', icon: 'play-circle' },
+  in_progress: { next: 'inspection', label: 'Move to Inspection', icon: 'search' },
+  inspection: { next: 'repairing', label: 'Start Repair', icon: 'construct' },
+  repairing: { next: 'quality_check', label: 'Quality Check', icon: 'shield-checkmark' },
+  quality_check: { next: 'ready_for_pickup', label: 'Ready for Pickup', icon: 'bag-check' },
+  ready_for_pickup: { next: 'completed', label: 'Complete Service', icon: 'checkmark-done-circle' },
+};
 
 const TERMINAL_STATUSES = ['completed', 'cancelled', 'rejected', 'no_show'];
 
@@ -54,15 +55,135 @@ function humanize(value) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function formatDate(value) {
+  if (!value) return '—';
+
+  const parts = String(value).split('-');
+
+  if (parts.length === 3) {
+    const [year, month, day] = parts.map(Number);
+
+    return new Date(year, month - 1, day).toLocaleDateString('en-PH', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  }
+
+  return String(value);
+}
+
 function formatTime(value) {
   if (!value) return '—';
 
-  const [h, m] = String(value).split(':');
+  const [h, m] = String(value).slice(0, 5).split(':');
   const hour = parseInt(h, 10);
   const ampm = hour >= 12 ? 'PM' : 'AM';
   const displayHour = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour;
 
   return `${displayHour}:${m || '00'} ${ampm}`;
+}
+
+function getCustomerName(booking) {
+  const profile = booking?.profiles || {};
+  const name = `${profile.first_name || ''} ${profile.last_name || ''}`.trim();
+
+  return name || profile.email || profile.phone || 'Customer';
+}
+
+function getCustomerContact(booking) {
+  const profile = booking?.profiles || {};
+
+  return profile.phone || profile.email || '—';
+}
+
+function getBookingServiceRows(booking) {
+  const rows = Array.isArray(booking?.booking_services) ? booking.booking_services : [];
+
+  if (rows.length > 0) {
+    return rows.map((row) => ({
+      ...row,
+      service_name: row.service_name || row.services?.name || 'Service',
+      estimated_duration_minutes:
+        Number(row.estimated_duration_minutes ?? row.services?.estimated_duration_minutes ?? 30) || 30,
+      quantity: Number(row.quantity) || 1,
+    }));
+  }
+
+  if (booking?.services_summary && String(booking.services_summary).includes(',')) {
+    return String(booking.services_summary)
+      .split(',')
+      .map((name, index) => ({
+        id: `summary-${index}`,
+        service_name: name.trim(),
+        estimated_duration_minutes: 30,
+        quantity: 1,
+      }))
+      .filter((row) => row.service_name);
+  }
+
+  if (booking?.services?.name || booking?.services_summary) {
+    return [
+      {
+        id: booking?.service_id || 'single-service',
+        service_name: booking.services_summary || booking.services?.name || 'Service',
+        estimated_duration_minutes: Number(booking?.services?.estimated_duration_minutes) || 30,
+        quantity: 1,
+      },
+    ];
+  }
+
+  return [];
+}
+
+function getServiceTitle(booking) {
+  const rows = getBookingServiceRows(booking);
+
+  if (rows.length > 0) {
+    return rows.map((row) => row.service_name).join(', ');
+  }
+
+  return booking?.services_summary || booking?.services?.name || 'Service';
+}
+
+function getServiceCount(booking) {
+  const rows = getBookingServiceRows(booking);
+
+  if (rows.length > 0) {
+    return rows.reduce((sum, row) => sum + (Number(row.quantity) || 1), 0);
+  }
+
+  return booking?.service_id ? 1 : 0;
+}
+
+function getServiceDuration(booking) {
+  const rows = getBookingServiceRows(booking);
+
+  if (rows.length > 0) {
+    return rows.reduce(
+      (sum, row) =>
+        sum +
+        ((Number(row.estimated_duration_minutes) || 30) *
+          (Number(row.quantity) || 1)),
+      0
+    );
+  }
+
+  return Number(booking?.services?.estimated_duration_minutes) || 30;
+}
+
+function getNextMechanicAction(booking) {
+  const current = normalizeStatus(booking?.status);
+  return MECHANIC_PROGRESS_FLOW[current] || null;
+}
+
+function canMechanicUpdateProgress(booking) {
+  const current = normalizeStatus(booking?.status);
+
+  if (current === 'pending') return false;
+  if (TERMINAL_STATUSES.includes(current)) return false;
+
+  return Boolean(getNextMechanicAction(booking));
 }
 
 export default function JobsScreen({ navigation }) {
@@ -112,6 +233,19 @@ export default function JobsScreen({ navigation }) {
           labor_cost,
           estimated_duration_minutes
         ),
+        booking_services (
+          id,
+          service_id,
+          service_name,
+          base_price,
+          labor_cost,
+          estimated_duration_minutes,
+          quantity,
+          services (
+            name,
+            estimated_duration_minutes
+          )
+        ),
         profiles!bookings_customer_id_fkey (
           id,
           first_name,
@@ -141,9 +275,7 @@ export default function JobsScreen({ navigation }) {
   }, [user]);
 
   const counts = useMemo(() => {
-    const result = {
-      all: bookings.length,
-    };
+    const result = { all: bookings.length };
 
     FILTERS.forEach((filter) => {
       if (filter.key !== 'all') {
@@ -157,21 +289,21 @@ export default function JobsScreen({ navigation }) {
   }, [bookings]);
 
   const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
     return bookings.filter((booking) => {
       const bookingStatus = normalizeStatus(booking.status);
       const matchesStatus =
         statusFilter === 'all' || bookingStatus === statusFilter;
 
-      const customerName = `${booking.profiles?.first_name || ''} ${
-        booking.profiles?.last_name || ''
-      }`.toLowerCase();
-
-      const serviceName = (booking.services?.name || '').toLowerCase();
-      const query = search.trim().toLowerCase();
+      const customerName = getCustomerName(booking).toLowerCase();
+      const customerContact = getCustomerContact(booking).toLowerCase();
+      const serviceName = getServiceTitle(booking).toLowerCase();
 
       const matchesSearch =
         query === '' ||
         customerName.includes(query) ||
+        customerContact.includes(query) ||
         serviceName.includes(query) ||
         String(booking.id || '').toLowerCase().includes(query);
 
@@ -207,6 +339,13 @@ export default function JobsScreen({ navigation }) {
   }
 
   async function fallbackUpdateStatus(booking, status) {
+    const current = normalizeStatus(booking.status);
+    const allowedNext = MECHANIC_PROGRESS_FLOW[current]?.next;
+
+    if (status !== allowedNext) {
+      throw new Error('Mechanics can only update service progress after staff/admin approval.');
+    }
+
     const { error: updateError } = await supabase
       .from('bookings')
       .update({ status })
@@ -217,17 +356,48 @@ export default function JobsScreen({ navigation }) {
 
     await supabase.from('service_progress_events').insert({
       booking_id: booking.id,
+      customer_id: booking.customer_id || null,
+      mechanic_id: user.id,
+      service_id: booking.service_id || null,
       status,
-      notes: null,
+      title: humanize(status),
+      description: `Mechanic updated service progress to ${humanize(status)}.`,
+      progress_percent:
+        status === 'in_progress'
+          ? 40
+          : status === 'inspection'
+            ? 50
+            : status === 'repairing'
+              ? 70
+              : status === 'quality_check'
+                ? 85
+                : status === 'ready_for_pickup'
+                  ? 95
+                  : status === 'completed'
+                    ? 100
+                    : 25,
+      event_type: 'service_progress',
     });
   }
 
-  async function updateStatus(booking, status) {
+  async function updateStatus(booking) {
     if (!booking?.id || !user?.id) return;
 
+    const action = getNextMechanicAction(booking);
+
+    if (!action) {
+      Alert.alert(
+        'Not Allowed',
+        normalizeStatus(booking.status) === 'pending'
+          ? 'This booking is still pending. Only staff or admin can approve bookings first.'
+          : 'No service progress update is available for this booking.'
+      );
+      return;
+    }
+
     Alert.alert(
-      'Update Job Status',
-      `Mark this job as "${humanize(status)}"?`,
+      'Update Service Progress',
+      `Move this job to "${humanize(action.next)}"?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -239,14 +409,14 @@ export default function JobsScreen({ navigation }) {
               'update_booking_service_progress',
               {
                 p_booking_id: booking.id,
-                p_status: status,
+                p_status: action.next,
                 p_notes: null,
               }
             );
 
             if (rpcError) {
               try {
-                await fallbackUpdateStatus(booking, status);
+                await fallbackUpdateStatus(booking, action.next);
               } catch (fallbackError) {
                 setUpdatingId(null);
                 Alert.alert('Error', fallbackError.message || rpcError.message);
@@ -256,7 +426,7 @@ export default function JobsScreen({ navigation }) {
 
             setBookings((prev) =>
               prev.map((item) =>
-                item.id === booking.id ? { ...item, status } : item
+                item.id === booking.id ? { ...item, status: action.next } : item
               )
             );
 
@@ -266,7 +436,7 @@ export default function JobsScreen({ navigation }) {
               await notifyUser({
                 userId: booking.customer_id,
                 title: 'Service Progress Updated',
-                message: `Your booking is now marked as ${humanize(status)}.`,
+                message: `Your booking is now marked as ${humanize(action.next)}.`,
                 type: 'service_progress',
                 relatedTable: 'bookings',
                 relatedId: booking.id,
@@ -276,7 +446,7 @@ export default function JobsScreen({ navigation }) {
             await notifyRole({
               role: 'admin',
               title: 'Service Progress Updated',
-              message: `A mechanic updated a booking to ${humanize(status)}.`,
+              message: `A mechanic updated a booking to ${humanize(action.next)}.`,
               type: 'service_progress',
               relatedTable: 'bookings',
               relatedId: booking.id,
@@ -285,7 +455,7 @@ export default function JobsScreen({ navigation }) {
             await notifyRole({
               role: 'staff',
               title: 'Service Progress Updated',
-              message: `A mechanic updated a booking to ${humanize(status)}.`,
+              message: `A mechanic updated a booking to ${humanize(action.next)}.`,
               type: 'service_progress',
               relatedTable: 'bookings',
               relatedId: booking.id,
@@ -294,16 +464,6 @@ export default function JobsScreen({ navigation }) {
         },
       ]
     );
-  }
-
-  function getAvailableActions(booking) {
-    const current = normalizeStatus(booking.status);
-
-    if (TERMINAL_STATUSES.includes(current)) {
-      return [];
-    }
-
-    return ACTION_STATUSES.filter((status) => status.key !== current);
   }
 
   if (loading) {
@@ -339,20 +499,11 @@ export default function JobsScreen({ navigation }) {
             >
               <Text
                 style={[
-                  s.statChipNum,
-                  statusFilter === filter.key && s.statChipNumActive,
-                ]}
-              >
-                {counts[filter.key] ?? 0}
-              </Text>
-
-              <Text
-                style={[
                   s.statChipLabel,
                   statusFilter === filter.key && s.statChipLabelActive,
                 ]}
               >
-                {filter.label}
+                {filter.label} ({counts[filter.key] ?? 0})
               </Text>
             </TouchableOpacity>
           ))}
@@ -360,13 +511,25 @@ export default function JobsScreen({ navigation }) {
       </View>
 
       <View style={s.searchWrap}>
+        <Ionicons name="search-outline" size={18} color={theme.textMuted} />
         <TextInput
           style={s.searchInput}
-          placeholder="Search by customer, service, or booking ID..."
+          placeholder="Search customer, service, phone, or booking ID..."
           placeholderTextColor={theme.textMuted}
           value={search}
           onChangeText={setSearch}
         />
+
+        {(search || statusFilter !== 'all') && (
+          <TouchableOpacity
+            onPress={() => {
+              setSearch('');
+              setStatusFilter('all');
+            }}
+          >
+            <Text style={s.clearSmall}>Clear</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <ScrollView
@@ -384,7 +547,7 @@ export default function JobsScreen({ navigation }) {
             <Text style={s.emptyIcon}>🔧</Text>
             <Text style={s.emptyTitle}>No bookings assigned</Text>
             <Text style={s.emptyText}>
-              Bookings assigned to you will show up here.
+              Staff or admin assigned jobs will show up here.
             </Text>
           </View>
         ) : filtered.length === 0 ? (
@@ -402,24 +565,24 @@ export default function JobsScreen({ navigation }) {
           </View>
         ) : (
           filtered.map((booking) => {
-            const availableActions = getAvailableActions(booking);
+            const current = normalizeStatus(booking.status);
+            const action = getNextMechanicAction(booking);
+            const canUpdate = canMechanicUpdateProgress(booking);
             const isUpdating = updatingId === booking.id;
+            const serviceCount = getServiceCount(booking);
+            const duration = getServiceDuration(booking);
 
             return (
               <View key={booking.id} style={s.card}>
                 <TouchableOpacity
-                  onPress={() =>
-                    navigation.navigate('JobDetail', { booking })
-                  }
+                  onPress={() => navigation.navigate('JobDetail', { booking })}
                   activeOpacity={0.7}
                 >
                   <View style={s.cardHeader}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.serviceName}>
-                        {booking.services?.name || 'Service'}
-                      </Text>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={s.serviceName}>{getServiceTitle(booking)}</Text>
                       <Text style={s.refText}>
-                        #{booking.id?.slice(0, 8).toUpperCase()}
+                        #{booking.id?.slice(0, 8).toUpperCase()} · {serviceCount} service{serviceCount > 1 ? 's' : ''} · {duration} mins
                       </Text>
                     </View>
 
@@ -427,8 +590,7 @@ export default function JobsScreen({ navigation }) {
                       style={[
                         s.badge,
                         {
-                          backgroundColor:
-                            statusColor(booking.status) + '22',
+                          backgroundColor: statusColor(booking.status) + '22',
                         },
                       ]}
                     >
@@ -438,25 +600,26 @@ export default function JobsScreen({ navigation }) {
                           { color: statusColor(booking.status) },
                         ]}
                       >
-                        {humanize(booking.status)}
+                        {current === 'confirmed' ? 'Approved' : humanize(booking.status)}
                       </Text>
                     </View>
                   </View>
 
-                  <Text style={s.dateText}>
-                    📅 {booking.booking_date || '—'} at{' '}
-                    {formatTime(booking.booking_time)}
-                  </Text>
+                  <View style={s.infoGrid}>
+                    <View style={s.infoBox}>
+                      <Text style={s.infoLabel}>Schedule</Text>
+                      <Text style={s.infoValue}>
+                        {formatDate(booking.booking_date)}
+                      </Text>
+                      <Text style={s.infoSub}>{formatTime(booking.booking_time)}</Text>
+                    </View>
 
-                  {booking.profiles && (
-                    <Text style={s.customerText}>
-                      👤 {booking.profiles.first_name}{' '}
-                      {booking.profiles.last_name}
-                      {booking.profiles.phone
-                        ? ` · ${booking.profiles.phone}`
-                        : ''}
-                    </Text>
-                  )}
+                    <View style={s.infoBox}>
+                      <Text style={s.infoLabel}>Customer</Text>
+                      <Text style={s.infoValue}>{getCustomerName(booking)}</Text>
+                      <Text style={s.infoSub}>{getCustomerContact(booking)}</Text>
+                    </View>
+                  </View>
 
                   {booking.notes ? (
                     <Text style={s.notesText}>"{booking.notes}"</Text>
@@ -466,7 +629,18 @@ export default function JobsScreen({ navigation }) {
                 <View style={s.divider} />
 
                 <View style={s.footerRow}>
-                  <Text style={s.updateLabel}>Quick status update</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.updateLabel}>Mechanic action</Text>
+                    <Text style={s.actionHint}>
+                      {current === 'pending'
+                        ? 'Waiting for staff/admin approval'
+                        : TERMINAL_STATUSES.includes(current)
+                          ? 'Job is already closed'
+                          : action
+                            ? `Next: ${humanize(action.next)}`
+                            : 'No next step available'}
+                    </Text>
+                  </View>
 
                   <TouchableOpacity
                     onPress={() => navigation.navigate('JobDetail', { booking })}
@@ -475,39 +649,58 @@ export default function JobsScreen({ navigation }) {
                   </TouchableOpacity>
                 </View>
 
-                {availableActions.length === 0 ? (
-                  <Text style={s.noActionText}>
-                    No more quick actions available.
-                  </Text>
+                {canUpdate && action ? (
+                  <TouchableOpacity
+                    disabled={isUpdating}
+                    onPress={() => updateStatus(booking)}
+                    style={[
+                      s.primaryActionBtn,
+                      {
+                        opacity: isUpdating ? 0.6 : 1,
+                        backgroundColor: statusColor(action.next),
+                      },
+                    ]}
+                  >
+                    {isUpdating ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <>
+                        <Ionicons name={action.icon} size={17} color="#fff" />
+                        <Text style={s.primaryActionText}>{action.label}</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
                 ) : (
-                  <View style={s.statusRow}>
-                    {availableActions.map((status) => (
-                      <TouchableOpacity
-                        key={status.key}
-                        disabled={isUpdating}
-                        onPress={() => updateStatus(booking, status.key)}
-                        style={[
-                          s.statusBtn,
-                          {
-                            borderColor: statusColor(status.key) + '55',
-                            opacity: isUpdating ? 0.5 : 1,
-                          },
-                        ]}
-                      >
-                        {isUpdating ? (
-                          <ActivityIndicator size="small" color={theme.text} />
-                        ) : (
-                          <Text
-                            style={[
-                              s.statusBtnText,
-                              { color: statusColor(status.key) },
-                            ]}
-                          >
-                            {status.label}
-                          </Text>
-                        )}
-                      </TouchableOpacity>
-                    ))}
+                  <View
+                    style={[
+                      s.lockedBox,
+                      {
+                        borderColor:
+                          current === 'pending'
+                            ? theme.warning + '44'
+                            : theme.border,
+                        backgroundColor:
+                          current === 'pending'
+                            ? theme.warning + '12'
+                            : theme.bg2,
+                      },
+                    ]}
+                  >
+                    <Ionicons
+                      name={current === 'pending' ? 'lock-closed-outline' : 'checkmark-circle-outline'}
+                      size={17}
+                      color={current === 'pending' ? theme.warning : theme.textMuted}
+                    />
+                    <Text
+                      style={[
+                        s.lockedText,
+                        { color: current === 'pending' ? theme.warning : theme.textMuted },
+                      ]}
+                    >
+                      {current === 'pending'
+                        ? 'Waiting for staff/admin approval.'
+                        : 'No quick action available.'}
+                    </Text>
                   </View>
                 )}
               </View>
@@ -520,6 +713,7 @@ export default function JobsScreen({ navigation }) {
     </View>
   );
 }
+
 
 const styles = (theme) =>
   StyleSheet.create({
@@ -541,6 +735,7 @@ const styles = (theme) =>
       backgroundColor: theme.bg,
       borderBottomWidth: 1,
       borderBottomColor: theme.border,
+      paddingTop: 4,
     },
     statBarContent: {
       paddingHorizontal: 16,
@@ -549,10 +744,10 @@ const styles = (theme) =>
       gap: 8,
     },
     statChip: {
-      minWidth: 92,
+      minWidth: 96,
       paddingHorizontal: 14,
-      paddingVertical: 8,
-      borderRadius: 12,
+      paddingVertical: 9,
+      borderRadius: 999,
       backgroundColor: theme.bg2,
       borderWidth: 1,
       borderColor: theme.border,
@@ -563,13 +758,6 @@ const styles = (theme) =>
       backgroundColor: theme.primary,
       borderColor: theme.primary,
     },
-    statChipNum: {
-      fontSize: 15,
-      fontWeight: 'bold',
-      color: theme.text,
-      lineHeight: 18,
-    },
-    statChipNumActive: { color: '#fff' },
     statChipLabel: {
       fontSize: 11,
       color: theme.textSub || theme.textMuted,
@@ -579,24 +767,36 @@ const styles = (theme) =>
     },
     statChipLabelActive: { color: 'rgba(255,255,255,0.9)' },
     searchWrap: {
-      paddingHorizontal: 16,
-      paddingTop: 12,
-      paddingBottom: 6,
-    },
-    searchInput: {
+      marginHorizontal: 16,
+      marginTop: 12,
+      marginBottom: 4,
+      paddingHorizontal: 12,
+      paddingVertical: 2,
       backgroundColor: theme.bg2,
       borderWidth: 1,
       borderColor: theme.border,
-      borderRadius: 10,
-      padding: 12,
+      borderRadius: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    searchInput: {
+      flex: 1,
+      paddingVertical: 11,
       fontSize: 14,
       color: theme.text,
+      fontWeight: '600',
+    },
+    clearSmall: {
+      color: theme.primaryLight || YELLOW,
+      fontSize: 12,
+      fontWeight: '900',
     },
     card: {
       backgroundColor: theme.card,
       marginHorizontal: 16,
       marginTop: 12,
-      borderRadius: 12,
+      borderRadius: 16,
       padding: 16,
       borderWidth: 1,
       borderColor: theme.border,
@@ -605,45 +805,74 @@ const styles = (theme) =>
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'flex-start',
-      marginBottom: 8,
-      gap: 8,
+      marginBottom: 10,
+      gap: 10,
     },
     serviceName: {
       fontSize: 16,
-      fontWeight: 'bold',
+      fontWeight: '900',
       color: theme.text,
+      lineHeight: 22,
     },
     refText: {
       color: theme.textMuted,
       fontSize: 11,
-      fontWeight: '600',
-      marginTop: 2,
+      fontWeight: '700',
+      marginTop: 4,
+      lineHeight: 16,
     },
     badge: {
-      borderRadius: 8,
+      borderRadius: 999,
       paddingHorizontal: 10,
-      paddingVertical: 4,
+      paddingVertical: 5,
+      maxWidth: 105,
     },
     badgeText: {
-      fontSize: 11,
-      fontWeight: 'bold',
+      fontSize: 10,
+      fontWeight: '900',
       textTransform: 'capitalize',
+      textAlign: 'center',
+      lineHeight: 14,
     },
-    dateText: {
-      fontSize: 13,
-      color: theme.textSub || theme.textMuted,
+    infoGrid: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 4,
+    },
+    infoBox: {
+      flex: 1,
+      backgroundColor: theme.bg2,
+      borderRadius: 12,
+      padding: 10,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    infoLabel: {
+      color: theme.textMuted,
+      fontSize: 10,
+      fontWeight: '900',
+      textTransform: 'uppercase',
       marginBottom: 4,
     },
-    customerText: {
-      fontSize: 13,
-      color: theme.textSub || theme.textMuted,
-      marginBottom: 4,
+    infoValue: {
+      color: theme.text,
+      fontSize: 12,
+      fontWeight: '900',
+      lineHeight: 17,
+    },
+    infoSub: {
+      color: theme.textMuted,
+      fontSize: 11,
+      fontWeight: '600',
+      marginTop: 3,
+      lineHeight: 15,
     },
     notesText: {
       fontSize: 13,
       color: theme.textMuted,
       fontStyle: 'italic',
-      marginTop: 4,
+      marginTop: 10,
+      lineHeight: 18,
     },
     divider: {
       height: 1,
@@ -653,43 +882,56 @@ const styles = (theme) =>
     footerRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
-      alignItems: 'center',
+      alignItems: 'flex-start',
       gap: 12,
-      marginBottom: 8,
+      marginBottom: 10,
     },
     updateLabel: {
       fontSize: 11,
       color: theme.textMuted,
       textTransform: 'uppercase',
       letterSpacing: 0.5,
-      fontWeight: '800',
+      fontWeight: '900',
+    },
+    actionHint: {
+      color: theme.text,
+      fontSize: 12,
+      fontWeight: '700',
+      marginTop: 3,
+      lineHeight: 17,
     },
     detailsLink: {
       color: theme.primaryLight || YELLOW,
       fontSize: 12,
-      fontWeight: '800',
+      fontWeight: '900',
     },
-    statusRow: {
+    primaryActionBtn: {
+      borderRadius: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
       flexDirection: 'row',
-      flexWrap: 'wrap',
+      alignItems: 'center',
+      justifyContent: 'center',
       gap: 8,
     },
-    statusBtn: {
-      paddingHorizontal: 12,
-      paddingVertical: 7,
-      borderRadius: 8,
+    primaryActionText: {
+      color: '#fff',
+      fontSize: 13,
+      fontWeight: '900',
+    },
+    lockedBox: {
+      borderRadius: 12,
       borderWidth: 1,
-      backgroundColor: theme.bg2,
+      padding: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
     },
-    statusBtnText: {
+    lockedText: {
+      flex: 1,
       fontSize: 12,
-      fontWeight: '600',
-      textTransform: 'capitalize',
-    },
-    noActionText: {
-      color: theme.textMuted,
-      fontSize: 12,
-      fontWeight: '600',
+      fontWeight: '800',
+      lineHeight: 17,
     },
     emptyCard: {
       alignItems: 'center',
@@ -709,6 +951,7 @@ const styles = (theme) =>
       fontSize: 14,
       color: theme.textSub || theme.textMuted,
       textAlign: 'center',
+      lineHeight: 20,
     },
     clearLink: {
       fontSize: 14,

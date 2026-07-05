@@ -76,6 +76,27 @@ function validatePassword(password) {
   return errors;
 }
 
+const PHONE_PREFIX = '09';
+
+function formatPhoneInput(value) {
+  const digits = value.replace(/\D/g, '');
+
+  if (!digits || digits.length <= 2) {
+    return PHONE_PREFIX;
+  }
+
+  const numberAfterPrefix = digits.startsWith(PHONE_PREFIX)
+    ? digits.slice(2)
+    : digits;
+
+  return (PHONE_PREFIX + numberAfterPrefix).slice(0, 11);
+}
+
+function isValidPhilippineMobile(value) {
+  return /^09\d{9}$/.test(value);
+}
+
+
 // ─── Reusable Info Modal ──────────────────────────────────────────────────────
 function InfoModal({ visible, onClose, title, sections, theme }) {
   const s = modalStyles(theme);
@@ -113,7 +134,7 @@ export default function RegisterScreen({ navigation }) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState(PHONE_PREFIX);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -134,8 +155,18 @@ export default function RegisterScreen({ navigation }) {
   const passwordsMismatch = confirm.length > 0 && password !== confirm;
 
   async function handleRegister() {
+    const cleanPhone = formatPhoneInput(phone);
+
     if (!firstName || !lastName || !email || !password || !confirm) {
       Alert.alert('Error', 'Please fill in all required fields.');
+      return;
+    }
+
+    if (!isValidPhilippineMobile(cleanPhone)) {
+      Alert.alert(
+        'Invalid Phone Number',
+        'Phone number must start with 09 and contain exactly 11 digits.'
+      );
       return;
     }
 
@@ -154,23 +185,22 @@ export default function RegisterScreen({ navigation }) {
     }
 
     setLoading(true);
-const { error } = await supabase.auth.signUp({
-  email,
-  password,
-  options: {
-    emailRedirectTo: 'https://motofix.store/auth/callback',
-    data: {
-      first_name: firstName,
-      last_name: lastName,
-      phone,
-      role: 'customer',
-    },
-  },
-});
 
-await supabase.auth.signOut();
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: 'https://motofix.store/auth/callback',
+        data: {
+          first_name: firstName,
+          last_name: lastName,
+          phone: cleanPhone,
+          role: 'customer',
+        },
+      },
+    });
 
-await supabase.auth.signOut();
+    await supabase.auth.signOut();
     setLoading(false);
 
     if (error) {
@@ -261,15 +291,16 @@ await supabase.auth.signOut();
           </View>
 
           <View style={s.fieldWrap}>
-            <Text style={s.label}>Phone <Text style={s.labelOptional}>(optional)</Text></Text>
+            <Text style={s.label}>Phone</Text>
             <TextInput
               ref={phoneRef}
               style={s.input}
               placeholder="09XX XXX XXXX"
               placeholderTextColor={theme.textMuted}
               value={phone}
-              onChangeText={setPhone}
+              onChangeText={(value) => setPhone(formatPhoneInput(value))}
               keyboardType="phone-pad"
+              maxLength={11}
               returnKeyType="next"
               onSubmitEditing={() => passwordRef.current?.focus()}
               blurOnSubmit={false}

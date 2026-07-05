@@ -17,6 +17,90 @@ const EMPTY_MODEL_FORM = {
   reference_photo_url: '',
 };
 
+const DEFAULT_PAGE_SIZE = 6;
+const PAGE_SIZE_OPTIONS = [6, 12, 24];
+const MAX_SERVICE_PRICE = 999999;
+const MAX_SERVICE_DURATION_MINUTES = 1440;
+
+function cleanInlineText(value, maxLength = 120) {
+  return String(value ?? '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function cleanMultilineText(value, maxLength = 500) {
+  return String(value ?? '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function cleanMoney(value) {
+  const raw = String(value ?? '').replace(/,/g, '').trim();
+
+  if (!/^\d+(\.\d{1,2})?$/.test(raw)) return null;
+
+  const amount = Number(raw);
+
+  if (!Number.isFinite(amount) || amount < 0 || amount > MAX_SERVICE_PRICE) {
+    return null;
+  }
+
+  return Math.round(amount * 100) / 100;
+}
+
+function cleanDuration(value) {
+  const raw = String(value ?? '').trim();
+
+  if (!/^\d+$/.test(raw)) return null;
+
+  const duration = Number.parseInt(raw, 10);
+
+  if (
+    !Number.isInteger(duration) ||
+    duration <= 0 ||
+    duration > MAX_SERVICE_DURATION_MINUTES
+  ) {
+    return null;
+  }
+
+  return duration;
+}
+
+function cleanUrl(value) {
+  const raw = cleanInlineText(value, 500);
+
+  if (!raw) return null;
+
+  try {
+    const url = new URL(raw);
+
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function limitMoneyInput(value) {
+  const cleaned = String(value ?? '')
+    .replace(/,/g, '')
+    .replace(/[^0-9.]/g, '');
+
+  const parts = cleaned.split('.');
+  const pesos = (parts[0] || '').slice(0, 6);
+  const cents = parts.length > 1 ? `.${parts.slice(1).join('').slice(0, 2)}` : '';
+
+  return `${pesos}${cents}`;
+}
+
 function formatPeso(value) {
   const amount = Number(value) || 0;
 
@@ -146,11 +230,105 @@ function ServiceStatusBadge({ active }) {
   );
 }
 
+function PaginationControls({
+  currentPage,
+  totalPages,
+  pageSize,
+  totalItems,
+  onPageChange,
+  onPageSizeChange,
+}) {
+  if (totalItems <= DEFAULT_PAGE_SIZE && totalPages <= 1) return null;
+
+  const pageNumbers = Array.from({ length: totalPages }, (_, index) => index + 1).filter(
+    (page) =>
+      page === 1 ||
+      page === totalPages ||
+      Math.abs(page - currentPage) <= 1
+  );
+
+  return (
+    <div className="mt-6 flex flex-col gap-4 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800 md:flex-row md:items-center md:justify-between">
+      <div>
+        <p className="text-sm font-black text-gray-950 dark:text-white">
+          Page {currentPage} of {totalPages}
+        </p>
+        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          {totalItems} record{totalItems === 1 ? '' : 's'} found
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <label className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+          Rows
+          <select
+            value={pageSize}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+            className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-black text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+          >
+            {PAGE_SIZE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+            disabled={currentPage === 1}
+            className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
+          >
+            Prev
+          </button>
+
+          {pageNumbers.map((page, index) => {
+            const previousPage = pageNumbers[index - 1];
+            const showGap = previousPage && page - previousPage > 1;
+
+            return (
+              <span key={page} className="flex items-center gap-2">
+                {showGap && (
+                  <span className="px-1 text-xs font-black text-gray-400">...</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onPageChange(page)}
+                  className={`rounded-xl px-3 py-2 text-xs font-black transition ${
+                    page === currentPage
+                      ? 'bg-primary-600 text-white shadow-lg shadow-primary-600/20'
+                      : 'border border-gray-200 text-gray-700 hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400'
+                  }`}
+                >
+                  {page}
+                </button>
+              </span>
+            );
+          })}
+
+          <button
+            type="button"
+            onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+            disabled={currentPage === totalPages}
+            className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminServices() {
   const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState('services');
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
 
   const [services, setServices] = useState([]);
   const [loadingServices, setLoadingServices] = useState(true);
@@ -295,6 +473,7 @@ export default function AdminServices() {
   function handleTabChange(tab) {
     setActiveTab(tab);
     setSearchQuery('');
+    setCurrentPage(1);
     closePanel();
   }
 
@@ -344,39 +523,88 @@ export default function AdminServices() {
   }
 
   function handleServiceChange(event) {
+    const { name, value } = event.target;
+    let nextValue = value;
+
+    if (name === 'base_price' || name === 'labor_cost') {
+      nextValue = limitMoneyInput(value);
+    } else if (name === 'estimated_duration_minutes') {
+      nextValue = String(value ?? '').replace(/[^0-9]/g, '').slice(0, 4);
+    } else if (name === 'name') {
+      nextValue = String(value ?? '').replace(/[<>]/g, '').slice(0, 80);
+    } else if (name === 'description') {
+      nextValue = String(value ?? '').replace(/[<>]/g, '').slice(0, 500);
+    }
+
     setServiceForm({
       ...serviceForm,
-      [event.target.name]: event.target.value,
+      [name]: nextValue,
     });
   }
 
   function handleModelChange(event) {
+    const { name, value } = event.target;
+    let nextValue = value;
+
+    if (name === 'make' || name === 'model') {
+      nextValue = String(value ?? '').replace(/[<>]/g, '').slice(0, 80);
+    } else if (name === 'year_range') {
+      nextValue = String(value ?? '').replace(/[<>]/g, '').slice(0, 40);
+    } else if (name === 'reference_photo_url') {
+      nextValue = String(value ?? '').replace(/[<>]/g, '').slice(0, 500);
+    }
+
     setModelForm({
       ...modelForm,
-      [event.target.name]: event.target.value,
+      [name]: nextValue,
     });
   }
 
-  function validateServiceForm() {
-    if (!serviceForm.name.trim()) return 'Service name is required.';
+  function getCleanServicePayload() {
+    const name = cleanInlineText(serviceForm.name, 80);
+    const description = cleanMultilineText(serviceForm.description, 500);
+    const basePrice = cleanMoney(serviceForm.base_price);
+    const laborCost = cleanMoney(serviceForm.labor_cost || '0');
+    const duration = cleanDuration(serviceForm.estimated_duration_minutes || '60');
 
-    const basePrice = parseFloat(serviceForm.base_price);
-    if (Number.isNaN(basePrice) || basePrice < 0) return 'Please enter a valid base price.';
+    if (!name) return { error: 'Service name is required.' };
+    if (basePrice === null) return { error: 'Please enter a valid base price from 0 to 999999.' };
+    if (laborCost === null) return { error: 'Please enter a valid labor cost from 0 to 999999.' };
+    if (duration === null) {
+      return { error: 'Duration must be 1 to 1440 minutes only.' };
+    }
 
-    const laborCost = parseFloat(serviceForm.labor_cost || '0');
-    if (Number.isNaN(laborCost) || laborCost < 0) return 'Please enter a valid labor cost.';
-
-    const duration = parseInt(serviceForm.estimated_duration_minutes || '60', 10);
-    if (Number.isNaN(duration) || duration <= 0) return 'Duration must be greater than 0 minutes.';
-
-    return '';
+    return {
+      payload: {
+        name,
+        description: description || null,
+        base_price: basePrice,
+        labor_cost: laborCost,
+        estimated_duration_minutes: duration,
+      },
+    };
   }
 
-  function validateModelForm() {
-    if (!modelForm.make.trim()) return 'Motorcycle make is required.';
-    if (!modelForm.model.trim()) return 'Motorcycle model is required.';
+  function getCleanModelPayload() {
+    const make = cleanInlineText(modelForm.make, 80);
+    const model = cleanInlineText(modelForm.model, 80);
+    const yearRange = cleanInlineText(modelForm.year_range, 40);
+    const referencePhotoUrl = cleanUrl(modelForm.reference_photo_url);
 
-    return '';
+    if (!make) return { error: 'Motorcycle make is required.' };
+    if (!model) return { error: 'Motorcycle model is required.' };
+    if (modelForm.reference_photo_url.trim() && !referencePhotoUrl) {
+      return { error: 'Reference photo URL must be a valid http or https link.' };
+    }
+
+    return {
+      payload: {
+        make,
+        model,
+        year_range: yearRange || null,
+        reference_photo_url: referencePhotoUrl,
+      },
+    };
   }
 
   async function handleSubmit(event) {
@@ -387,22 +615,13 @@ export default function AdminServices() {
 
     try {
       if (activeTab === 'services') {
-        const validationError = validateServiceForm();
+        const { payload, error: validationError } = getCleanServicePayload();
 
         if (validationError) {
           setFormError(validationError);
           setSaving(false);
           return;
         }
-
-        const payload = {
-          name: serviceForm.name.trim(),
-          description: serviceForm.description.trim() || null,
-          base_price: parseFloat(serviceForm.base_price),
-          labor_cost: parseFloat(serviceForm.labor_cost || 0),
-          estimated_duration_minutes:
-            parseInt(serviceForm.estimated_duration_minutes || '60', 10) || 60,
-        };
 
         if (editingId) {
           const { error } = await supabase
@@ -437,20 +656,13 @@ export default function AdminServices() {
         closePanel();
         await fetchServices(false);
       } else {
-        const validationError = validateModelForm();
+        const { payload, error: validationError } = getCleanModelPayload();
 
         if (validationError) {
           setFormError(validationError);
           setSaving(false);
           return;
         }
-
-        const payload = {
-          make: modelForm.make.trim(),
-          model: modelForm.model.trim(),
-          year_range: modelForm.year_range.trim() || null,
-          reference_photo_url: modelForm.reference_photo_url.trim() || null,
-        };
 
         if (editingId) {
           const { error } = await supabase
@@ -524,7 +736,14 @@ export default function AdminServices() {
   }
 
   async function deleteService(service) {
-    if (!confirm(`Delete "${service.name}"?`)) return;
+    const serviceName = cleanInlineText(service.name, 80) || 'this service';
+    const confirmed = window.confirm(
+      `Delete "${serviceName}"?
+
+This action cannot be undone. If this service is already used by bookings, the database may block the delete.`
+    );
+
+    if (!confirmed) return;
 
     setDeletingId(service.id);
 
@@ -537,10 +756,10 @@ export default function AdminServices() {
       if (error) throw error;
 
       await insertAuditLog('DELETE_SERVICE', 'services', service.id, {
-        name: service.name,
+        name: serviceName,
       });
 
-      setToast(`Deleted ${service.name}`);
+      setToast(`Deleted ${serviceName}`);
       await fetchServices(false);
     } catch (err) {
       setFetchError(err.message || 'Failed to delete service.');
@@ -550,7 +769,14 @@ export default function AdminServices() {
   }
 
   async function deleteModel(model) {
-    if (!confirm(`Delete "${model.make} ${model.model}"?`)) return;
+    const modelName = cleanInlineText(`${model.make || ''} ${model.model || ''}`, 160) || 'this model';
+    const confirmed = window.confirm(
+      `Delete "${modelName}"?
+
+This action cannot be undone. If this model is already used by records, the database may block the delete.`
+    );
+
+    if (!confirmed) return;
 
     setDeletingId(model.id);
 
@@ -563,11 +789,11 @@ export default function AdminServices() {
       if (error) throw error;
 
       await insertAuditLog('DELETE_MOTORCYCLE_MODEL', 'motorcycle_models', model.id, {
-        make: model.make,
-        model: model.model,
+        make: cleanInlineText(model.make, 80),
+        model: cleanInlineText(model.model, 80),
       });
 
-      setToast(`Deleted ${model.make} ${model.model}`);
+      setToast(`Deleted ${modelName}`);
       await fetchModels(false);
     } catch (err) {
       setFetchError(err.message || 'Failed to delete motorcycle model.');
@@ -640,6 +866,22 @@ export default function AdminServices() {
   const loading = activeTab === 'services' ? loadingServices : loadingModels;
   const currentCount = activeTab === 'services' ? filteredServices.length : filteredModels.length;
   const totalCount = activeTab === 'services' ? services.length : models.length;
+  const totalPages = Math.max(1, Math.ceil(currentCount / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, currentCount);
+  const paginatedServices = filteredServices.slice(startIndex, endIndex);
+  const paginatedModels = filteredModels.slice(startIndex, endIndex);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, searchQuery, pageSize]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   return (
     <div className="min-h-[calc(100vh-65px)] bg-gray-50 px-4 py-8 text-gray-900 dark:bg-dark-900 dark:text-white sm:px-6 lg:py-10">
@@ -751,14 +993,20 @@ export default function AdminServices() {
               <input
                 type="text"
                 value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                  setCurrentPage(1);
+                }}
                 placeholder={`Search ${activeTab === 'services' ? 'services' : 'models'}...`}
                 className="w-full rounded-2xl border border-gray-200 bg-gray-50 py-3 pl-10 pr-10 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
               />
               {searchQuery && (
                 <button
                   type="button"
-                  onClick={() => setSearchQuery('')}
+                  onClick={() => {
+                    setSearchQuery('');
+                    setCurrentPage(1);
+                  }}
                   className="absolute inset-y-0 right-0 flex items-center pr-4 text-sm font-black text-gray-400 transition hover:text-gray-900 dark:hover:text-white"
                 >
                   ✕
@@ -769,7 +1017,9 @@ export default function AdminServices() {
         </div>
 
         <p className="mb-4 text-sm font-semibold text-gray-500 dark:text-gray-400">
-          Showing {currentCount} of {totalCount} {activeTab === 'services' ? 'services' : 'models'}
+          Showing {currentCount === 0 ? '0' : `${startIndex + 1}-${endIndex}`} of {currentCount}{' '}
+          {activeTab === 'services' ? 'services' : 'models'}
+          {currentCount !== totalCount ? ` (${totalCount} total)` : ''}
         </p>
 
         {/* Services Tab */}
@@ -790,8 +1040,9 @@ export default function AdminServices() {
                 onAction={openAddPanel}
               />
             ) : (
-              <div className="grid gap-4 lg:grid-cols-2">
-                {filteredServices.map((service) => {
+              <>
+                <div className="grid gap-4 lg:grid-cols-2">
+                {paginatedServices.map((service) => {
                   const totalPrice =
                     (Number(service.base_price) || 0) + (Number(service.labor_cost) || 0);
 
@@ -884,7 +1135,17 @@ export default function AdminServices() {
                     </article>
                   );
                 })}
-              </div>
+                </div>
+
+                <PaginationControls
+                  currentPage={safeCurrentPage}
+                  totalPages={totalPages}
+                  pageSize={pageSize}
+                  totalItems={currentCount}
+                  onPageChange={setCurrentPage}
+                  onPageSizeChange={setPageSize}
+                />
+              </>
             )}
           </>
         )}
@@ -907,8 +1168,9 @@ export default function AdminServices() {
                 onAction={openAddPanel}
               />
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredModels.map((model) => (
+              <>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {paginatedModels.map((model) => (
                   <article
                     key={model.id}
                     className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm transition hover:border-primary-100 dark:border-dark-700 dark:bg-dark-800 dark:hover:border-primary-500/30"
@@ -958,7 +1220,17 @@ export default function AdminServices() {
                     </div>
                   </article>
                 ))}
-              </div>
+                </div>
+
+                <PaginationControls
+                  currentPage={safeCurrentPage}
+                  totalPages={totalPages}
+                  pageSize={pageSize}
+                  totalItems={currentCount}
+                  onPageChange={setCurrentPage}
+                  onPageSizeChange={setPageSize}
+                />
+              </>
             )}
           </>
         )}
@@ -1008,6 +1280,7 @@ export default function AdminServices() {
                     value={serviceForm.name}
                     onChange={handleServiceChange}
                     required
+                    maxLength={80}
                     placeholder="e.g. Oil Change"
                   />
 
@@ -1015,9 +1288,8 @@ export default function AdminServices() {
                     <TextInput
                       label="Base Price *"
                       name="base_price"
-                      type="number"
-                      step="0.01"
-                      min="0"
+                      type="text"
+                      inputMode="decimal"
                       value={serviceForm.base_price}
                       onChange={handleServiceChange}
                       required
@@ -1026,9 +1298,8 @@ export default function AdminServices() {
                     <TextInput
                       label="Labor Cost"
                       name="labor_cost"
-                      type="number"
-                      step="0.01"
-                      min="0"
+                      type="text"
+                      inputMode="decimal"
                       value={serviceForm.labor_cost}
                       onChange={handleServiceChange}
                     />
@@ -1037,8 +1308,8 @@ export default function AdminServices() {
                   <TextInput
                     label="Duration"
                     name="estimated_duration_minutes"
-                    type="number"
-                    min="1"
+                    type="text"
+                    inputMode="numeric"
                     value={serviceForm.estimated_duration_minutes}
                     onChange={handleServiceChange}
                     helper="Estimated duration in minutes."
@@ -1053,6 +1324,7 @@ export default function AdminServices() {
                       value={serviceForm.description}
                       onChange={handleServiceChange}
                       rows={4}
+                      maxLength={500}
                       placeholder="Briefly describe what this service includes..."
                       className="w-full resize-none rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
                     />
@@ -1087,6 +1359,7 @@ export default function AdminServices() {
                         name="reference_photo_url"
                         value={modelForm.reference_photo_url}
                         onChange={handleModelChange}
+                        maxLength={500}
                         placeholder="https://..."
                         className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
                       />
@@ -1100,6 +1373,7 @@ export default function AdminServices() {
                       value={modelForm.make}
                       onChange={handleModelChange}
                       required
+                      maxLength={80}
                       placeholder="e.g. Yamaha"
                     />
 
@@ -1109,6 +1383,7 @@ export default function AdminServices() {
                       value={modelForm.model}
                       onChange={handleModelChange}
                       required
+                      maxLength={80}
                       placeholder="e.g. Aerox 155"
                     />
                   </div>
@@ -1118,6 +1393,7 @@ export default function AdminServices() {
                     name="year_range"
                     value={modelForm.year_range}
                     onChange={handleModelChange}
+                    maxLength={40}
                     placeholder="e.g. 2021–2024"
                   />
                 </>

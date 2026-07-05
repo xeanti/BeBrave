@@ -3,23 +3,46 @@ import { Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
 
 const INITIAL_STATS = {
-  totalBookings: 0,
+  todayBookings: 0,
   pendingBookings: 0,
-  pendingAssessments: 0,
+  waitingWalkIns: 0,
   pendingOrders: 0,
-  totalCustomers: 0,
-  totalMechanics: 0,
-  totalParts: 0,
-  totalServices: 0,
-  totalRevenue: 0,
-  orderRevenue: 0,
-  bookingRevenue: 0,
-  lowStockCount: 0,
-  outOfStockCount: 0,
+  lowStockProducts: 0,
+  todayRevenue: 0,
 };
+
+const STATUS_STYLES = {
+  pending:
+    'bg-yellow-50 text-yellow-700 ring-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-300 dark:ring-yellow-500/25',
+  confirmed:
+    'bg-green-50 text-green-700 ring-green-200 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25',
+  in_progress:
+    'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/25',
+  inspection:
+    'bg-indigo-50 text-indigo-700 ring-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-300 dark:ring-indigo-500/25',
+  repairing:
+    'bg-purple-50 text-purple-700 ring-purple-200 dark:bg-purple-500/10 dark:text-purple-300 dark:ring-purple-500/25',
+  quality_check:
+    'bg-cyan-50 text-cyan-700 ring-cyan-200 dark:bg-cyan-500/10 dark:text-cyan-300 dark:ring-cyan-500/25',
+  ready_for_pickup:
+    'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/25',
+  completed:
+    'bg-gray-100 text-gray-700 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25',
+  cancelled:
+    'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25',
+  processing:
+    'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/25',
+  ready:
+    'bg-primary-50 text-primary-700 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-400 dark:ring-primary-500/25',
+};
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 function formatPeso(value) {
   const amount = Number(value) || 0;
+
   return `₱${amount.toLocaleString('en-PH', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -28,17 +51,30 @@ function formatPeso(value) {
 
 function formatDate(value) {
   if (!value) return '—';
+
+  const parts = String(value).split('-');
+
+  if (parts.length === 3) {
+    const [year, month, day] = parts.map(Number);
+
+    return new Date(year, month - 1, day).toLocaleDateString('en-PH', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  }
+
   return new Date(value).toLocaleDateString('en-PH', {
-    year: 'numeric',
     month: 'short',
     day: 'numeric',
+    year: 'numeric',
   });
 }
 
 function formatDateTime(value) {
   if (!value) return '—';
+
   return new Date(value).toLocaleString('en-PH', {
-    year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
@@ -48,39 +84,92 @@ function formatDateTime(value) {
 
 function formatTime(time) {
   if (!time) return '—';
+
   const [h, m = '00'] = String(time).slice(0, 5).split(':');
   const hour = parseInt(h, 10);
   const ampm = hour >= 12 ? 'PM' : 'AM';
   const displayHour = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour;
+
   return `${displayHour}:${m} ${ampm}`;
 }
 
-const STATUS_STYLES = {
-  confirmed: 'bg-green-50 text-green-700 ring-green-200 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25',
-  pending: 'bg-yellow-50 text-yellow-700 ring-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-300 dark:ring-yellow-500/25',
-  in_progress: 'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/25',
-  completed: 'bg-gray-100 text-gray-700 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25',
-  cancelled: 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25',
-  preparing: 'bg-purple-50 text-purple-700 ring-purple-200 dark:bg-purple-500/10 dark:text-purple-300 dark:ring-purple-500/25',
-  processing: 'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/25',
-  ready: 'bg-primary-50 text-primary-700 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-400 dark:ring-primary-500/25',
-  reviewed: 'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/25',
-  converted: 'bg-green-50 text-green-700 ring-green-200 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25',
-};
+function cleanStatus(status) {
+  return String(status || 'pending').toLowerCase();
+}
+
+function statusLabel(status) {
+  return cleanStatus(status)
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
 
 function StatusBadge({ status }) {
+  const normalized = cleanStatus(status);
+
   return (
-    <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-black capitalize ring-1 ${STATUS_STYLES[status] || STATUS_STYLES.pending}`}>
-      {String(status || 'pending').replace('_', ' ')}
+    <span
+      className={`inline-flex rounded-full px-3 py-1 text-xs font-black capitalize ring-1 ${
+        STATUS_STYLES[normalized] || STATUS_STYLES.pending
+      }`}
+    >
+      {statusLabel(normalized)}
     </span>
   );
+}
+
+function getCustomerName(row) {
+  const profile = row?.profiles || row?.customer || {};
+  const name = `${profile.first_name || ''} ${profile.last_name || ''}`.trim();
+
+  return name || profile.email || profile.phone || row?.customer_name || row?.walkin_customer_name || 'Customer';
+}
+
+function getServiceRows(booking) {
+  const rows = Array.isArray(booking?.booking_services) ? booking.booking_services : [];
+
+  if (rows.length > 0) {
+    return rows.map((row) => ({
+      ...row,
+      service_name: row.service_name || row.services?.name || 'Service',
+    }));
+  }
+
+  if (booking?.services_summary && String(booking.services_summary).includes(',')) {
+    return String(booking.services_summary)
+      .split(',')
+      .map((name, index) => ({
+        id: `summary-${index}`,
+        service_name: name.trim(),
+      }))
+      .filter((row) => row.service_name);
+  }
+
+  if (booking?.services?.name || booking?.services_summary) {
+    return [
+      {
+        id: booking?.service_id || 'single-service',
+        service_name: booking.services_summary || booking.services?.name || 'Service',
+      },
+    ];
+  }
+
+  return [];
+}
+
+function getServiceNames(booking) {
+  const rows = getServiceRows(booking);
+
+  if (rows.length > 0) {
+    return rows.map((row) => row.service_name).join(', ');
+  }
+
+  return 'Service';
 }
 
 function StatCard({ label, value, icon, to, tone = 'default' }) {
   const tones = {
     default: 'text-gray-950 dark:text-white',
     primary: 'text-primary-600 dark:text-primary-400',
-    accent: 'text-accent-600 dark:text-accent-400',
     green: 'text-green-600 dark:text-green-300',
     yellow: 'text-yellow-600 dark:text-yellow-300',
     red: 'text-red-600 dark:text-red-300',
@@ -88,42 +177,64 @@ function StatCard({ label, value, icon, to, tone = 'default' }) {
   };
 
   const card = (
-    <div className="group h-full rounded-3xl border border-gray-200 bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:border-primary-100 hover:shadow-xl hover:shadow-gray-200/60 dark:border-dark-700 dark:bg-dark-800 dark:hover:border-primary-500/30 dark:hover:shadow-black/20">
+    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition hover:border-primary-200 dark:border-dark-700 dark:bg-dark-800 dark:hover:border-primary-500/30">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gray-50 text-2xl ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
-          {icon}
-        </div>
-        {to && <span className="text-xs font-black text-gray-400 group-hover:text-primary-600 dark:group-hover:text-primary-400">View →</span>}
+        <span className="text-2xl">{icon}</span>
+        {to && <span className="text-xs font-black text-gray-400">View →</span>}
       </div>
-      <p className={`text-3xl font-black ${tones[tone] || tones.default}`}>{value}</p>
-      <p className="mt-1 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">{label}</p>
+      <p className={`text-2xl font-black ${tones[tone] || tones.default}`}>
+        {value}
+      </p>
+      <p className="mt-1 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+        {label}
+      </p>
     </div>
   );
 
   return to ? <Link to={to}>{card}</Link> : card;
 }
 
-function QuickLink({ to, label, icon }) {
+function QuickAction({ to, icon, title, subtitle }) {
   return (
     <Link
       to={to}
-      className="group rounded-3xl border border-gray-200 bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:border-primary-100 hover:shadow-xl hover:shadow-gray-200/60 dark:border-dark-700 dark:bg-dark-800 dark:hover:border-primary-500/30 dark:hover:shadow-black/20"
+      className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition hover:border-primary-200 hover:bg-primary-50/40 dark:border-dark-700 dark:bg-dark-800 dark:hover:border-primary-500/30 dark:hover:bg-primary-500/5"
     >
-      <div className="mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-primary-50 text-2xl text-primary-700 ring-1 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-400 dark:ring-primary-500/20">
-        {icon}
-      </div>
-      <p className="text-sm font-black text-gray-950 group-hover:text-primary-700 dark:text-white dark:group-hover:text-primary-400">
-        {label}
-      </p>
+      <div className="mb-3 text-3xl">{icon}</div>
+      <p className="text-sm font-black text-gray-950 dark:text-white">{title}</p>
+      <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">{subtitle}</p>
     </Link>
   );
 }
 
-function LoadingRows() {
+function SectionCard({ title, subtitle, action, children }) {
+  return (
+    <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-lg font-black text-gray-950 dark:text-white">{title}</h2>
+          {subtitle && (
+            <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
+              {subtitle}
+            </p>
+          )}
+        </div>
+        {action}
+      </div>
+
+      {children}
+    </section>
+  );
+}
+
+function LoadingBox() {
   return (
     <div className="space-y-3">
       {[1, 2, 3].map((item) => (
-        <div key={item} className="h-20 animate-pulse rounded-2xl bg-gray-100 dark:bg-dark-900" />
+        <div
+          key={item}
+          className="h-16 animate-pulse rounded-2xl bg-gray-100 dark:bg-dark-900"
+        />
       ))}
     </div>
   );
@@ -131,9 +242,9 @@ function LoadingRows() {
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState(INITIAL_STATS);
-  const [recentBookings, setRecentBookings] = useState([]);
+  const [todayBookings, setTodayBookings] = useState([]);
   const [recentOrders, setRecentOrders] = useState([]);
-  const [lowStockParts, setLowStockParts] = useState([]);
+  const [lowStockProducts, setLowStockProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -141,115 +252,197 @@ export default function AdminDashboard() {
   useEffect(() => {
     fetchDashboardData();
 
-    const tables = ['bookings', 'pre_assessments', 'orders', 'profiles', 'parts', 'services'];
-    const channels = tables.map((table) =>
+    const watchedTables = ['bookings', 'walkin_queue', 'orders', 'parts', 'services'];
+    const channels = watchedTables.map((table) =>
       supabase
-        .channel(`admin-dashboard-${table}`)
-        .on('postgres_changes', { event: '*', schema: 'public', table }, () => fetchDashboardData(false))
+        .channel(`simple-admin-dashboard-${table}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table },
+          () => fetchDashboardData(false)
+        )
         .subscribe()
     );
 
     const handleFocus = () => fetchDashboardData(false);
-    const handleVisibilityChange = () => {
-      if (!document.hidden) fetchDashboardData(false);
-    };
 
     window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       channels.forEach((channel) => supabase.removeChannel(channel));
       window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
 
+  async function safeQuery(label, query) {
+    const result = await query;
+
+    if (result.error) {
+      console.warn(`${label}:`, result.error.message);
+      return [];
+    }
+
+    return result.data || [];
+  }
+
   async function fetchDashboardData(showLoader = true) {
     if (showLoader) setLoading(true);
+
     setFetchError('');
 
     try {
+      const today = todayISO();
+
       const [
-        bookings,
-        assessments,
-        orders,
-        customers,
-        mechanics,
-        parts,
-        services,
-        recentBookingsResult,
-        recentOrdersResult,
+        bookingRows,
+        walkInRows,
+        orderRows,
+        productRows,
+        todayBookingRows,
+        recentOrderRows,
       ] = await Promise.all([
-        supabase.from('bookings').select('id, status, down_payment, booking_date, booking_time, created_at, services(base_price, labor_cost)'),
-        supabase.from('pre_assessments').select('id, status'),
-        supabase.from('orders').select('id, status, total_amount, created_at'),
-        supabase.from('profiles').select('id').eq('role', 'customer'),
-        supabase.from('profiles').select('id').eq('role', 'mechanic'),
-        supabase.from('parts').select('id, name, stock_quantity, reorder_threshold, image_url').order('stock_quantity', { ascending: true }),
-        supabase.from('services').select('id'),
-        supabase
-          .from('bookings')
-          .select('*, services(name), profiles!bookings_customer_id_fkey(first_name, last_name)')
-          .order('created_at', { ascending: false })
-          .limit(5),
-        supabase
-          .from('orders')
-          .select('*, profiles!orders_customer_id_fkey(first_name, last_name), order_items(id)')
-          .order('created_at', { ascending: false })
-          .limit(5),
+        safeQuery(
+          'bookings',
+          supabase
+            .from('bookings')
+            .select(
+              `
+              id,
+              status,
+              booking_date,
+              booking_time,
+              total_amount,
+              service_total,
+              services_summary,
+              services(name, base_price, labor_cost),
+              booking_services(id, service_name, services(name))
+            `
+            )
+        ),
+        safeQuery(
+          'walkin_queue',
+          supabase
+            .from('walkin_queue')
+            .select('id, status, queue_number, total_amount, created_at')
+        ),
+        safeQuery(
+          'orders',
+          supabase
+            .from('orders')
+            .select('id, status, total_amount, created_at')
+        ),
+        safeQuery(
+          'parts',
+          supabase
+            .from('parts')
+            .select('id, name, stock_quantity, reorder_threshold, image_url')
+            .order('stock_quantity', { ascending: true })
+        ),
+        safeQuery(
+          'today_bookings',
+          supabase
+            .from('bookings')
+            .select(
+              `
+              id,
+              status,
+              booking_date,
+              booking_time,
+              services_summary,
+              services(name),
+              booking_services(id, service_name, services(name)),
+              profiles!bookings_customer_id_fkey(first_name, last_name, phone, email)
+            `
+            )
+            .eq('booking_date', today)
+            .order('booking_time', { ascending: true })
+            .limit(6)
+        ),
+        safeQuery(
+          'recent_orders',
+          supabase
+            .from('orders')
+            .select(
+              `
+              id,
+              status,
+              total_amount,
+              created_at,
+              profiles!orders_customer_id_fkey(first_name, last_name, phone, email),
+              order_items(id)
+            `
+            )
+            .order('created_at', { ascending: false })
+            .limit(5)
+        ),
       ]);
 
-      const firstError = [bookings, assessments, orders, customers, mechanics, parts, services, recentBookingsResult, recentOrdersResult]
-        .find((result) => result.error)?.error;
+      const pendingBookingRows = bookingRows.filter(
+        (booking) => cleanStatus(booking.status) === 'pending'
+      );
 
-      if (firstError) throw firstError;
+      const waitingWalkInRows = walkInRows.filter((row) =>
+        ['waiting', 'queued', 'pending'].includes(cleanStatus(row.status))
+      );
 
-      const bookingRows = bookings.data || [];
-      const assessmentRows = assessments.data || [];
-      const orderRows = orders.data || [];
-      const partRows = parts.data || [];
+      const pendingOrderRows = orderRows.filter((order) =>
+        ['pending', 'processing'].includes(cleanStatus(order.status))
+      );
 
-      const orderRevenue = orderRows
-        .filter((order) => order.status === 'completed')
-        .reduce((sum, order) => sum + (Number(order.total_amount) || 0), 0);
-
-      const bookingRevenue = bookingRows
-        .filter((booking) => booking.status === 'completed')
-        .reduce((sum, booking) => {
-          const total =
-            (Number(booking.services?.base_price) || 0) +
-            (Number(booking.services?.labor_cost) || 0);
-
-          return sum + total;
-        }, 0);
-
-      const outOfStock = partRows.filter((part) => Number(part.stock_quantity) <= 0);
-      const lowStock = partRows.filter((part) => {
+      const lowStockRows = productRows.filter((part) => {
         const stock = Number(part.stock_quantity) || 0;
-        const threshold = Number(part.reorder_threshold ?? 5);
+        const threshold = Number(part.reorder_threshold ?? 5) || 5;
+
         return stock > 0 && stock <= threshold;
       });
 
-      setLowStockParts([...outOfStock, ...lowStock].slice(0, 6));
+      const outOfStockRows = productRows.filter(
+        (part) => Number(part.stock_quantity) <= 0
+      );
 
-      setStats({
-        totalBookings: bookingRows.length,
-        pendingBookings: bookingRows.filter((booking) => booking.status === 'pending').length,
-        pendingAssessments: assessmentRows.filter((assessment) => assessment.status === 'pending').length,
-        pendingOrders: orderRows.filter((order) => order.status === 'pending').length,
-        totalCustomers: customers.data?.length || 0,
-        totalMechanics: mechanics.data?.length || 0,
-        totalParts: partRows.length,
-        totalServices: services.data?.length || 0,
-        totalRevenue: orderRevenue + bookingRevenue,
-        orderRevenue,
-        bookingRevenue,
-        lowStockCount: lowStock.length,
-        outOfStockCount: outOfStock.length,
+      const completedTodayOrders = orderRows.filter((order) => {
+        const date = String(order.created_at || '').slice(0, 10);
+        return cleanStatus(order.status) === 'completed' && date === today;
       });
 
-      setRecentBookings(recentBookingsResult.data || []);
-      setRecentOrders(recentOrdersResult.data || []);
+      const completedTodayBookings = bookingRows.filter((booking) => {
+        return (
+          cleanStatus(booking.status) === 'completed' &&
+          String(booking.booking_date || '').slice(0, 10) === today
+        );
+      });
+
+      const todayOrderRevenue = completedTodayOrders.reduce(
+        (sum, order) => sum + (Number(order.total_amount) || 0),
+        0
+      );
+
+      const todayBookingRevenue = completedTodayBookings.reduce((sum, booking) => {
+        const savedTotal =
+          Number(booking.total_amount) || Number(booking.service_total) || 0;
+
+        if (savedTotal > 0) return sum + savedTotal;
+
+        const services = booking.services || {};
+        return (
+          sum +
+          (Number(services.base_price) || 0) +
+          (Number(services.labor_cost) || 0)
+        );
+      }, 0);
+
+      setStats({
+        todayBookings: todayBookingRows.length,
+        pendingBookings: pendingBookingRows.length,
+        waitingWalkIns: waitingWalkInRows.length,
+        pendingOrders: pendingOrderRows.length,
+        lowStockProducts: lowStockRows.length + outOfStockRows.length,
+        todayRevenue: todayOrderRevenue + todayBookingRevenue,
+      });
+
+      setTodayBookings(todayBookingRows);
+      setRecentOrders(recentOrderRows);
+      setLowStockProducts([...outOfStockRows, ...lowStockRows].slice(0, 5));
       setLastUpdated(new Date());
     } catch (err) {
       console.error(err);
@@ -259,55 +452,76 @@ export default function AdminDashboard() {
     }
   }
 
-  const hasStockWarnings = stats.lowStockCount > 0 || stats.outOfStockCount > 0;
-
-  const quickLinks = [
-    ['/admin/bookings', 'Manage Bookings', '📋'],
-    ['/admin/orders', 'Manage Orders', '📦'],
-    ['/admin/parts', 'Manage Parts', '⚙️'],
-    ['/admin/services', 'Manage Services', '🛠️'],
-    ['/admin/chatbot-templates', 'Chatbot Templates', '🤖'],
-    ['/admin/assessments', 'Assessments', '📋'],
-    ['/admin/chat', 'Customer Chats', '💬'],
-    ['/admin/users', 'Manage Users', '👥'],
-  ];
+  const quickActions = useMemo(
+    () => [
+      {
+        to: '/admin/bookings',
+        icon: '📅',
+        title: 'Bookings',
+        subtitle: 'Approve and manage appointments.',
+      },
+      {
+        to: '/admin/walk-in-queue',
+        icon: '🎫',
+        title: 'Walk-in Queue',
+        subtitle: 'View and process walk-in customers.',
+      },
+      {
+        to: '/admin/orders',
+        icon: '📦',
+        title: 'Orders',
+        subtitle: 'Manage product orders.',
+      },
+      {
+        to: '/admin/parts',
+        icon: '🛒',
+        title: 'Products',
+        subtitle: 'Update products and stock.',
+      },
+      {
+        to: '/admin/services',
+        icon: '🛠️',
+        title: 'Services',
+        subtitle: 'Manage service list and pricing.',
+      },
+      {
+        to: '/admin/chat',
+        icon: '💬',
+        title: 'Chats',
+        subtitle: 'Reply to customer concerns.',
+      },
+    ],
+    []
+  );
 
   return (
     <div className="min-h-[calc(100vh-65px)] bg-gray-50 px-4 py-8 text-gray-900 dark:bg-dark-900 dark:text-white sm:px-6 lg:py-10">
       <div className="mx-auto max-w-7xl">
-        {/* Header */}
-        <div className="mb-8 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
-          <div className="relative p-6 sm:p-8">
-            <div className="absolute -right-8 -top-14 h-36 w-36 rounded-full bg-primary-500/10 blur-3xl" />
-            <div className="absolute -bottom-16 left-10 h-36 w-36 rounded-full bg-accent-500/10 blur-3xl" />
-
-            <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <p className="mb-2 text-xs font-black uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
-                  MotoFix Admin
-                </p>
-                <h1 className="text-3xl font-black tracking-tight text-gray-950 dark:text-white md:text-4xl">
-                  Admin Dashboard
-                </h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
-                  Overview of bookings, assessments, orders, users, inventory, services, and completed revenue.
-                </p>
-                {lastUpdated && (
-                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                    Last updated: {formatDateTime(lastUpdated)}
-                  </p>
-                )}
-              </div>
-
-              <button
-                type="button"
-                onClick={() => fetchDashboardData(false)}
-                className="inline-flex items-center justify-center rounded-2xl border border-gray-200 px-5 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
-              >
-                Refresh
-              </button>
-            </div>
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="mb-2 text-xs font-black uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
+              MotoFix Admin
+            </p>
+            <h1 className="text-3xl font-black tracking-tight text-gray-950 dark:text-white">
+              Dashboard
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
+              Simple daily overview for bookings, walk-ins, orders, and stock.
+            </p>
+            {lastUpdated && (
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                Last updated: {formatDateTime(lastUpdated)}
+              </p>
+            )}
           </div>
+
+          <button
+            type="button"
+            onClick={() => fetchDashboardData(false)}
+            className="rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
+          >
+            Refresh
+          </button>
         </div>
 
         {fetchError && (
@@ -316,224 +530,207 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* Stats grid */}
-        <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <StatCard label="Total Bookings" value={stats.totalBookings} icon="📅" tone="blue" to="/admin/bookings" />
-          <StatCard label="Pending Bookings" value={stats.pendingBookings} icon="⏳" tone="yellow" to="/admin/bookings" />
-          <StatCard label="Pending Assessments" value={stats.pendingAssessments} icon="📋" tone="accent" to="/admin/assessments" />
-          <StatCard label="Pending Orders" value={stats.pendingOrders} icon="📦" tone="primary" to="/admin/orders" />
-          <StatCard label="Customers" value={stats.totalCustomers} icon="👥" tone="green" to="/admin/users" />
-          <StatCard label="Mechanics" value={stats.totalMechanics} icon="🔧" tone="primary" to="/admin/users" />
+        <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-6">
           <StatCard
-            label="Low Stock Parts"
-            value={stats.lowStockCount}
+            label="Today"
+            value={stats.todayBookings}
+            icon="📅"
+            tone="blue"
+            to="/admin/bookings"
+          />
+          <StatCard
+            label="Pending Bookings"
+            value={stats.pendingBookings}
+            icon="⏳"
+            tone="yellow"
+            to="/admin/bookings"
+          />
+          <StatCard
+            label="Walk-ins Waiting"
+            value={stats.waitingWalkIns}
+            icon="🎫"
+            tone="primary"
+            to="/admin/walk-in-queue"
+          />
+          <StatCard
+            label="Pending Orders"
+            value={stats.pendingOrders}
+            icon="📦"
+            tone="green"
+            to="/admin/orders"
+          />
+          <StatCard
+            label="Stock Alerts"
+            value={stats.lowStockProducts}
             icon="⚠️"
-            tone={stats.lowStockCount > 0 ? 'yellow' : 'default'}
+            tone={stats.lowStockProducts > 0 ? 'red' : 'default'}
             to="/admin/parts"
           />
           <StatCard
-            label="Out of Stock"
-            value={stats.outOfStockCount}
-            icon="🚫"
-            tone={stats.outOfStockCount > 0 ? 'red' : 'default'}
-            to="/admin/parts"
+            label="Today Revenue"
+            value={formatPeso(stats.todayRevenue)}
+            icon="💰"
+            tone="green"
           />
         </div>
 
-        {/* Revenue */}
-        <section className="mb-8 overflow-hidden rounded-3xl border border-primary-100 bg-white shadow-sm dark:border-primary-500/20 dark:bg-dark-800">
-          <div className="relative p-6">
-            <div className="absolute -right-8 -top-14 h-36 w-36 rounded-full bg-accent-500/10 blur-3xl" />
-            <div className="absolute bottom-0 left-0 h-24 w-24 rounded-full bg-primary-500/10 blur-3xl" />
-
-            <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <p className="text-sm font-bold text-gray-500 dark:text-gray-400">
-                  Total Combined Revenue
-                </p>
-                <p className="mt-2 text-4xl font-black tracking-tight text-gray-950 dark:text-white">
-                  {formatPeso(stats.totalRevenue)}
-                </p>
-                <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                  Based on orders and bookings marked as completed.
-                </p>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl bg-gray-50 px-5 py-4 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
-                  <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    Completed Orders
-                  </p>
-                  <p className="mt-1 text-xl font-black text-accent-600 dark:text-accent-400">
-                    {formatPeso(stats.orderRevenue)}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-gray-50 px-5 py-4 ring-1 ring-gray-100 dark:bg-dark-900/70 dark:ring-dark-700">
-                  <p className="text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    Completed Bookings
-                  </p>
-                  <p className="mt-1 text-xl font-black text-primary-600 dark:text-primary-400">
-                    {formatPeso(stats.bookingRevenue)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="hidden text-5xl lg:block">💰</div>
-            </div>
-          </div>
-        </section>
-
-        {/* Stock alert */}
-        {hasStockWarnings && (
-          <section className="mb-8 rounded-3xl border border-yellow-200 bg-yellow-50 p-5 shadow-sm dark:border-yellow-500/25 dark:bg-yellow-500/10">
-            <div className="mb-4 flex items-center justify-between gap-4">
-              <div>
-                <h2 className="flex items-center gap-2 text-lg font-black text-yellow-800 dark:text-yellow-200">
-                  <span>⚠️</span> Stock Alert
-                </h2>
-                <p className="mt-1 text-xs text-yellow-700 dark:text-yellow-300">
-                  Parts that are low or out of stock need attention.
-                </p>
-              </div>
-
-              <Link
-                to="/admin/parts"
-                className="rounded-2xl bg-primary-600 px-4 py-2 text-xs font-black text-white transition hover:bg-primary-700"
-              >
-                Manage Parts →
-              </Link>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              {lowStockParts.map((part) => {
-                const stock = Number(part.stock_quantity) || 0;
-                const isOut = stock <= 0;
-
-                return (
-                  <div
-                    key={part.id}
-                    className="flex items-center justify-between gap-3 rounded-2xl bg-white p-3 ring-1 ring-yellow-100 dark:bg-dark-900/80 dark:ring-yellow-500/20"
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div className="h-12 w-12 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-800 dark:ring-dark-700">
-                        {part.image_url ? (
-                          <img src={part.image_url} alt={part.name} className="h-full w-full object-cover" />
-                        ) : (
-                          <div className="grid h-full w-full place-items-center text-xl text-gray-400">⚙️</div>
-                        )}
-                      </div>
-                      <p className="truncate text-sm font-black text-gray-950 dark:text-white">{part.name}</p>
-                    </div>
-
-                    <span
-                      className={`flex-shrink-0 rounded-full px-3 py-1 text-xs font-black ring-1 ${
-                        isOut
-                          ? 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25'
-                          : 'bg-yellow-50 text-yellow-700 ring-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-300 dark:ring-yellow-500/25'
-                      }`}
-                    >
-                      {isOut ? 'Out of stock' : `${stock} left`}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {/* Quick links */}
-        <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {quickLinks.map(([to, label, icon]) => (
-            <QuickLink key={to} to={to} label={label} icon={icon} />
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {quickActions.map((action) => (
+            <QuickAction key={action.to} {...action} />
           ))}
         </div>
 
-        {/* Recent activity */}
-        <div className="grid gap-6 lg:grid-cols-2">
-          <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
-            <div className="mb-5 flex items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-black text-gray-950 dark:text-white">
-                  Recent Bookings
-                </h2>
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  Latest service booking requests.
-                </p>
-              </div>
-              <Link to="/admin/bookings" className="text-xs font-black text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">
+        <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+          <SectionCard
+            title="Today’s Bookings"
+            subtitle="Bookings scheduled for today."
+            action={
+              <Link
+                to="/admin/bookings"
+                className="text-xs font-black text-primary-600 hover:text-primary-700 dark:text-primary-400"
+              >
                 View all →
               </Link>
-            </div>
-
+            }
+          >
             {loading ? (
-              <LoadingRows />
-            ) : recentBookings.length === 0 ? (
-              <div className="rounded-3xl border border-dashed border-gray-300 bg-gray-50 p-8 text-center dark:border-dark-700 dark:bg-dark-900/60">
-                <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">No bookings yet.</p>
+              <LoadingBox />
+            ) : todayBookings.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-8 text-center dark:border-dark-700 dark:bg-dark-900/60">
+                <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
+                  No bookings scheduled today.
+                </p>
               </div>
             ) : (
               <div className="space-y-3">
-                {recentBookings.map((booking) => (
-                  <article key={booking.id} className="rounded-2xl border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/60">
+                {todayBookings.map((booking) => (
+                  <Link
+                    key={booking.id}
+                    to={`/admin/bookings/${booking.id}`}
+                    className="block rounded-2xl border border-gray-100 bg-gray-50 p-4 transition hover:border-primary-200 dark:border-dark-700 dark:bg-dark-900/60 dark:hover:border-primary-500/30"
+                  >
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-black text-gray-950 dark:text-white">
-                          {booking.profiles?.first_name} {booking.profiles?.last_name}
+                          {formatTime(booking.booking_time)} · {getCustomerName(booking)}
                         </p>
-                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                          {booking.services?.name || 'Service'} · {formatDate(booking.booking_date)} at {formatTime(booking.booking_time)}
+                        <p className="mt-1 line-clamp-2 text-xs text-gray-500 dark:text-gray-400">
+                          {getServiceNames(booking)}
                         </p>
                       </div>
                       <StatusBadge status={booking.status} />
                     </div>
-                  </article>
+                  </Link>
                 ))}
               </div>
             )}
-          </section>
+          </SectionCard>
 
-          <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
-            <div className="mb-5 flex items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-black text-gray-950 dark:text-white">
-                  Recent Orders
-                </h2>
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  Latest parts order activity.
-                </p>
-              </div>
-              <Link to="/admin/orders" className="text-xs font-black text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">
-                View all →
+          <SectionCard
+            title="Stock Alerts"
+            subtitle="Products that need restocking."
+            action={
+              <Link
+                to="/admin/parts"
+                className="text-xs font-black text-primary-600 hover:text-primary-700 dark:text-primary-400"
+              >
+                Manage →
               </Link>
-            </div>
-
+            }
+          >
             {loading ? (
-              <LoadingRows />
-            ) : recentOrders.length === 0 ? (
-              <div className="rounded-3xl border border-dashed border-gray-300 bg-gray-50 p-8 text-center dark:border-dark-700 dark:bg-dark-900/60">
-                <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">No orders yet.</p>
+              <LoadingBox />
+            ) : lowStockProducts.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-8 text-center dark:border-dark-700 dark:bg-dark-900/60">
+                <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
+                  All products have enough stock.
+                </p>
               </div>
             ) : (
               <div className="space-y-3">
+                {lowStockProducts.map((product) => {
+                  const stock = Number(product.stock_quantity) || 0;
+                  const isOut = stock <= 0;
+
+                  return (
+                    <Link
+                      key={product.id}
+                      to="/admin/parts"
+                      className="flex items-center justify-between gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-4 transition hover:border-primary-200 dark:border-dark-700 dark:bg-dark-900/60 dark:hover:border-primary-500/30"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-black text-gray-950 dark:text-white">
+                          {product.name}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {isOut ? 'Out of stock' : `${stock} left`}
+                        </p>
+                      </div>
+
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-black ring-1 ${
+                          isOut
+                            ? 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25'
+                            : 'bg-yellow-50 text-yellow-700 ring-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-300 dark:ring-yellow-500/25'
+                        }`}
+                      >
+                        {isOut ? 'Out' : 'Low'}
+                      </span>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </SectionCard>
+        </div>
+
+        <div className="mt-6">
+          <SectionCard
+            title="Recent Orders"
+            subtitle="Latest product order activity."
+            action={
+              <Link
+                to="/admin/orders"
+                className="text-xs font-black text-primary-600 hover:text-primary-700 dark:text-primary-400"
+              >
+                View all →
+              </Link>
+            }
+          >
+            {loading ? (
+              <LoadingBox />
+            ) : recentOrders.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-8 text-center dark:border-dark-700 dark:bg-dark-900/60">
+                <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
+                  No recent orders.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2">
                 {recentOrders.map((order) => (
-                  <article key={order.id} className="rounded-2xl border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/60">
+                  <Link
+                    key={order.id}
+                    to="/admin/orders"
+                    className="rounded-2xl border border-gray-100 bg-gray-50 p-4 transition hover:border-primary-200 dark:border-dark-700 dark:bg-dark-900/60 dark:hover:border-primary-500/30"
+                  >
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-black text-gray-950 dark:text-white">
-                          {order.profiles?.first_name} {order.profiles?.last_name}
+                          {getCustomerName(order)}
                         </p>
                         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                          {order.order_items?.length || 0} item{order.order_items?.length === 1 ? '' : 's'} · {formatPeso(order.total_amount)}
+                          {order.order_items?.length || 0} item
+                          {order.order_items?.length === 1 ? '' : 's'} ·{' '}
+                          {formatPeso(order.total_amount)} · {formatDate(order.created_at)}
                         </p>
                       </div>
                       <StatusBadge status={order.status} />
                     </div>
-                  </article>
+                  </Link>
                 ))}
               </div>
             )}
-          </section>
+          </SectionCard>
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import AuthCallback from './pages/AuthCallback';
 
@@ -31,8 +31,10 @@ import BookingDetails from './pages/BookingDetails';
 import OrderDetails from './pages/OrderDetails';
 
 import AdminDashboard from './pages/admin/AdminDashboard';
+import SuperAdminDashboard from './pages/admin/SuperAdminDashboard';
 import AdminBookings from './pages/admin/AdminBookings';
 import AdminBookingDetails from './pages/admin/AdminBookingDetails';
+import AdminWalkInQueue from './pages/admin/AdminWalkInQueue';
 import AdminParts from './pages/admin/AdminParts';
 import AdminServices from './pages/admin/AdminServices';
 import AdminChat from './pages/admin/AdminChat';
@@ -46,6 +48,41 @@ import AdminInventoryMovements from './pages/admin/AdminInventoryMovements';
 import AdminChatbotTemplates from './pages/admin/AdminChatbotTemplates';
 
 import StaffDashboard from './pages/staff/StaffDashboard';
+
+const ADMIN_PORTAL_ROLES = ['admin', 'super_admin'];
+const SUPER_ADMIN_ONLY = ['super_admin'];
+const STAFF_PORTAL_ROLES = ['staff', 'admin', 'super_admin'];
+const MECHANIC_PORTAL_ROLES = ['mechanic', 'admin', 'super_admin'];
+const CHAT_PORTAL_ROLES = ['admin', 'super_admin', 'mechanic', 'staff'];
+
+function RoleBasedDashboard() {
+  const { profile } = useAuth();
+  const role = profile?.role;
+
+  if (role === 'admin' || role === 'super_admin') {
+    return <Navigate to="/admin" replace />;
+  }
+
+  if (role === 'staff') {
+    return <Navigate to="/staff" replace />;
+  }
+
+  if (role === 'mechanic') {
+    return <Navigate to="/mechanic-dashboard" replace />;
+  }
+
+  return <Dashboard />;
+}
+
+function AdminHome() {
+  const { profile } = useAuth();
+
+  if (profile?.role === 'super_admin') {
+    return <SuperAdminDashboard />;
+  }
+
+  return <AdminDashboard />;
+}
 
 export default function App() {
   return (
@@ -85,8 +122,8 @@ export default function App() {
             <Route
               path="/dashboard"
               element={
-                <ProtectedRoute allowedRoles={['customer']}>
-                  <Dashboard />
+                <ProtectedRoute>
+                  <RoleBasedDashboard />
                 </ProtectedRoute>
               }
             />
@@ -212,7 +249,7 @@ export default function App() {
             <Route
               path="/staff"
               element={
-                <ProtectedRoute allowedRoles={['staff', 'admin']}>
+                <ProtectedRoute allowedRoles={STAFF_PORTAL_ROLES}>
                   <StaffDashboard />
                 </ProtectedRoute>
               }
@@ -221,7 +258,7 @@ export default function App() {
             <Route
               path="/staff/bookings/:bookingId"
               element={
-                <ProtectedRoute allowedRoles={['staff', 'admin']}>
+                <ProtectedRoute allowedRoles={STAFF_PORTAL_ROLES}>
                   <AdminBookingDetails />
                 </ProtectedRoute>
               }
@@ -230,7 +267,7 @@ export default function App() {
             <Route
               path="/staff/orders/:orderId"
               element={
-                <ProtectedRoute allowedRoles={['staff', 'admin']}>
+                <ProtectedRoute allowedRoles={STAFF_PORTAL_ROLES}>
                   <AdminOrderDetails />
                 </ProtectedRoute>
               }
@@ -240,7 +277,7 @@ export default function App() {
             <Route
               path="/mechanic-dashboard"
               element={
-                <ProtectedRoute allowedRoles={['mechanic', 'admin']}>
+                <ProtectedRoute allowedRoles={MECHANIC_PORTAL_ROLES}>
                   <MechanicDashboard />
                 </ProtectedRoute>
               }
@@ -259,8 +296,8 @@ export default function App() {
             <Route
               path="/admin"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
-                  <AdminDashboard />
+                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
+                  <AdminHome />
                 </ProtectedRoute>
               }
             />
@@ -268,7 +305,7 @@ export default function App() {
             <Route
               path="/admin/settings"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={SUPER_ADMIN_ONLY}>
                   <AdminSettings />
                 </ProtectedRoute>
               }
@@ -277,7 +314,7 @@ export default function App() {
             <Route
               path="/admin/bookings"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
                   <AdminBookings />
                 </ProtectedRoute>
               }
@@ -286,8 +323,18 @@ export default function App() {
             <Route
               path="/admin/bookings/:bookingId"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
                   <AdminBookingDetails />
+                </ProtectedRoute>
+              }
+            />
+
+
+            <Route
+              path="/admin/walk-in-queue"
+              element={
+                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
+                  <AdminWalkInQueue />
                 </ProtectedRoute>
               }
             />
@@ -295,7 +342,7 @@ export default function App() {
             <Route
               path="/admin/parts"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
                   <AdminParts />
                 </ProtectedRoute>
               }
@@ -304,7 +351,7 @@ export default function App() {
             <Route
               path="/admin/inventory-movements"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
                   <AdminInventoryMovements />
                 </ProtectedRoute>
               }
@@ -313,7 +360,7 @@ export default function App() {
             <Route
   path="/admin/chatbot-templates"
   element={
-    <ProtectedRoute allowedRoles={['admin']}>
+    <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
       <AdminChatbotTemplates />
     </ProtectedRoute>
   }
@@ -322,7 +369,7 @@ export default function App() {
             <Route
               path="/admin/services"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
                   <AdminServices />
                 </ProtectedRoute>
               }
@@ -332,7 +379,7 @@ export default function App() {
             <Route
               path="/admin/mechanics"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
                   <Navigate to="/admin/users" replace />
                 </ProtectedRoute>
               }
@@ -341,7 +388,7 @@ export default function App() {
             <Route
               path="/admin/chat"
               element={
-                <ProtectedRoute allowedRoles={['admin', 'mechanic', 'staff']}>
+                <ProtectedRoute allowedRoles={CHAT_PORTAL_ROLES}>
                   <AdminChat />
                 </ProtectedRoute>
               }
@@ -350,7 +397,7 @@ export default function App() {
             <Route
               path="/admin/orders"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
                   <AdminOrders />
                 </ProtectedRoute>
               }
@@ -359,7 +406,7 @@ export default function App() {
             <Route
               path="/admin/orders/:orderId"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
                   <AdminOrderDetails />
                 </ProtectedRoute>
               }
@@ -368,7 +415,7 @@ export default function App() {
             <Route
               path="/admin/reports"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={SUPER_ADMIN_ONLY}>
                   <AdminReports />
                 </ProtectedRoute>
               }
@@ -377,7 +424,7 @@ export default function App() {
             <Route
               path="/admin/assessments"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
                   <AdminAssessments />
                 </ProtectedRoute>
               }
@@ -387,7 +434,7 @@ export default function App() {
             <Route
               path="/admin/staff"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
                   <Navigate to="/admin/users" replace />
                 </ProtectedRoute>
               }
@@ -396,7 +443,7 @@ export default function App() {
             <Route
               path="/admin/users"
               element={
-                <ProtectedRoute allowedRoles={['admin']}>
+                <ProtectedRoute allowedRoles={SUPER_ADMIN_ONLY}>
                   <AdminUsers />
                 </ProtectedRoute>
               }

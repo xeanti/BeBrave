@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, StatusBar, Alert, Platform, Image,
@@ -9,6 +9,7 @@ import { supabase } from '../../lib/supabase';
 import { notifyRole, notifyUser } from '../../lib/notifications';
 import { CONSENT_TYPES, requireCustomerConsent } from '../../lib/consents';
 import { useTheme } from '../../lib/ThemeContext';
+import { createBookingQrphCheckout } from '../../lib/paymongo';
 
 const SHOP_OPEN = 8;
 const SHOP_CLOSE = 17;
@@ -31,6 +32,84 @@ function generateTimeSlots() {
 const timeSlots = generateTimeSlots();
 const TOTAL_STEPS = 5;
 
+const PAYMENT_METHODS = [
+  {
+    key: 'paymongo_qrph',
+    title: 'PayMongo QR / GCash',
+    subtitle: 'Open online QR checkout after booking.',
+    icon: '📲',
+  },
+  {
+    key: 'gcash_manual',
+    title: 'Personal GCash / Manual',
+    subtitle: 'Enter your GCash reference number for staff verification.',
+    icon: '💸',
+  },
+  {
+    key: 'cash_at_shop',
+    title: 'Cash at Shop',
+    subtitle: 'Pay the reservation fee at the shop counter.',
+    icon: '💵',
+  },
+];
+
+function getPaymentMethodLabel(method) {
+  if (method === 'paymongo_qrph') return 'PayMongo QR / GCash';
+  if (method === 'gcash_manual') return 'Personal GCash / Manual';
+  if (method === 'cash_at_shop') return 'Cash at Shop';
+
+  return 'PayMongo QR / GCash';
+}
+
+function getInitialPaymentStatus(method) {
+  if (method === 'paymongo_qrph') return 'unpaid';
+  if (method === 'gcash_manual') return 'pending_verification';
+  if (method === 'cash_at_shop') return 'pending_payment';
+
+  return 'unpaid';
+}
+
+function getServicePrice(service) {
+  return (Number(service?.base_price) || 0) + (Number(service?.labor_cost) || 0);
+}
+
+function getServicesTotal(serviceList = []) {
+  return serviceList.reduce((sum, service) => sum + getServicePrice(service), 0);
+}
+
+function getServicesDuration(serviceList = []) {
+  return serviceList.reduce(
+    (sum, service) => sum + (Number(service?.estimated_duration_minutes) || 30),
+    0
+  );
+}
+
+function getServicesSummary(serviceList = []) {
+  if (!serviceList.length) return 'No service selected';
+  return serviceList.map((service) => service.name).join(', ');
+}
+
+function getExistingBookingDuration(booking) {
+  const multiRows = booking?.booking_services || [];
+
+  if (Array.isArray(multiRows) && multiRows.length > 0) {
+    return multiRows.reduce(
+      (sum, row) =>
+        sum +
+        ((Number(row.estimated_duration_minutes) || 30) *
+          (Number(row.quantity) || 1)),
+      0
+    );
+  }
+
+  return Number(booking?.services?.estimated_duration_minutes) || 30;
+}
+
+function sanitizeGcashReference(value) {
+  return String(value || '').replace(/[^0-9A-Za-z-]/g, '').slice(0, 30);
+}
+
+
 export default function BookingScreen({ route, navigation }) {
   const { theme, isDark } = useTheme();
   const [step, setStep] = useState(1);
@@ -45,7 +124,8 @@ export default function BookingScreen({ route, navigation }) {
   const [motorcycleModels, setMotorcycleModels] = useState([]);
   const [mechanics, setMechanics] = useState([]);
 
-  const [selectedService, setSelectedService] = useState(null);
+  const [selectedServices, setSelectedServices] = useState([]);
+  const selectedService = selectedServices[0] || null;
   const [motorcycleMake, setMotorcycleMake] = useState('');
   const [motorcycleModel, setMotorcycleModel] = useState('');
   const [motorcycleYear, setMotorcycleYear] = useState('');
@@ -55,13 +135,15 @@ export default function BookingScreen({ route, navigation }) {
   const [notes, setNotes] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedMechanic, setSelectedMechanic] = useState(null);
+  const [paymentMethod, setPaymentMethod] = useState('paymongo_qrph');
+  const [manualReference, setManualReference] = useState('');
 
   const [bookedMechanicIds, setBookedMechanicIds] = useState([]);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
 
   useEffect(() => {
     if (route?.params?.preselectedService) {
-      setSelectedService(route.params.preselectedService);
+      setSelectedServices([route.params.preselectedService]);
       setStep(2);
     }
   }, [route?.params?.preselectedService]);
@@ -71,10 +153,22 @@ export default function BookingScreen({ route, navigation }) {
   }, []);
 
 useEffect(() => {
-  if (step === 4 && bookingDate && bookingTime && selectedService) {
+  if (step === 4 && bookingDate && bookingTime && selectedServices.length > 0) {
     fetchMechanicAvailability();
   }
-}, [step, bookingDate, bookingTime, selectedService]);
+}, [step, bookingDate, bookingTime, selectedServices]);
+
+  function toggleService(service) {
+    setSelectedServices((current) => {
+      const exists = current.some((item) => item.id === service.id);
+
+      if (exists) {
+        return current.filter((item) => item.id !== service.id);
+      }
+
+      return [...current, service];
+    });
+  }
 
   async function viewCertificates(mechanic) {
     setCertModal(mechanic);
@@ -97,7 +191,7 @@ useEffect(() => {
 
     const { data, error } = await supabase
       .from('bookings')
-      .select('mechanic_id, booking_time, services(estimated_duration_minutes)')
+      .select('mechanic_id, booking_time, services(estimated_duration_minutes), booking_services(estimated_duration_minutes, quantity)')
       .eq('booking_date', dateStr)
         .in('status', [
           'pending',
@@ -111,12 +205,12 @@ useEffect(() => {
 
     if (!error && data) {
       const newStart = timeToMinutes(bookingTime);
-      const newDuration = selectedService?.estimated_duration_minutes || 30;
+      const newDuration = getServicesDuration(selectedServices) || 30;
       const newEnd = newStart + newDuration;
 
       const conflicting = data.filter((b) => {
         const start = timeToMinutes((b.booking_time || '').slice(0, 5));
-        const duration = b.services?.estimated_duration_minutes || 30;
+        const duration = getExistingBookingDuration(b);
         const end = start + duration;
 
         return newStart < end && newEnd > start;
@@ -228,6 +322,24 @@ useEffect(() => {
   return acceptedBookingPolicy;
 }
 
+async function hasUnsettledBookingPayment(userId) {
+  const { data, error } = await supabase
+    .from('bookings')
+    .select('id, payment_status, status, booking_date, services(name)')
+    .eq('customer_id', userId)
+    .in('payment_status', ['unpaid', 'checkout_created', 'pending_payment', 'pending_verification'])
+    .not('status', 'in', '("completed","cancelled")')
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (error) {
+    console.log('UNSETTLED PAYMENT CHECK ERROR:', error);
+    return false;
+  }
+
+  return data?.[0] || null;
+}
+
   async function handleSubmit() {
     if (!bookingDate) {
       Alert.alert('Error', 'Please select a booking date.');
@@ -252,10 +364,34 @@ if (!user?.id) {
   return;
 }
 
+const unsettledBooking = await hasUnsettledBookingPayment(user.id);
+
+if (unsettledBooking) {
+  setSubmitting(false);
+
+  Alert.alert(
+    'Unsettled Payment',
+    'You still have a booking with an unpaid reservation fee. Please settle or cancel your existing booking before creating a new one.'
+  );
+
+  navigation.navigate('Main', {
+    screen: 'Appointments',
+  });
+
+  return;
+}
+
 const consentsAccepted = await requireBookingConsents();
 
 if (!consentsAccepted) {
   setSubmitting(false);
+  return;
+}
+
+if (paymentMethod === 'gcash_manual' && manualReference.trim().length < 4) {
+  setSubmitting(false);
+  Alert.alert('GCash Reference Required', 'Please enter your GCash reference number.');
+  setStep(5);
   return;
 }
 
@@ -278,12 +414,12 @@ const bookingDateStr = toISODateString(bookingDate);
           ]);
 
       const newStart = timeToMinutes(bookingTime);
-      const newDuration = selectedService?.estimated_duration_minutes || 30;
+      const newDuration = getServicesDuration(selectedServices) || 30;
       const newEnd = newStart + newDuration;
 
       const hasConflict = (existingBookings || []).some((b) => {
         const start = timeToMinutes((b.booking_time || '').slice(0, 5));
-        const duration = b.services?.estimated_duration_minutes || 30;
+        const duration = getExistingBookingDuration(b);
         const end = start + duration;
 
         return newStart < end && newEnd > start;
@@ -310,11 +446,11 @@ const bookingDateStr = toISODateString(bookingDate);
         motorcycle_model: motorcycleModel,
         motorcycle_year: parseInt(motorcycleYear) || null,
         issue_description: issueDescription,
-        service_id: selectedService.id,
-        estimated_labor_cost: selectedService.labor_cost,
-        estimated_total: selectedService.base_price,
+        service_id: selectedService?.id || null,
+        estimated_labor_cost: selectedServices.reduce((sum, service) => sum + (Number(service.labor_cost) || 0), 0),
+        estimated_total: servicesTotal,
         status: 'pending',
-        notes,
+        notes: [notes, `Selected services: ${servicesSummary}`].filter(Boolean).join('\n'),
       })
       .select()
       .single();
@@ -329,13 +465,20 @@ const { data: booking, error: bookingError } = await supabase
   .from('bookings')
   .insert({
     customer_id: user.id,
-    service_id: selectedService.id,
+    service_id: selectedService?.id || null,
     mechanic_id: selectedMechanic?.id || null,
     booking_date: bookingDateStr,
     booking_time: bookingTime,
     status: 'pending',
     notes: notes || null,
-    total_amount: selectedService.base_price,
+    service_total: servicesTotal,
+    services_summary: servicesSummary,
+    total_amount: servicesTotal,
+    reservation_fee: reservationFeePreview,
+    payment_method: paymentMethod,
+    payment_status: getInitialPaymentStatus(paymentMethod),
+    payment_reference:
+      paymentMethod === 'gcash_manual' ? manualReference.trim() : null,
   })
   .select()
   .single();
@@ -365,10 +508,75 @@ if (bookingError) {
   return;
 }
 
+const bookingServiceRows = selectedServices.map((service) => ({
+  booking_id: booking.id,
+  service_id: service.id,
+  service_name: service.name,
+  base_price: Number(service.base_price) || 0,
+  labor_cost: Number(service.labor_cost) || 0,
+  estimated_duration_minutes: Number(service.estimated_duration_minutes) || 0,
+  quantity: 1,
+}));
+
+if (bookingServiceRows.length > 0) {
+  const { error: bookingServicesError } = await supabase
+    .from('booking_services')
+    .insert(bookingServiceRows);
+
+  if (bookingServicesError) {
+    console.log('BOOKING SERVICES INSERT ERROR:', bookingServicesError.message);
+  }
+}
+
+let checkoutData = null;
+
+if (paymentMethod === 'paymongo_qrph') {
+  try {
+    checkoutData = await createBookingQrphCheckout(booking.id);
+
+    await Linking.openURL(checkoutData.checkout_url);
+  } catch (paymentError) {
+    console.log('PAYMONGO QR PH ERROR:', paymentError);
+
+    Alert.alert(
+      'Booking Created',
+      'Your booking was created, but the PayMongo QR Ph / GCash payment page could not open. You can pay later from your booking details.'
+    );
+  }
+} else if (paymentMethod === 'gcash_manual') {
+  Alert.alert(
+    'Booking Submitted',
+    'Your manual GCash reference was submitted. Please wait for staff verification.'
+  );
+} else if (paymentMethod === 'cash_at_shop') {
+  Alert.alert(
+    'Booking Submitted',
+    'Please pay the reservation fee at the shop counter before confirmation.'
+  );
+}
+
+const customerBookingMessage =
+  paymentMethod === 'paymongo_qrph'
+    ? checkoutData
+      ? 'Your booking request has been submitted. Please complete your PayMongo QR / GCash reservation payment.'
+      : 'Your booking request has been submitted, but payment is still unpaid. You can pay later from your booking details.'
+    : paymentMethod === 'gcash_manual'
+      ? 'Your booking request has been submitted with manual GCash payment pending staff verification.'
+      : 'Your booking request has been submitted. Please pay the reservation fee at the shop counter.';
+
+const adminBookingMessage =
+  paymentMethod === 'paymongo_qrph'
+    ? checkoutData
+      ? 'A customer submitted a new service booking request and PayMongo QR payment was created.'
+      : 'A customer submitted a new service booking request, but PayMongo payment checkout was not created.'
+    : paymentMethod === 'gcash_manual'
+      ? 'A customer submitted a new booking with manual GCash reference for verification.'
+      : 'A customer submitted a new booking and selected Cash at Shop.';
+
     await notifyUser({
       userId: user.id,
       title: 'Booking Submitted',
-      message: 'Your booking request has been submitted. Please wait for admin confirmation.',
+      message: customerBookingMessage,
       type: 'booking',
       relatedTable: 'bookings',
       relatedId: booking.id,
@@ -377,7 +585,7 @@ if (bookingError) {
     await notifyRole({
       role: 'admin',
       title: 'New Booking Request',
-      message: 'A customer submitted a new service booking request from the mobile app.',
+      message: adminBookingMessage,
       type: 'booking',
       relatedTable: 'bookings',
       relatedId: booking.id,
@@ -386,7 +594,7 @@ if (bookingError) {
     await notifyRole({
   role: 'staff',
   title: 'New Booking Request',
-  message: 'A customer submitted a new service booking request from the mobile app.',
+  message: adminBookingMessage,
   type: 'booking',
   relatedTable: 'bookings',
   relatedId: booking.id,
@@ -396,7 +604,14 @@ if (bookingError) {
       await notifyUser({
         userId: selectedMechanic.id,
         title: 'New Assigned Booking',
-        message: 'A customer selected you for a new pending booking.',
+        message:
+          paymentMethod === 'paymongo_qrph' && checkoutData
+            ? 'A customer selected you for a new pending booking and reservation payment was started.'
+            : paymentMethod === 'gcash_manual'
+              ? 'A customer selected you for a new pending booking with manual GCash pending verification.'
+              : paymentMethod === 'cash_at_shop'
+                ? 'A customer selected you for a new pending booking with cash payment at shop.'
+                : 'A customer selected you for a new pending booking.',
         type: 'booking',
         relatedTable: 'bookings',
         relatedId: booking.id,
@@ -407,21 +622,33 @@ if (bookingError) {
 
     navigation.replace('BookingConfirmation', {
       bookingId: booking.id,
-      serviceName: selectedService?.name,
+      serviceName: servicesSummary,
       motorcycle: `${motorcycleMake} ${motorcycleModel} ${motorcycleYear}`.trim(),
       bookingDate: bookingDateStr,
       bookingTime,
       mechanicName: selectedMechanic
         ? `${selectedMechanic.first_name || ''} ${selectedMechanic.last_name || ''}`.trim()
         : 'No preference / auto-assigned',
-      totalAmount: selectedService?.base_price,
+      totalAmount: servicesTotal,
       status: 'pending',
+      paymentStatus:
+        paymentMethod === 'paymongo_qrph'
+          ? checkoutData
+            ? 'checkout_created'
+            : 'unpaid'
+          : getInitialPaymentStatus(paymentMethod),
+      reservationFee: checkoutData?.amount || reservationFeePreview,
+      paymentReference:
+        checkoutData?.reference_number ||
+        (paymentMethod === 'gcash_manual' ? manualReference.trim() : null),
+      checkoutUrl: checkoutData?.checkout_url || null,
+      paymentMethod: getPaymentMethodLabel(paymentMethod),
     });
   }
 
   function handleNext() {
-    if (step === 1 && !selectedService) {
-      Alert.alert('Error', 'Please select a service.');
+    if (step === 1 && selectedServices.length === 0) {
+      Alert.alert('Error', 'Please select at least one service.');
       return;
     }
 
@@ -442,6 +669,12 @@ if (bookingError) {
 
     setStep(step + 1);
   }
+
+  const servicesTotal = useMemo(() => getServicesTotal(selectedServices), [selectedServices]);
+  const servicesDuration = useMemo(() => getServicesDuration(selectedServices), [selectedServices]);
+  const servicesSummary = useMemo(() => getServicesSummary(selectedServices), [selectedServices]);
+
+  const reservationFeePreview = Number((servicesTotal * 0.2).toFixed(2));
 
   const s = styles(theme);
 
@@ -483,17 +716,48 @@ if (bookingError) {
       >
         {step === 1 && (
           <View>
-            <Text style={s.stepTitle}>Select a Service</Text>
-            <Text style={s.stepSub}>Choose the service you need</Text>
+            <Text style={s.stepTitle}>Select Services</Text>
+            <Text style={s.stepSub}>Choose one or more services you need for this booking</Text>
+
+            {selectedServices.length > 0 && (
+              <View style={s.selectedServicesBox}>
+                <View style={s.selectedServicesHeader}>
+                  <Text style={s.selectedServicesTitle}>
+                    Selected Services ({selectedServices.length})
+                  </Text>
+                  <Text style={s.selectedServicesTotal}>
+                    ₱{servicesTotal.toLocaleString('en-PH')} · {servicesDuration} mins
+                  </Text>
+                </View>
+
+                {selectedServices.map((service) => (
+                  <View key={service.id} style={s.selectedServiceRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.selectedServiceName}>{service.name}</Text>
+                      <Text style={s.selectedServiceMeta}>
+                        ₱{getServicePrice(service).toLocaleString('en-PH')} · {Number(service.estimated_duration_minutes) || 30} mins
+                      </Text>
+                    </View>
+
+                    <TouchableOpacity
+                      style={s.removeServiceBtn}
+                      onPress={() => toggleService(service)}
+                    >
+                      <Text style={s.removeServiceText}>Remove</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
 
             {services.map((sv) => (
               <TouchableOpacity
                 key={sv.id}
                 style={[
                   s.serviceCard,
-                  selectedService?.id === sv.id && s.serviceCardActive,
+                  selectedServices.some((item) => item.id === sv.id) && s.serviceCardActive,
                 ]}
-                onPress={() => setSelectedService(sv)}
+                onPress={() => toggleService(sv)}
               >
                 <View style={s.serviceCardLeft}>
                   <Text style={s.serviceCardName}>{sv.name}</Text>
@@ -504,9 +768,15 @@ if (bookingError) {
                 </View>
 
                 <View style={s.serviceCardRight}>
-                  <Text style={s.serviceCardPrice}>₱{sv.base_price}</Text>
-                  {selectedService?.id === sv.id && (
-                    <Text style={s.checkmark}>✓</Text>
+                  <Text style={s.serviceCardPrice}>
+                    ₱{getServicePrice(sv).toLocaleString('en-PH')}
+                  </Text>
+                  {selectedServices.some((item) => item.id === sv.id) ? (
+                    <View style={s.selectedPill}>
+                      <Text style={s.selectedPillText}>Selected ✓</Text>
+                    </View>
+                  ) : (
+                    <Text style={s.addServiceText}>Tap to add</Text>
                   )}
                 </View>
               </TouchableOpacity>
@@ -803,8 +1073,15 @@ if (bookingError) {
             <Text style={s.stepSub}>Review your booking details</Text>
 
             <View style={s.summaryCard}>
-              <Text style={s.summaryTitle}>🔧 Service</Text>
-              <Text style={s.summaryValue}>{selectedService?.name}</Text>
+              <Text style={s.summaryTitle}>🔧 Services ({selectedServices.length})</Text>
+              {selectedServices.map((service) => (
+                <Text key={service.id} style={s.summaryValue}>
+                  • {service.name} — ₱{getServicePrice(service).toLocaleString('en-PH')}
+                </Text>
+              ))}
+              <Text style={[s.summaryValue, { color: theme.textSub, fontSize: 12 }]}>
+                Estimated duration: {servicesDuration} minutes
+              </Text>
 
               <View style={s.divider} />
 
@@ -850,8 +1127,68 @@ if (bookingError) {
                   },
                 ]}
               >
-                ₱{selectedService?.base_price}
+                ₱{servicesTotal.toLocaleString('en-PH')}
               </Text>
+
+              <View style={s.divider} />
+
+              <Text style={s.summaryTitle}>📲 Reservation Fee (20%)</Text>
+              <Text
+                style={[
+                  s.summaryValue,
+                  {
+                    color: theme.primaryLight,
+                    fontSize: 18,
+                    fontWeight: 'bold',
+                  },
+                ]}
+              >
+                ₱{reservationFeePreview.toFixed(2)}
+              </Text>
+
+              <Text style={[s.summaryValue, { color: theme.textSub, fontSize: 12 }]}>
+                Reservation fee must be settled before the shop confirms your booking.
+              </Text>
+
+              <View style={s.divider} />
+
+              <Text style={s.summaryTitle}>💳 Payment Method</Text>
+
+              {PAYMENT_METHODS.map((method) => (
+                <TouchableOpacity
+                  key={method.key}
+                  style={[
+                    s.paymentMethodCard,
+                    paymentMethod === method.key && s.paymentMethodCardActive,
+                  ]}
+                  onPress={() => setPaymentMethod(method.key)}
+                >
+                  <Text style={s.paymentMethodIcon}>{method.icon}</Text>
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.paymentMethodTitle}>{method.title}</Text>
+                    <Text style={s.paymentMethodSubtitle}>{method.subtitle}</Text>
+                  </View>
+
+                  {paymentMethod === method.key && (
+                    <Text style={s.checkmark}>✓</Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+
+              {paymentMethod === 'gcash_manual' && (
+                <View style={s.manualReferenceBox}>
+                  <Text style={s.summaryTitle}>GCash Reference Number</Text>
+                  <TextInput
+                    style={s.input}
+                    placeholder="Enter GCash reference number"
+                    placeholderTextColor={theme.textMuted}
+                    value={manualReference}
+                    onChangeText={(value) => setManualReference(sanitizeGcashReference(value))}
+                    autoCapitalize="characters"
+                  />
+                </View>
+              )}
             </View>
 
             {notes ? (
@@ -1046,7 +1383,7 @@ if (bookingError) {
 
         {step < TOTAL_STEPS ? (
           <TouchableOpacity
-            style={[s.nextBtn, step === 1 && !selectedService && s.nextBtnDisabled]}
+            style={[s.nextBtn, step === 1 && selectedServices.length === 0 && s.nextBtnDisabled]}
             onPress={handleNext}
           >
             <Text style={s.nextBtnText}>
@@ -1062,7 +1399,7 @@ if (bookingError) {
             {submitting ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={s.nextBtnText}>Confirm Booking ✓</Text>
+              <Text style={s.nextBtnText}>{paymentMethod === 'paymongo_qrph' ? 'Confirm Booking & Pay QR ✓' : 'Confirm Booking ✓'}</Text>
             )}
           </TouchableOpacity>
         )}
@@ -1431,6 +1768,121 @@ const styles = (theme) => StyleSheet.create({
     marginTop: 12,
     borderWidth: 1,
     borderColor: theme.border,
+  },
+  paymentMethodCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.bg2,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 2,
+    borderColor: theme.border,
+  },
+  paymentMethodCardActive: {
+    borderColor: theme.primary,
+    backgroundColor: theme.primary + '11',
+  },
+  paymentMethodIcon: {
+    fontSize: 22,
+    marginRight: 12,
+  },
+  paymentMethodTitle: {
+    color: theme.text,
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 2,
+  },
+  paymentMethodSubtitle: {
+    color: theme.textSub,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  manualReferenceBox: {
+    marginTop: 8,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: theme.bg2,
+    borderWidth: 1,
+    borderColor: theme.border,
+  },
+  selectedServicesBox: {
+    backgroundColor: theme.primary + '10',
+    borderWidth: 1,
+    borderColor: theme.primary + '44',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 16,
+  },
+  selectedServicesHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 10,
+  },
+  selectedServicesTitle: {
+    color: theme.text,
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  selectedServicesTotal: {
+    color: theme.primaryLight,
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
+  selectedServiceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: theme.card,
+    borderRadius: 12,
+    padding: 10,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: theme.border,
+  },
+  selectedServiceName: {
+    color: theme.text,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  selectedServiceMeta: {
+    color: theme.textSub,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  removeServiceBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#EF444420',
+    borderWidth: 1,
+    borderColor: '#EF444455',
+  },
+  removeServiceText: {
+    color: '#EF4444',
+    fontWeight: 'bold',
+    fontSize: 11,
+  },
+  selectedPill: {
+    marginTop: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: theme.primary + '18',
+    borderWidth: 1,
+    borderColor: theme.primary + '55',
+  },
+  selectedPillText: {
+    color: theme.primaryLight,
+    fontWeight: 'bold',
+    fontSize: 11,
+  },
+  addServiceText: {
+    marginTop: 8,
+    color: theme.textMuted,
+    fontSize: 11,
+    fontWeight: '600',
   },
   footer: {
     flexDirection: 'row',

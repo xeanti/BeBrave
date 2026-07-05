@@ -1,0 +1,88 @@
+
+[functions.create-booking-checkout]
+enabled = true
+verify_jwt = false
+import_map = "./functions/create-booking-checkout/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/create-booking-checkout/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/create-booking-checkout/*.html" ]
+
+[functions.paymongo-webhook]
+enabled = true
+verify_jwt = false
+import_map = "./functions/paymongo-webhook/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/paymongo-webhook/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/paymongo-webhook/*.html" ]
+
+[functions.create-booking-qrph-checkout]
+enabled = true
+verify_jwt = false
+import_map = "./functions/create-booking-qrph-checkout/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/create-booking-qrph-checkout/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/create-booking-qrph-checkout/*.html" ]
+
+[functions.paymongo-booking-webhook]
+enabled = true
+verify_jwt = false
+import_map = "./functions/paymongo-booking-webhook/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/paymongo-booking-webhook/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/paymongo-booking-webhook/*.html" ]
+
+[functions.deactivate-account]
+enabled = true
+verify_jwt = false
+import_map = "./functions/deactivate-account/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/deactivate-account/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/deactivate-account/*.html" ]
+
+[functions.reactivate-account]
+enabled = true
+verify_jwt = false
+import_map = "./functions/reactivate-account/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/reactivate-account/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/reactivate-account/*.html" ]
+
+[functions.reate-order-qrph-checkout]
+enabled = true
+verify_jwt = false
+import_map = "./functions/reate-order-qrph-checkout/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/reate-order-qrph-checkout/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/reate-order-qrph-checkout/*.html" ]
+
+[functions.paymongo-order-webhook]
+enabled = true
+verify_jwt = false
+import_map = "./functions/paymongo-order-webhook/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/paymongo-order-webhook/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/paymongo-order-webhook/*.html" ]

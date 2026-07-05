@@ -16,6 +16,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../lib/supabase';
 import { CONSENT_TYPES, requireCustomerConsent } from '../../lib/consents';
 import { useTheme } from '../../lib/ThemeContext';
+const MAX_PREVIEW_PARTS = 2;
 
 export default function CustomizeScreen() {
   const { theme, isDark } = useTheme();
@@ -61,7 +62,9 @@ export default function CustomizeScreen() {
   async function fetchParts() {
     const { data, error: fetchError } = await supabase
       .from('parts')
-      .select('*');
+      .select('*')
+      .eq('is_active', true)
+      .order('name', { ascending: true });
 
     if (fetchError) {
       console.error('Failed to fetch preview parts:', fetchError);
@@ -69,7 +72,9 @@ export default function CustomizeScreen() {
     }
 
     const previewableParts = (data || []).filter(
-      (part) => part.is_previewable !== false
+      (part) =>
+        part.is_active === true &&
+        part.is_previewable !== false
     );
 
     setParts(previewableParts);
@@ -188,10 +193,15 @@ export default function CustomizeScreen() {
 
   const compatibleParts = useMemo(() => {
     const term = motorcycleLabel.trim().toLowerCase();
+    const activePreviewParts = parts.filter(
+      (part) =>
+        part.is_active === true &&
+        part.is_previewable !== false
+    );
 
-    if (!term) return parts;
+    if (!term) return activePreviewParts;
 
-    return parts.filter((part) => {
+    return activePreviewParts.filter((part) => {
       const compatibleModels = Array.isArray(part.compatible_models)
         ? part.compatible_models
         : [];
@@ -214,13 +224,16 @@ export default function CustomizeScreen() {
   ];
 
   const filteredParts = compatibleParts.filter((p) => {
-    const matchSearch = p.name
+    const isActive = p.is_active === true;
+    const isPreviewable = p.is_previewable !== false;
+
+    const matchSearch = String(p.name || '')
       .toLowerCase()
       .includes(partSearch.toLowerCase());
 
     const matchCategory = partCategory === 'all' || p.category === partCategory;
 
-    return matchSearch && matchCategory;
+    return isActive && isPreviewable && matchSearch && matchCategory;
   });
 
   function getBasePhotoContext() {

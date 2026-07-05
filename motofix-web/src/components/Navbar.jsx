@@ -1,51 +1,128 @@
-import { useState, useRef, useEffect } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import CartDrawer from './CartDrawer';
-import NotificationBell from './NotificationBell';
 
-// ─── Badge ─────────────────────────────────────────────────────────────────────
+function formatBadgeCount(count) {
+  const value = Number(count) || 0;
+
+  if (value > 99) return '99+';
+  if (value > 9) return '9+';
+
+  return value;
+}
+
 function Badge({ count, color = 'bg-red-500' }) {
-  if (!count) return null;
+  const value = Number(count) || 0;
+
+  if (value <= 0) return null;
+
   return (
     <span
-      className={`${color} flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[10px] font-bold leading-none text-white shadow-sm ring-2 ring-white dark:ring-dark-900`}
+      className={`${color} inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[10px] font-black leading-none text-white shadow-sm`}
     >
-      {count > 9 ? '9+' : count}
+      {formatBadgeCount(value)}
     </span>
   );
 }
 
-// ─── Badge resolver ─────────────────────────────────────────────────────────────
-function getBadge(to, { chatPath, unreadCount, pendingBookings, pendingOrders, pendingAssessments, lowStockParts }) {
-  if (to === chatPath && unreadCount > 0) return { count: unreadCount, color: 'bg-yellow-500' };
-  if (to === '/admin/bookings') return { count: pendingBookings, color: 'bg-yellow-500' };
-  if (to === '/admin/orders') return { count: pendingOrders, color: 'bg-yellow-500' };
-  if (to === '/admin/assessments') return { count: pendingAssessments, color: 'bg-yellow-500' };
-  if (to === '/admin/parts') return { count: lowStockParts, color: 'bg-yellow-500' };
-  return { count: 0 };
-}
-
-// ─── Avatar helper ─────────────────────────────────────────────────────────────
 function Avatar({ url, initials, size = 'sm' }) {
-  const dim = size === 'lg' ? 'w-12 h-12 text-lg' : 'w-9 h-9 text-sm';
+  const dim = size === 'lg' ? 'h-12 w-12 text-lg' : 'h-9 w-9 text-sm';
 
   if (url) {
     return (
       <img
         src={url}
         alt=""
-        className={`${dim} rounded-full object-cover flex-shrink-0`}
+        className={`${dim} flex-shrink-0 rounded-full object-cover ring-1 ring-gray-200 dark:ring-dark-700`}
       />
     );
   }
 
   return (
-    <div className={`${dim} rounded-full bg-primary-600 text-white flex items-center justify-center font-bold flex-shrink-0`}>
+    <div
+      className={`${dim} flex flex-shrink-0 items-center justify-center rounded-full bg-primary-600 font-black text-white ring-1 ring-primary-400`}
+    >
       {initials || '?'}
     </div>
   );
+}
+
+function formatRoleLabel(role) {
+  if (!role) return 'Account';
+
+  return String(role)
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function shouldCountAsPendingOrder(order) {
+  const status = String(order?.status || '').toLowerCase();
+  const paymentStatus = String(order?.payment_status || '').toLowerCase();
+
+  if (['cancelled', 'canceled', 'completed', 'refunded'].includes(status)) {
+    return false;
+  }
+
+  return (
+    ['pending', 'processing', 'ready_for_pickup'].includes(status) ||
+    ['unpaid', 'pending', 'pending_payment', 'pending_verification', 'partial', 'partially_paid'].includes(paymentStatus)
+  );
+}
+
+function getBadge(to, state) {
+  const {
+    chatPath,
+    unreadCount,
+    pendingBookings,
+    pendingWalkIns,
+    pendingOrders,
+    pendingPayments,
+    pendingAssessments,
+    lowStockParts,
+    operationAlerts,
+    totalAlerts,
+  } = state;
+
+  if (to === chatPath && unreadCount > 0) {
+    return { count: unreadCount, color: 'bg-yellow-500' };
+  }
+
+  if (to === '/notifications' && totalAlerts > 0) {
+    return { count: totalAlerts, color: 'bg-yellow-500' };
+  }
+
+  if (to === '/staff' && operationAlerts > 0) {
+    return { count: operationAlerts, color: 'bg-yellow-500' };
+  }
+
+  if (to === '/admin' && operationAlerts > 0) {
+    return { count: operationAlerts, color: 'bg-yellow-500' };
+  }
+
+  if (to === '/admin/bookings') {
+    return { count: pendingBookings + pendingPayments, color: 'bg-yellow-500' };
+  }
+
+  if (to === '/admin/walk-in-queue') {
+    return { count: pendingWalkIns, color: 'bg-yellow-500' };
+  }
+
+  if (to === '/admin/orders') {
+    return { count: pendingOrders, color: 'bg-yellow-500' };
+  }
+
+  if (to === '/admin/assessments') {
+    return { count: pendingAssessments, color: 'bg-yellow-500' };
+  }
+
+  if (to === '/admin/parts') {
+    return { count: lowStockParts, color: 'bg-yellow-500' };
+  }
+
+  return { count: 0 };
 }
 
 export default function Navbar() {
@@ -53,206 +130,315 @@ export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
+  /*
+    Use a unique realtime channel prefix.
 
+    In React Strict Mode, components can mount twice in development. If the same
+    Supabase channel name is reused while the previous one is still subscribed,
+    Supabase may throw: "cannot add postgres_changes callbacks after subscribe()".
+  */
+  const channelBaseRef = useRef(
+    `navbar-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isDark, setIsDark] = useState(() => {
-    const saved = localStorage.getItem('theme');
-    if (saved) return saved === 'dark';
-    return document.documentElement.classList.contains('dark');
+    try {
+      const saved = localStorage.getItem('theme');
+      if (saved) return saved === 'dark';
+      return document.documentElement.classList.contains('dark');
+    } catch {
+      return false;
+    }
   });
 
   const [unreadCount, setUnreadCount] = useState(0);
   const [pendingOrders, setPendingOrders] = useState(0);
   const [pendingBookings, setPendingBookings] = useState(0);
+  const [pendingWalkIns, setPendingWalkIns] = useState(0);
+  const [pendingPayments, setPendingPayments] = useState(0);
   const [pendingAssessments, setPendingAssessments] = useState(0);
   const [lowStockParts, setLowStockParts] = useState(0);
 
-  const dropdownRef = useRef(null);
-  const moreRef = useRef(null);
+  const role = profile?.role;
+  const isCustomer = role === 'customer';
+  const isAdminRole = role === 'admin' || role === 'super_admin';
+  const isSuperAdmin = role === 'super_admin';
+  const canSeeOperationAlerts = role === 'staff' || role === 'admin' || role === 'super_admin';
 
-  // ── Theme sync ──────────────────────────────────────────────────────────────
+  const initials = profile
+    ? `${profile.first_name?.[0] || ''}${profile.last_name?.[0] || ''}`.toUpperCase()
+    : '';
+
+  const chatPath = role === 'customer' ? '/chat' : '/admin/chat';
+
+  const operationAlerts = canSeeOperationAlerts
+    ? pendingBookings +
+      pendingWalkIns +
+      pendingOrders +
+      pendingPayments +
+      pendingAssessments +
+      lowStockParts
+    : 0;
+
+  const totalAlerts = unreadCount + operationAlerts;
+
+  const badgeState = {
+    chatPath,
+    unreadCount,
+    pendingBookings,
+    pendingWalkIns,
+    pendingOrders,
+    pendingPayments,
+    pendingAssessments,
+    lowStockParts,
+    operationAlerts,
+    totalAlerts,
+  };
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
     document.documentElement.classList.toggle('light', !isDark);
-    localStorage.setItem('theme', isDark ? 'dark' : 'light');
+
+    try {
+      localStorage.setItem('theme', isDark ? 'dark' : 'light');
+    } catch {
+      // Ignore browser storage errors.
+    }
   }, [isDark]);
 
-  // ── Close on outside click ──────────────────────────────────────────────────
   useEffect(() => {
-    function handle(e) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
-        setDropdownOpen(false);
-      }
-
-      if (moreRef.current && !moreRef.current.contains(e.target)) {
-        setMoreOpen(false);
-      }
-    }
-
-    document.addEventListener('mousedown', handle);
-
-    return () => document.removeEventListener('mousedown', handle);
-  }, []);
-
-  // ── Close mobile menu on route change ──────────────────────────────────────
-  useEffect(() => {
-    setMenuOpen(false);
-    setMoreOpen(false);
+    setSidebarOpen(false);
   }, [location.pathname]);
 
-  // ── Realtime: unread messages ───────────────────────────────────────────────
   useEffect(() => {
-    if (!user || !profile) return;
+    function handleEsc(event) {
+      if (event.key === 'Escape') setSidebarOpen(false);
+    }
+
+    document.addEventListener('keydown', handleEsc);
+    return () => document.removeEventListener('keydown', handleEsc);
+  }, []);
+
+  useEffect(() => {
+    if (!user || !profile) {
+      setUnreadCount(0);
+      return;
+    }
 
     fetchUnreadCount();
 
-    const ch = supabase
-      .channel('unread-messages')
+    const channel = supabase
+      .channel(`${channelBaseRef.current}-unread-messages`)
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*',
           schema: 'public',
           table: 'chat_messages',
         },
         fetchUnreadCount
       )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'chat_conversations',
+        },
+        fetchUnreadCount
+      )
       .subscribe();
 
-    return () => supabase.removeChannel(ch);
-  }, [user, profile]);
+    return () => supabase.removeChannel(channel);
+  }, [user?.id, profile?.role]);
 
-  // ── Realtime: admin notifs ──────────────────────────────────────────────────
   useEffect(() => {
-    if (!user || profile?.role !== 'admin') return;
+    if (!user || !canSeeOperationAlerts) {
+      setPendingBookings(0);
+      setPendingWalkIns(0);
+      setPendingOrders(0);
+      setPendingPayments(0);
+      setPendingAssessments(0);
+      setLowStockParts(0);
+      return;
+    }
 
-    fetchAdminNotifs();
+    fetchOperationNotifs();
 
-    const ch = supabase
-      .channel('admin-notifs')
-      .on(
+    const tables = [
+      'bookings',
+      'booking_payments',
+      'walkin_queue',
+      'walkin_queue_payments',
+      'orders',
+      'order_payments',
+      'payments',
+      'pre_assessments',
+      'parts',
+    ];
+
+    const channel = supabase.channel(`${channelBaseRef.current}-operation-notifs`);
+
+    tables.forEach((table) => {
+      channel.on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
-          table: 'bookings',
+          table,
         },
-        fetchAdminNotifs
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'orders',
-        },
-        fetchAdminNotifs
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'assessments',
-        },
-        fetchAdminNotifs
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'parts',
-        },
-        fetchAdminNotifs
-      )
-      .subscribe();
+        fetchOperationNotifs
+      );
+    });
 
-    return () => supabase.removeChannel(ch);
-  }, [user, profile]);
+    channel.subscribe();
 
-  async function fetchAdminNotifs() {
-    const [bookings, orders, assessments, parts] = await Promise.all([
-      supabase
-        .from('bookings')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'pending'),
-
-      supabase
-        .from('orders')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'pending'),
-
-      supabase
-        .from('pre_assessments')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'pending'),
-
-      supabase
-        .from('parts')
-        .select('id, stock_quantity, reorder_threshold'),
-    ]);
-
-    setPendingBookings(bookings.count || 0);
-    setPendingOrders(orders.count || 0);
-    setPendingAssessments(assessments.count || 0);
-
-    setLowStockParts(
-      (parts.data || []).filter(
-        (p) => p.stock_quantity <= (p.reorder_threshold ?? 5)
-      ).length
-    );
-  }
+    return () => supabase.removeChannel(channel);
+  }, [user?.id, canSeeOperationAlerts]);
 
   async function fetchUnreadCount() {
-    if (!user) return;
+    if (!user?.id) return;
 
     try {
-      if (profile?.role === 'customer') {
-        const { data: convs } = await supabase
+      if (role === 'customer') {
+        const { data: convs, error: convError } = await supabase
           .from('chat_conversations')
           .select('id')
           .eq('customer_id', user.id)
           .eq('status', 'open');
+
+        if (convError) throw convError;
 
         if (!convs?.length) {
           setUnreadCount(0);
           return;
         }
 
-        const { count } = await supabase
+        const { count, error: unreadError } = await supabase
           .from('chat_messages')
-          .select('id', { count: 'exact' })
+          .select('id', { count: 'exact', head: true })
           .in(
             'conversation_id',
-            convs.map((c) => c.id)
+            convs.map((conversation) => conversation.id)
           )
           .neq('sender_id', user.id)
           .eq('is_read', false);
 
-        setUnreadCount(count || 0);
-      } else {
-        const { count } = await supabase
-          .from('chat_messages')
-          .select('id', { count: 'exact' })
-          .neq('sender_id', user.id)
-          .eq('is_read', false);
+        if (unreadError) throw unreadError;
 
         setUnreadCount(count || 0);
+        return;
       }
-    } catch (err) {
-      console.error(err);
+
+      const { count, error: unreadError } = await supabase
+        .from('chat_messages')
+        .select('id', { count: 'exact', head: true })
+        .neq('sender_id', user.id)
+        .eq('is_read', false);
+
+      if (unreadError) throw unreadError;
+
+      setUnreadCount(count || 0);
+    } catch (error) {
+      console.error('Failed to fetch unread messages:', error);
+    }
+  }
+
+  async function fetchOperationNotifs() {
+    try {
+      const [
+        bookings,
+        bookingPayments,
+        walkins,
+        orders,
+        assessments,
+        parts,
+      ] = await Promise.all([
+        supabase
+          .from('bookings')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending')
+          .or('is_walkin.is.null,is_walkin.eq.false'),
+
+        supabase
+          .from('bookings')
+          .select('id', { count: 'exact', head: true })
+          .or('is_walkin.is.null,is_walkin.eq.false')
+          .in('payment_status', [
+            'unpaid',
+            'checkout_created',
+            'pending_payment',
+            'pending_verification',
+            'partial',
+            'partially_paid',
+            'failed',
+            'expired',
+          ]),
+
+        supabase
+          .from('walkin_queue')
+          .select('id', { count: 'exact', head: true })
+          .in('status', [
+            'queued',
+            'in_progress',
+            'inspection',
+            'repairing',
+            'quality_check',
+            'ready_for_payment',
+          ]),
+
+        supabase
+          .from('orders')
+          .select('id, status, payment_status')
+          .limit(1000),
+
+        supabase
+          .from('pre_assessments')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending'),
+
+        supabase
+          .from('parts')
+          .select('id, stock_quantity, reorder_threshold')
+          .limit(1000),
+      ]);
+
+      if (bookings.error) throw bookings.error;
+      if (bookingPayments.error) throw bookingPayments.error;
+      if (walkins.error) throw walkins.error;
+      if (orders.error) throw orders.error;
+      if (assessments.error) throw assessments.error;
+      if (parts.error) throw parts.error;
+
+      setPendingBookings(bookings.count || 0);
+      setPendingPayments(bookingPayments.count || 0);
+      setPendingWalkIns(walkins.count || 0);
+      setPendingOrders((orders.data || []).filter(shouldCountAsPendingOrder).length);
+      setPendingAssessments(assessments.count || 0);
+      setLowStockParts(
+        (parts.data || []).filter(
+          (part) => Number(part.stock_quantity) <= Number(part.reorder_threshold ?? 5)
+        ).length
+      );
+    } catch (error) {
+      console.error('Failed to fetch operation notifications:', error);
     }
   }
 
   async function handleLogout() {
     await signOut();
+    setSidebarOpen(false);
     navigate('/login');
   }
 
-  // ─── Link definitions ───────────────────────────────────────────────────────
+  const publicLinks = [
+    { to: '/', label: 'Home', icon: '🏠' },
+    { to: '/mechanics', label: 'Mechanics', icon: '🔧' },
+    { to: '/login', label: 'Log In', icon: '🔐' },
+    { to: '/register', label: 'Sign Up', icon: '📝' },
+  ];
+
   const customerLinks = [
     { to: '/dashboard', label: 'Dashboard', icon: '🏠' },
     { to: '/pre-assessment', label: 'Get Estimate', icon: '🔍' },
@@ -262,6 +448,17 @@ export default function Navbar() {
     { to: '/customize', label: 'AI Preview', icon: '✨' },
     { to: '/mechanics', label: 'Mechanics', icon: '🔧' },
     { to: '/chat', label: 'Messages', icon: '💬' },
+    { to: '/my-assessments', label: 'My Assessments', icon: '📋' },
+    { to: '/my-orders', label: 'My Orders', icon: '📦' },
+    { to: '/notifications', label: 'Notifications', icon: '🔔' },
+    { to: '/profile', label: 'My Profile', icon: '👤' },
+  ];
+
+  const staffLinks = [
+    { to: '/staff', label: 'Staff Dashboard', icon: '🖥️' },
+    { to: '/admin/chat', label: 'Messages', icon: '💬' },
+    { to: '/notifications', label: 'Notifications', icon: '🔔' },
+    { to: '/profile', label: 'My Profile', icon: '👤' },
   ];
 
   const mechanicLinks = [
@@ -269,494 +466,251 @@ export default function Navbar() {
     { to: '/mechanics', label: 'Team', icon: '👥' },
     { to: '/admin/chat', label: 'Messages', icon: '💬' },
     { to: '/mechanic-ratings', label: 'My Ratings', icon: '⭐' },
+    { to: '/notifications', label: 'Notifications', icon: '🔔' },
+    { to: '/profile', label: 'My Profile', icon: '👤' },
   ];
 
-  const staffLinks = [
-    { to: '/staff', label: 'POS / Booking', icon: '🖥️' },
-    { to: '/admin/chat', label: 'Messages', icon: '💬' },
-  ];
-
-  const adminPrimary = [
+  const adminLinks = [
     { to: '/admin', label: 'Dashboard', icon: '📊' },
     { to: '/admin/bookings', label: 'Bookings', icon: '📅' },
+    { to: '/admin/walk-in-queue', label: 'Walk-ins', icon: '🎫' },
     { to: '/admin/orders', label: 'Orders', icon: '📦' },
     { to: '/admin/assessments', label: 'Assessments', icon: '📋' },
-    { to: '/admin/parts', label: 'Parts', icon: '⚙️' },
+    { to: '/admin/parts', label: 'Products', icon: '🛍️' },
+    { to: '/admin/services', label: 'Services', icon: '🛠️' },
     { to: '/admin/chat', label: 'Messages', icon: '💬' },
+    { to: '/admin/chatbot-templates', label: 'Chatbot Templates', icon: '🤖' },
+    { to: '/notifications', label: 'Notifications', icon: '🔔' },
+    { to: '/profile', label: 'My Profile', icon: '👤' },
   ];
 
-const adminSecondary = [
-  { to: '/admin/services', label: 'Services', icon: '' },
-  { to: '/admin/chatbot-templates', label: 'Chatbot Templates', icon: '🤖' },
-  { to: '/admin/users', label: 'Users', icon: '' },
-  { to: '/admin/reports', label: 'Reports', icon: '' },
-  { to: '/admin/settings', label: 'Settings', icon: '⚙️' },
-];
+  const superAdminLinks = [
+    { to: '/admin', label: 'Super Admin Dashboard', icon: '📊' },
+    { to: '/admin/users', label: 'Users', icon: '👥' },
+    { to: '/admin/reports', label: 'Reports', icon: '📈' },
+    { to: '/admin/settings', label: 'Settings', icon: '⚙️' },
+    { to: '/notifications', label: 'Notifications', icon: '🔔' },
+    { to: '/profile', label: 'My Profile', icon: '👤' },
+  ];
 
-  const navLinks =
-    profile?.role === 'admin'
-      ? adminPrimary
-      : profile?.role === 'mechanic'
-      ? mechanicLinks
-      : profile?.role === 'staff'
-      ? staffLinks
-      : customerLinks;
+  const navLinks = useMemo(() => {
+    if (!user) return publicLinks;
+    if (isSuperAdmin) return superAdminLinks;
+    if (role === 'admin') return adminLinks;
+    if (role === 'staff') return staffLinks;
+    if (role === 'mechanic') return mechanicLinks;
+    return customerLinks;
+  }, [user, role, isSuperAdmin]);
 
-  const adminAllLinks = [...adminPrimary, ...adminSecondary];
-
-  const mobileNavLinks =
-    profile?.role === 'admin' ? adminAllLinks : navLinks;
-
-  const chatPath = profile?.role === 'customer' ? '/chat' : '/admin/chat';
-
-  const badgeState = {
-    chatPath,
-    unreadCount,
-    pendingBookings,
-    pendingOrders,
-    pendingAssessments,
-    lowStockParts,
-  };
-
-  const initials = profile
-    ? `${profile.first_name?.[0] || ''}${profile.last_name?.[0] || ''}`.toUpperCase()
-    : '';
-
-  const totalAdminAlerts =
-    pendingBookings +
-    pendingOrders +
-    pendingAssessments +
-    lowStockParts +
-    unreadCount;
-
-  // ─── Reusable NavLink ───────────────────────────────────────────────────────
-  function NavLink({ to, label, icon, mobile = false, onClick }) {
-    const badge = getBadge(to, badgeState);
-
-    const active =
-      to === '/'
-        ? location.pathname === '/'
-        : to === '/admin'
-        ? location.pathname === '/admin'
-        : location.pathname === to || location.pathname.startsWith(`${to}/`);
-
-    if (mobile) {
-      return (
-        <Link
-          to={to}
-          onClick={onClick}
-          className={`group flex items-center justify-between rounded-2xl px-5 py-4 text-base font-semibold transition-all duration-200 ${
-            active
-              ? 'bg-gradient-to-r from-primary-600 to-primary-500 text-white shadow-lg shadow-primary-600/25'
-              : 'text-gray-700 hover:-translate-y-0.5 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-800'
-          }`}
-        >
-          <span className="flex items-center gap-3">
-            <span
-              className={`grid h-9 w-9 place-items-center rounded-xl text-lg transition ${
-                active
-                  ? 'bg-white/20'
-                  : 'bg-gray-100 group-hover:bg-white dark:bg-dark-700 dark:group-hover:bg-dark-700'
-              }`}
-            >
-              {icon}
-            </span>
-            {label}
-          </span>
-          <Badge {...badge} />
-        </Link>
-      );
-    }
-
-    return (
-      <Link
-        to={to}
-        className={`group relative flex items-center gap-2 rounded-2xl border px-3.5 py-2 text-sm font-semibold whitespace-nowrap transition-all duration-200 ${
-          active
-            ? 'border-primary-500 bg-gradient-to-r from-primary-600 to-primary-500 text-white shadow-lg shadow-primary-600/25'
-            : 'border-transparent text-gray-600 hover:-translate-y-0.5 hover:border-gray-200 hover:bg-white hover:text-gray-950 hover:shadow-sm dark:text-gray-300 dark:hover:border-gray-700 dark:hover:bg-dark-800 dark:hover:text-white'
-        }`}
-      >
-        <span
-          className={`transition-transform duration-200 ${
-            active ? '' : 'group-hover:scale-110'
-          }`}
-        >
-          {icon}
-        </span>
-        <span>{label}</span>
-
-        {badge.count > 0 && (
-          <span className="ml-0.5">
-            <Badge {...badge} />
-          </span>
-        )}
-      </Link>
-    );
+  function isActive(to) {
+    if (to === '/') return location.pathname === '/';
+    if (to === '/admin') return location.pathname === '/admin';
+    return location.pathname === to || location.pathname.startsWith(`${to}/`);
   }
 
-  // ─── Dropdown row ───────────────────────────────────────────────────────────
-  function DropdownLink({ to, icon, label, onClick }) {
+  function SidebarLink({ to, label, icon }) {
+    const active = isActive(to);
     const badge = getBadge(to, badgeState);
-    const active = location.pathname === to;
 
     return (
       <Link
         to={to}
-        onClick={onClick}
-        className={`flex items-center justify-between px-4 py-3 text-sm transition-colors ${
+        className={`group flex items-center justify-between gap-3 rounded-2xl px-4 py-3 text-sm font-black transition ${
           active
-            ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300 font-semibold'
-            : 'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-dark-700'
+            ? 'bg-primary-600 text-white shadow-lg shadow-primary-600/25'
+            : 'text-gray-700 hover:bg-gray-100 hover:text-gray-950 dark:text-gray-300 dark:hover:bg-dark-800 dark:hover:text-white'
         }`}
       >
-        <span className="flex items-center gap-2.5">
-          <span>{icon}</span>
-          {label}
+        <span className="flex min-w-0 items-center gap-3">
+          <span
+            className={`grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl text-lg ${
+              active ? 'bg-white/20' : 'bg-gray-100 dark:bg-dark-800'
+            }`}
+          >
+            {icon}
+          </span>
+          <span className="truncate">{label}</span>
         </span>
+
         <Badge {...badge} />
       </Link>
     );
   }
 
-  // ─── Theme Toggle Button ────────────────────────────────────────────────────
-  function ThemeToggle({ mobile = false }) {
+  function ThemeToggle() {
     return (
       <button
         type="button"
-        onClick={() => setIsDark((v) => !v)}
+        onClick={() => setIsDark((value) => !value)}
+        className="grid h-10 w-10 place-items-center rounded-2xl border border-gray-200 bg-white text-lg shadow-sm transition hover:border-primary-400 dark:border-dark-700 dark:bg-dark-800"
         title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-        aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-        className={`
-          group relative isolate flex flex-shrink-0 items-center rounded-full border p-1
-          transition-all duration-300 ease-out hover:scale-[1.03] active:scale-95
-          ${mobile ? 'h-10 w-[76px]' : 'h-9 w-[72px]'}
-          ${
-            isDark
-              ? 'border-primary-400/40 bg-gradient-to-r from-dark-800 to-dark-700 shadow-inner shadow-black/30'
-              : 'border-primary-200 bg-gradient-to-r from-amber-100 via-white to-primary-50 shadow-sm'
-          }
-        `}
       >
-        <span
-          className={`
-            pointer-events-none absolute left-3 text-sm transition-all duration-300
-            ${isDark ? 'scale-75 opacity-35' : 'scale-100 opacity-100'}
-          `}
-        >
-          ☀️
-        </span>
+        {isDark ? '🌙' : '☀️'}
+      </button>
+    );
+  }
 
-        <span
-          className={`
-            pointer-events-none absolute right-3 text-sm transition-all duration-300
-            ${isDark ? 'scale-100 opacity-100' : 'scale-75 opacity-35'}
-          `}
-        >
-          🌙
-        </span>
+  function AlertButton() {
+    if (!user || totalAlerts <= 0) return null;
 
-        <span
-          className={`
-            relative z-10 grid rounded-full shadow-lg ring-1 transition-all duration-300 ease-out
-            ${mobile ? 'h-8 w-8' : 'h-7 w-7'}
-            ${
-              isDark
-                ? 'translate-x-9 bg-dark-900 text-primary-300 ring-primary-400/30'
-                : 'translate-x-0 bg-white text-amber-500 ring-amber-200'
-            }
-          `}
-        >
-          <span className="m-auto text-sm transition-transform duration-300 group-hover:rotate-12">
-            {isDark ? '🌙' : '☀️'}
-          </span>
-        </span>
+    return (
+      <button
+        type="button"
+        onClick={() => setSidebarOpen(true)}
+        className="hidden items-center gap-2 rounded-2xl border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs font-black text-yellow-700 shadow-sm transition hover:bg-yellow-100 dark:border-yellow-500/25 dark:bg-yellow-500/10 dark:text-yellow-300 sm:flex"
+        title="Open alerts"
+      >
+        <span>🔔</span>
+        <span>Alerts</span>
+        <Badge count={totalAlerts} color="bg-yellow-500" />
       </button>
     );
   }
 
   return (
     <>
-      <nav className="sticky top-0 z-50 border-b border-gray-200/70 bg-white/85 shadow-sm backdrop-blur-xl transition-all duration-300 dark:border-gray-800/80 dark:bg-dark-900/85">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-[72px] flex items-center gap-3">
-          {/* Logo */}
-          <Link
-            to="/"
-            className="group flex flex-shrink-0 items-center gap-2 rounded-2xl pr-2 text-2xl font-black tracking-tight text-gray-900 transition-transform hover:scale-[1.02] dark:text-white"
+      <nav className="sticky top-0 z-50 border-b border-gray-200/70 bg-white/90 shadow-sm backdrop-blur-xl dark:border-gray-800/80 dark:bg-dark-900/90">
+        <div className="mx-auto flex h-[72px] max-w-7xl items-center gap-3 px-4 sm:px-6">
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            className="relative grid h-11 w-11 place-items-center rounded-2xl border border-gray-200 bg-white text-xl shadow-sm transition hover:border-primary-400 hover:text-primary-600 dark:border-dark-700 dark:bg-dark-800 dark:text-white"
+            aria-label="Open navigation menu"
           >
-            <span className="grid h-10 w-10 place-items-center overflow-hidden rounded-2xl bg-white p-1 shadow-lg shadow-primary-600/20 ring-1 ring-primary-200 transition group-hover:ring-primary-400 dark:bg-dark-800 dark:ring-primary-500/30">
+            ☰
+            <span className="absolute -right-1 -top-1">
+              <Badge count={totalAlerts} color="bg-yellow-500" />
+            </span>
+          </button>
+
+          <Link
+            to={
+              user
+                ? isAdminRole
+                  ? '/admin'
+                  : role === 'staff'
+                    ? '/staff'
+                    : role === 'mechanic'
+                      ? '/mechanic-dashboard'
+                      : '/dashboard'
+                : '/'
+            }
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl text-2xl font-black tracking-tight text-gray-900 transition hover:scale-[1.01] dark:text-white"
+          >
+            <span className="grid h-10 w-10 flex-shrink-0 place-items-center overflow-hidden rounded-2xl bg-white p-1 shadow-lg shadow-primary-600/20 ring-1 ring-primary-200 dark:bg-dark-800 dark:ring-primary-500/30">
               <img
                 src="https://wcqqduuimpjipwvwzyzx.supabase.co/storage/v1/object/public/motorcycle-photos/MOTORCYCLE%20PHOTOS/icon.png"
                 alt="MotoFix logo"
                 className="h-full w-full object-contain"
               />
             </span>
-            <span>
+            <span className="truncate">
               Moto<span className="text-primary-500">Fix</span>
             </span>
           </Link>
 
-          {/* Desktop links */}
-          <div className="hidden xl:flex flex-1 items-center gap-1.5 min-w-0 overflow-x-auto no-scrollbar rounded-2xl px-1">
-            <NavLink to="/" label="Home" icon="🏠" />
-
-            {user &&
-              navLinks.map((link) => (
-                <NavLink key={link.to} {...link} />
-              ))}
-          </div>
-
-          {/* Desktop right controls */}
-          <div className="hidden xl:flex items-center gap-2.5 flex-shrink-0 ml-auto">
-            {/* Cart — only for customers */}
-            {user && profile?.role === 'customer' && (
-              <div className="flex-shrink-0">
-                <CartDrawer />
-              </div>
-            )}
-
-            {/* Notifications */}
-            {user && <NotificationBell />}
-
-            {/* Theme toggle */}
+          <div className="flex items-center gap-2">
+            <AlertButton />
+            {user && isCustomer && <CartDrawer />}
             <ThemeToggle />
-
-            {/* Auth */}
-            {!user ? (
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <Link
-                  to="/login"
-                  className="rounded-2xl border border-transparent px-4 py-2 text-sm font-semibold text-gray-700 transition hover:border-gray-200 hover:bg-white hover:shadow-sm dark:text-gray-300 dark:hover:border-gray-700 dark:hover:bg-dark-800"
-                >
-                  Log In
-                </Link>
-
-                <Link
-                  to="/register"
-                  className="rounded-2xl bg-gradient-to-r from-primary-600 to-primary-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-primary-600/25 transition hover:-translate-y-0.5 hover:from-primary-700 hover:to-primary-600"
-                >
-                  Sign Up
-                </Link>
-              </div>
-            ) : (
-              <div className="relative flex-shrink-0" ref={dropdownRef}>
-                <button
-                  onClick={() => setDropdownOpen((v) => !v)}
-                  className="flex items-center gap-2.5 rounded-full border border-gray-200 bg-white/80 py-1.5 pl-2 pr-3 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-400 hover:shadow-md dark:border-gray-700 dark:bg-dark-800/90"
-                >
-                  <Avatar url={profile?.profile_photo_url} initials={initials} size="sm" />
-
-                  <div className="text-left">
-                    <div className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">
-                      {profile?.first_name || 'Account'}
-                    </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400 capitalize leading-tight">
-                      {profile?.role}
-                    </div>
-                  </div>
-
-                  <svg
-                    className={`w-4 h-4 text-gray-500 transition-transform ${
-                      dropdownOpen ? 'rotate-180' : ''
-                    }`}
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-
-                {dropdownOpen && (
-                  <div className="absolute right-0 mt-3 w-64 overflow-hidden rounded-3xl border border-gray-200/80 bg-white/95 shadow-2xl shadow-gray-900/10 backdrop-blur-xl dark:border-gray-700/80 dark:bg-dark-800/95 z-50">
-                    <div className="flex items-center gap-3 border-b border-gray-100 bg-gradient-to-r from-primary-50 to-white px-4 py-3 dark:border-gray-700 dark:from-primary-900/20 dark:to-dark-900">
-                      <Avatar url={profile?.profile_photo_url} initials={initials} size="sm" />
-                      <div className="min-w-0">
-                        <p className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide font-medium mb-0.5">
-                          Signed in as
-                        </p>
-                        <p className="text-sm font-bold text-gray-900 dark:text-white truncate">
-                          {profile?.first_name} {profile?.last_name}
-                        </p>
-                      </div>
-                    </div>
-
-                    <DropdownLink
-                      to="/profile"
-                      icon="👤"
-                      label="My Profile"
-                      onClick={() => setDropdownOpen(false)}
-                    />
-
-                    <DropdownLink
-                      to="/notifications"
-                      icon="🔔"
-                      label="Notifications"
-                      onClick={() => setDropdownOpen(false)}
-                    />
-
-                    {profile?.role === 'customer' && (
-                      <>
-                        <DropdownLink
-                          to="/my-assessments"
-                          icon="📋"
-                          label="My Assessments"
-                          onClick={() => setDropdownOpen(false)}
-                        />
-                        <DropdownLink
-                          to="/my-orders"
-                          icon="📦"
-                          label="My Orders"
-                          onClick={() => setDropdownOpen(false)}
-                        />
-                      </>
-                    )}
-
-                    {profile?.role === 'admin' && adminSecondary.length > 0 && (
-                      <>
-                        <div className="px-4 pt-3 pb-1">
-                          <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase tracking-widest font-semibold">
-                            More Pages
-                          </p>
-                        </div>
-
-                        {adminSecondary.map((link) => (
-                          <DropdownLink
-                            key={link.to}
-                            {...link}
-                            onClick={() => setDropdownOpen(false)}
-                          />
-                        ))}
-                      </>
-                    )}
-
-                    <button
-                      onClick={handleLogout}
-                      className="w-full flex items-center gap-2.5 border-t border-gray-100 dark:border-gray-700 px-4 py-3 text-sm font-medium text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors mt-1"
-                    >
-                      🚪 Log Out
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Mobile right controls */}
-          <div className="xl:hidden flex items-center gap-2 ml-auto flex-shrink-0">
-            {user && profile?.role === 'customer' && (
-              <div className="flex-shrink-0">
-                <CartDrawer />
-              </div>
-            )}
-
-            {user && <NotificationBell mobile />}
-
-            <ThemeToggle mobile />
-
-            <button
-              onClick={() => setMenuOpen((v) => !v)}
-              className="relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl border border-gray-200 bg-white/80 text-gray-700 shadow-sm transition hover:border-primary-300 hover:bg-primary-50 dark:border-gray-700 dark:bg-dark-800 dark:text-gray-200 dark:hover:bg-dark-700"
-              aria-label="Toggle menu"
-              aria-expanded={menuOpen}
-            >
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                {menuOpen ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                )}
-              </svg>
-
-              {!menuOpen &&
-                (unreadCount > 0 ||
-                  (profile?.role === 'admin' && totalAdminAlerts > 0)) && (
-                  <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white dark:border-dark-900" />
-                )}
-            </button>
           </div>
         </div>
       </nav>
 
-      {/* Mobile menu */}
-      {menuOpen && (
-        <div className="xl:hidden fixed inset-0 top-[72px] z-40 overflow-y-auto bg-gray-950/30 backdrop-blur-sm dark:bg-black/40">
-          <div className="min-h-full rounded-t-3xl border-t border-gray-200 bg-white px-4 py-5 space-y-1.5 pb-10 shadow-2xl dark:border-gray-800 dark:bg-dark-900">
-            {user && (
-              <div className="mb-4 flex items-center gap-3 rounded-3xl border border-primary-100 bg-gradient-to-r from-primary-50 to-white px-5 py-4 shadow-sm dark:border-primary-800/70 dark:from-primary-900/20 dark:to-dark-800">
-                <Avatar url={profile?.profile_photo_url} initials={initials} size="lg" />
-                <div>
-                  <p className="font-bold text-gray-900 dark:text-white leading-tight">
-                    {profile?.first_name} {profile?.last_name}
-                  </p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 capitalize">
-                    {profile?.role}
-                  </p>
-                </div>
-              </div>
-            )}
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-[70]">
+          <button
+            type="button"
+            aria-label="Close navigation menu"
+            onClick={() => setSidebarOpen(false)}
+            className="absolute inset-0 bg-gray-950/45 backdrop-blur-sm"
+          />
 
-            <p className="px-2 text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-1">
-              Navigation
-            </p>
-
-            <NavLink to="/" label="Home" icon="🏠" mobile />
-
-            {user &&
-              mobileNavLinks.map((link) => (
-                <NavLink key={link.to} {...link} mobile />
-              ))}
-
-            {user && (
-              <>
-                <div className="pt-3 pb-1">
-                  <p className="px-2 text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
-                    Account
-                  </p>
-                </div>
-
-                <NavLink to="/profile" label="My Profile" icon="👤" mobile />
-                <NavLink to="/notifications" label="Notifications" icon="🔔" mobile />
-
-                {profile?.role === 'customer' && (
-                  <>
-                    <NavLink to="/my-assessments" label="My Assessments" icon="📋" mobile />
-                    <NavLink to="/my-orders" label="My Orders" icon="📦" mobile />
-                  </>
-                )}
+          <aside className="absolute left-0 top-0 flex h-full w-[310px] max-w-[88vw] flex-col border-r border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-900">
+            <div className="border-b border-gray-100 p-4 dark:border-dark-700">
+              <div className="flex items-center justify-between gap-3">
+                <Link
+                  to="/"
+                  className="flex items-center gap-2 text-xl font-black text-gray-950 dark:text-white"
+                >
+                  <span className="grid h-10 w-10 place-items-center overflow-hidden rounded-2xl bg-white p-1 shadow ring-1 ring-primary-200 dark:bg-dark-800 dark:ring-primary-500/30">
+                    <img
+                      src="https://wcqqduuimpjipwvwzyzx.supabase.co/storage/v1/object/public/motorcycle-photos/MOTORCYCLE%20PHOTOS/icon.png"
+                      alt="MotoFix logo"
+                      className="h-full w-full object-contain"
+                    />
+                  </span>
+                  Moto<span className="-ml-1 text-primary-500">Fix</span>
+                </Link>
 
                 <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    handleLogout();
-                  }}
-                  className="w-full flex items-center gap-3 rounded-2xl px-5 py-4 text-base font-semibold text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                  type="button"
+                  onClick={() => setSidebarOpen(false)}
+                  className="grid h-10 w-10 place-items-center rounded-2xl bg-gray-100 text-lg font-black text-gray-700 transition hover:bg-red-50 hover:text-red-600 dark:bg-dark-800 dark:text-gray-300 dark:hover:bg-red-500/10 dark:hover:text-red-300"
+                  aria-label="Close sidebar"
                 >
-                  <span className="text-xl w-7 text-center">🚪</span>
-                  Log Out
+                  ✕
                 </button>
-              </>
-            )}
+              </div>
 
-            {!user && (
-              <>
-                <Link
-                  to="/login"
-                  className="flex items-center gap-3 rounded-2xl px-5 py-4 text-base font-semibold text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-800"
-                >
-                  <span className="text-xl w-7 text-center">🔑</span>
-                  Log In
-                </Link>
+              {user && (
+                <div className="mt-4 rounded-3xl bg-gray-50 p-4 ring-1 ring-gray-100 dark:bg-dark-800 dark:ring-dark-700">
+                  <div className="flex items-center gap-3">
+                    <Avatar url={profile?.profile_photo_url} initials={initials} size="lg" />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-black text-gray-950 dark:text-white">
+                        {profile?.first_name || 'Account'} {profile?.last_name || ''}
+                      </p>
+                      <p className="mt-1 text-xs font-bold text-gray-500 dark:text-gray-400">
+                        {formatRoleLabel(role)}
+                      </p>
+                    </div>
+                  </div>
 
-                <Link
-                  to="/register"
-                  className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-primary-600 to-primary-500 px-5 py-4 text-base font-semibold text-white shadow-lg shadow-primary-600/25 transition hover:from-primary-700 hover:to-primary-600"
+                  {totalAlerts > 0 && (
+                    <div className="mt-3 rounded-2xl border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs font-black text-yellow-800 dark:border-yellow-500/25 dark:bg-yellow-500/10 dark:text-yellow-200">
+                      🔔 {formatBadgeCount(totalAlerts)} active alert{totalAlerts === 1 ? '' : 's'}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="space-y-2">
+                {navLinks.map((link) => (
+                  <SidebarLink key={link.to} {...link} />
+                ))}
+              </div>
+            </div>
+
+            <div className="border-t border-gray-100 p-4 dark:border-dark-700">
+              {user ? (
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-red-50 px-4 py-3 text-sm font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25"
                 >
-                  Sign Up — It&apos;s Free
-                </Link>
-              </>
-            )}
-          </div>
+                  🚪 Log Out
+                </button>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <Link
+                    to="/login"
+                    className="rounded-2xl border border-gray-200 px-4 py-3 text-center text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300"
+                  >
+                    Log In
+                  </Link>
+                  <Link
+                    to="/register"
+                    className="rounded-2xl bg-primary-600 px-4 py-3 text-center text-sm font-black text-white transition hover:bg-primary-700"
+                  >
+                    Sign Up
+                  </Link>
+                </div>
+              )}
+            </div>
+          </aside>
         </div>
       )}
     </>
