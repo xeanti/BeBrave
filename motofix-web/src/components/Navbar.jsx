@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
-import CartDrawer from './CartDrawer';
 
 function formatBadgeCount(count) {
   const value = Number(count) || 0;
@@ -56,41 +55,6 @@ function formatRoleLabel(role) {
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
-}
-
-function shouldCountAsPendingOrder(order) {
-  const status = String(order?.status || '').toLowerCase();
-  const paymentStatus = String(order?.payment_status || '').toLowerCase();
-
-  if (['cancelled', 'canceled', 'completed', 'refunded', 'void'].includes(status)) {
-    return false;
-  }
-
-  return (
-    [
-      'pending',
-      'pending_payment',
-      'pending_verification',
-      'confirmed',
-      'processing',
-      'ready',
-      'ready_for_pickup',
-      'ready_for_delivery',
-      'for_pickup',
-      'for_delivery',
-    ].includes(status) ||
-    [
-      'unpaid',
-      'pending',
-      'pending_payment',
-      'checkout_created',
-      'pending_verification',
-      'partial',
-      'partially_paid',
-      'failed',
-      'expired',
-    ].includes(paymentStatus)
-  );
 }
 
 const ACTIVE_ORDER_STATUS_FILTER =
@@ -188,16 +152,16 @@ export default function Navbar() {
   const [lowStockParts, setLowStockParts] = useState(0);
 
   const role = profile?.role;
-  const isCustomer = role === 'customer';
   const isAdminRole = role === 'admin' || role === 'super_admin';
   const isSuperAdmin = role === 'super_admin';
-  const canSeeOperationAlerts = role === 'staff' || role === 'admin';
+  const canSeeOperationAlerts =
+    role === 'staff' || role === 'admin' || role === 'super_admin';
 
   const initials = profile
     ? `${profile.first_name?.[0] || ''}${profile.last_name?.[0] || ''}`.toUpperCase()
     : '';
 
-  const chatPath = role === 'customer' ? '/chat' : '/admin/chat';
+  const chatPath = role === 'customer' || role === 'user' ? '/chat' : '/admin/chat';
 
   const operationAlerts = canSeeOperationAlerts
     ? pendingBookings +
@@ -346,7 +310,7 @@ export default function Navbar() {
     if (!user?.id) return;
 
     try {
-      if (role === 'customer') {
+      if (role === 'customer' || role === 'user') {
         const { data: convs, error: convError } = await supabase
           .from('chat_conversations')
           .select('id')
@@ -390,7 +354,7 @@ export default function Navbar() {
     }
   }
 
-  // Admin/staff operation badges are refreshed by realtime, focus, sidebar open, and polling.
+  // Admin/staff/super-admin operation badges are refreshed by realtime, focus, sidebar open, and polling.
   async function fetchOperationNotifs() {
     try {
       const [
@@ -481,20 +445,16 @@ export default function Navbar() {
   }
 
   const publicLinks = [
-  { to: '/', label: 'Home', icon: '🏠' },
-  { to: '/login', label: 'Log In', icon: '🔐' },
-  { to: '/register', label: 'Sign Up', icon: '📝' },
+    { to: '/', label: 'Home', icon: '🏠' },
+    { to: '/login', label: 'Log In', icon: '🔐' },
+    { to: '/register', label: 'Sign Up', icon: '📝' },
   ];
 
   const customerLinks = [
     { to: '/dashboard', label: 'Dashboard', icon: '🏠' },
-    { to: '/pre-assessment', label: 'Get Estimate', icon: '🔍' },
-    { to: '/booking', label: 'Book Service', icon: '📅' },
     { to: '/appointments', label: 'Appointments', icon: '⏰' },
-    { to: '/shop', label: 'Shop', icon: '🛒' },
-    { to: '/customize', label: 'AI Preview', icon: '✨' },
-    { to: '/mechanics', label: 'Mechanics', icon: '🔧' },
     { to: '/chat', label: 'Messages', icon: '💬' },
+    { to: '/pre-assessment', label: 'Get Estimate', icon: '🔍' },
     { to: '/my-assessments', label: 'My Assessments', icon: '📋' },
     { to: '/my-orders', label: 'My Orders', icon: '📦' },
     { to: '/notifications', label: 'Notifications', icon: '🔔' },
@@ -504,15 +464,6 @@ export default function Navbar() {
   const staffLinks = [
     { to: '/staff', label: 'Staff Dashboard', icon: '🖥️' },
     { to: '/admin/chat', label: 'Messages', icon: '💬' },
-    { to: '/notifications', label: 'Notifications', icon: '🔔' },
-    { to: '/profile', label: 'My Profile', icon: '👤' },
-  ];
-
-  const mechanicLinks = [
-    { to: '/mechanic-dashboard', label: 'My Jobs', icon: '🔧' },
-    { to: '/mechanics', label: 'Team', icon: '👥' },
-    { to: '/admin/chat', label: 'Messages', icon: '💬' },
-    { to: '/mechanic-ratings', label: 'My Ratings', icon: '⭐' },
     { to: '/notifications', label: 'Notifications', icon: '🔔' },
     { to: '/profile', label: 'My Profile', icon: '👤' },
   ];
@@ -546,9 +497,20 @@ export default function Navbar() {
     if (isSuperAdmin) return superAdminLinks;
     if (role === 'admin') return adminLinks;
     if (role === 'staff') return staffLinks;
-    if (role === 'mechanic') return mechanicLinks;
+
+    // Mechanics are mobile-only. They should not have web navigation links.
+    if (role === 'mechanic') return [];
+
     return customerLinks;
   }, [user, role, isSuperAdmin]);
+
+  function getHomePath() {
+    if (!user) return '/';
+    if (isAdminRole) return '/admin';
+    if (role === 'staff') return '/staff';
+    if (role === 'mechanic') return '/login';
+    return '/dashboard';
+  }
 
   function isActive(to) {
     if (to === '/') return location.pathname === '/';
@@ -632,22 +594,12 @@ export default function Navbar() {
           </button>
 
           <Link
-            to={
-              user
-                ? isAdminRole
-                  ? '/admin'
-                  : role === 'staff'
-                    ? '/staff'
-                    : role === 'mechanic'
-                      ? '/mechanic-dashboard'
-                      : '/dashboard'
-                : '/'
-            }
+            to={getHomePath()}
             className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl text-2xl font-black tracking-tight text-gray-900 transition hover:scale-[1.01] dark:text-white"
           >
             <span className="grid h-10 w-10 flex-shrink-0 place-items-center overflow-hidden rounded-2xl bg-white p-1 shadow-lg shadow-primary-600/20 ring-1 ring-primary-200 dark:bg-dark-800 dark:ring-primary-500/30">
               <img
-                src="https://wcqqduuimpjipwvwzyzx.supabase.co/storage/v1/object/public/motorcycle-photos/MOTORCYCLE%20PHOTOS/icon.png"
+                src="/favicon.png"
                 alt="MotoFix logo"
                 className="h-full w-full object-contain"
               />
@@ -659,7 +611,6 @@ export default function Navbar() {
 
           <div className="flex items-center gap-2">
             <AlertButton />
-            {user && isCustomer && <CartDrawer />}
             <ThemeToggle />
           </div>
         </div>
@@ -678,12 +629,12 @@ export default function Navbar() {
             <div className="border-b border-gray-100 p-4 dark:border-dark-700">
               <div className="flex items-center justify-between gap-3">
                 <Link
-                  to="/"
+                  to={getHomePath()}
                   className="flex items-center gap-2 text-xl font-black text-gray-950 dark:text-white"
                 >
                   <span className="grid h-10 w-10 place-items-center overflow-hidden rounded-2xl bg-white p-1 shadow ring-1 ring-primary-200 dark:bg-dark-800 dark:ring-primary-500/30">
                     <img
-                      src="https://wcqqduuimpjipwvwzyzx.supabase.co/storage/v1/object/public/motorcycle-photos/MOTORCYCLE%20PHOTOS/icon.png"
+                      src="/favicon.png"
                       alt="MotoFix logo"
                       className="h-full w-full object-contain"
                     />
@@ -715,6 +666,12 @@ export default function Navbar() {
                     </div>
                   </div>
 
+                  {role === 'mechanic' && (
+                    <div className="mt-3 rounded-2xl border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs font-black text-yellow-800 dark:border-yellow-500/25 dark:bg-yellow-500/10 dark:text-yellow-200">
+                      Mechanics must use the MotoFix mobile application.
+                    </div>
+                  )}
+
                   {totalAlerts > 0 && (
                     <div className="mt-3 rounded-2xl border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs font-black text-yellow-800 dark:border-yellow-500/25 dark:bg-yellow-500/10 dark:text-yellow-200">
                       🔔 {formatBadgeCount(totalAlerts)} active alert{totalAlerts === 1 ? '' : 's'}
@@ -730,6 +687,12 @@ export default function Navbar() {
                   <SidebarLink key={link.to} {...link} />
                 ))}
               </div>
+
+              {user && role === 'mechanic' && (
+                <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-4 text-sm font-semibold text-yellow-800 dark:border-yellow-500/25 dark:bg-yellow-500/10 dark:text-yellow-200">
+                  This web portal is not available for mechanic accounts. Please log out and use the mobile app.
+                </div>
+              )}
             </div>
 
             <div className="border-t border-gray-100 p-4 dark:border-dark-700">

@@ -26,7 +26,8 @@ const MAX_MOTORCYCLE_YEAR = new Date().getFullYear() + 1;
 const MAX_PASSWORD_LENGTH = 72;
 const MAX_PROFILE_PHOTO_MB = 5;
 const MAX_CERT_SIZE_MB = 10;
-const ALLOWED_CERT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'pdf'];
+const ALLOWED_CERT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'pdf'];
+const ALLOWED_PROFILE_PHOTO_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'];
 
 function cleanName(value) {
   return String(value || '')
@@ -139,6 +140,26 @@ function isAllowedCertificateFile(asset) {
   return true;
 }
 
+function isAllowedProfilePhoto(asset) {
+  if (!asset) return false;
+
+  const uriExt = getFileExtension(asset.fileName || asset.uri || '');
+  const size = Number(asset.fileSize || asset.size || 0);
+  const mimeType = String(asset.mimeType || asset.type || '').toLowerCase();
+
+  const validExt =
+    !uriExt || ALLOWED_PROFILE_PHOTO_EXTENSIONS.includes(uriExt);
+
+  const validType =
+    !mimeType ||
+    ['image/jpeg', 'image/png', 'image/webp'].includes(mimeType);
+
+  if (!validExt || !validType) return false;
+  if (size && size > MAX_PROFILE_PHOTO_MB * 1024 * 1024) return false;
+
+  return true;
+}
+
 function getMimeFromExtension(ext) {
   switch (ext) {
     case 'jpg':
@@ -148,8 +169,6 @@ function getMimeFromExtension(ext) {
       return 'image/png';
     case 'webp':
       return 'image/webp';
-    case 'gif':
-      return 'image/gif';
     case 'pdf':
       return 'application/pdf';
     default:
@@ -287,8 +306,11 @@ export default function ProfileScreen({ navigation }) {
     if (!result.canceled && result.assets?.[0]) {
       const selectedAsset = result.assets[0];
 
-      if (selectedAsset.fileSize && selectedAsset.fileSize > MAX_PROFILE_PHOTO_MB * 1024 * 1024) {
-        Alert.alert('Image Too Large', `Profile photo must be ${MAX_PROFILE_PHOTO_MB}MB or smaller.`);
+      if (!isAllowedProfilePhoto(selectedAsset)) {
+        Alert.alert(
+          'Invalid Image',
+          `Please upload a JPG, PNG, or WEBP profile photo up to ${MAX_PROFILE_PHOTO_MB}MB.`
+        );
         return;
       }
 
@@ -309,7 +331,7 @@ export default function ProfileScreen({ navigation }) {
 
     if (!user?.id) throw new Error('Login required.');
 
-    const ext = localUri.match(/\.(\w+)$/)?.[1]?.toLowerCase() || 'jpg';
+    const ext = getFileExtension(localUri) || 'jpg';
     const safeExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext) ? ext : 'jpg';
     const contentType = safeExt === 'jpg' ? 'image/jpeg' : `image/${safeExt}`;
     const prefix = profile?.role === 'mechanic' ? 'mechanic' : 'profile';
@@ -634,7 +656,7 @@ export default function ProfileScreen({ navigation }) {
         if (!isAllowedCertificateFile(asset)) {
           Alert.alert(
             'Invalid File',
-            `Please upload JPG, PNG, WEBP, GIF, or PDF up to ${MAX_CERT_SIZE_MB}MB.`
+            `Please upload JPG, PNG, WEBP, or PDF up to ${MAX_CERT_SIZE_MB}MB.`
           );
           return;
         }
@@ -671,7 +693,7 @@ export default function ProfileScreen({ navigation }) {
     }
 
     if (!isAllowedCertificateFile(certFile)) {
-      setCertError(`Please upload JPG, PNG, WEBP, GIF, or PDF up to ${MAX_CERT_SIZE_MB}MB.`);
+      setCertError(`Please upload JPG, PNG, WEBP, or PDF up to ${MAX_CERT_SIZE_MB}MB.`);
       return;
     }
 

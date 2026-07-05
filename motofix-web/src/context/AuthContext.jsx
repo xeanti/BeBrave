@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
 const AuthContext = createContext(null);
@@ -7,66 +7,151 @@ function cleanPhone(value = '') {
   return String(value || '').replace(/\D/g, '');
 }
 
+function normalizeRole(role) {
+  return String(role || 'customer').toLowerCase().trim();
+}
+
+function normalizeProfile(profile) {
+  if (!profile) return null;
+
+  return {
+    ...profile,
+    role: normalizeRole(profile.role),
+  };
+}
+
 function isInactiveProfile(profile) {
   return profile?.is_active === false;
 }
 
 export function AuthProvider({ children }) {
+  const mountedRef = useRef(false);
+
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [inactiveError, setInactiveError] = useState('');
 
   useEffect(() => {
-    let mounted = true;
+    mountedRef.current = true;
 
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!mounted) return;
+    async function initializeSession() {
+      setLoading(true);
 
-      setSession(session);
+      try {
+        const {
+          data: { session: currentSession },
+          error,
+        } = await supabase.auth.getSession();
 
-      if (session?.user) {
-        await fetchProfile(session.user.id);
+        if (error) throw error;
+        if (!mountedRef.current) return;
+
+        setSession(currentSession || null);
+
+        if (currentSession?.user?.id) {
+          await fetchProfile(currentSession.user.id);
+        } else {
+          setProfile(null);
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error('Auth initialization error:', error);
+
+        if (mountedRef.current) {
+          setSession(null);
+          setProfile(null);
+          setLoading(false);
+        }
+      }
+    }
+
+    initializeSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, currentSession) => {
+      if (!mountedRef.current) return;
+
+      setSession(currentSession || null);
+
+      if (currentSession?.user?.id) {
+        await fetchProfile(currentSession.user.id);
       } else {
         setProfile(null);
         setLoading(false);
       }
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        if (!mounted) return;
-
-        setSession(session);
-
-        if (session?.user) {
-          await fetchProfile(session.user.id);
-        } else {
-          setProfile(null);
-          setLoading(false);
-        }
-      }
-    );
-
     return () => {
-      mounted = false;
-      listener.subscription.unsubscribe();
+      mountedRef.current = false;
+      subscription?.unsubscribe();
     };
   }, []);
 
   async function handleInactiveAccount() {
-    setInactiveError(
-      'Your account has been deactivated. Please contact MotoFix support or the shop administrator.'
-    );
+    if (mountedRef.current) {
+      setInactiveError(
+        'Your account has been deactivated. Please contact MotoFix support or the shop administrator.'
+      );
+      setProfile(null);
+      setSession(null);
+      setLoading(false);
+    }
 
-    setProfile(null);
-    setSession(null);
+    const { error } = await supabase.auth.signOut();
 
-    await supabase.auth.signOut();
+    if (error) {
+      console.error('Inactive account sign out failed:', error.message);
+    }
+  }
+
+  async function createMissingCustomerProfile(userId) {
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+
+    if (userError) throw userError;
+
+    const authUser = userData?.user;
+
+    if (!authUser) {
+      throw new Error('No authenticated user was found while creating profile.');
+    }
+
+    const metadata = authUser.user_metadata || {};
+
+    const newProfile = {
+      id: userId,
+      first_name: String(metadata.first_name || '').trim(),
+      last_name: String(metadata.last_name || '').trim(),
+      email: authUser.email || '',
+      phone: cleanPhone(metadata.phone || ''),
+      role: 'customer',
+      is_active: true,
+    };
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .insert(newProfile)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+
+    return normalizeProfile(data);
   }
 
   async function fetchProfile(userId) {
-    setLoading(true);
+    if (!userId) {
+      if (mountedRef.current) {
+        setProfile(null);
+        setLoading(false);
+      }
+      return null;
+    }
+
+    if (mountedRef.current) {
+      setLoading(true);
+    }
 
     try {
       const { data, error } = await supabase
@@ -75,61 +160,52 @@ export function AuthProvider({ children }) {
         .eq('id', userId)
         .single();
 
+      let profileData = data ? normalizeProfile(data) : null;
+
       if (error) {
-        console.error('Error fetching profile:', error.message);
-
         if (error.code === 'PGRST116') {
-          const { data: userData } = await supabase.auth.getUser();
-
-          if (userData?.user) {
-            await supabase.from('profiles').insert({
-              id: userId,
-              first_name: userData.user.user_metadata?.first_name || '',
-              last_name: userData.user.user_metadata?.last_name || '',
-              email: userData.user.email || '',
-              phone: cleanPhone(userData.user.user_metadata?.phone || ''),
-              role: 'customer',
-              is_active: true,
-            });
-
-            const { data: retryData } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', userId)
-              .single();
-
-            if (isInactiveProfile(retryData)) {
-              await handleInactiveAccount();
-              return;
-            }
-
-            if (retryData) {
-              setInactiveError('');
-              setProfile(retryData);
-            }
-          }
+          profileData = await createMissingCustomerProfile(userId);
+        } else {
+          throw error;
         }
-      } else {
-        if (isInactiveProfile(data)) {
-          await handleInactiveAccount();
-          return;
-        }
-
-        setInactiveError('');
-        setProfile(data);
       }
-    } catch (err) {
-      console.error('fetchProfile error:', err);
+
+      if (isInactiveProfile(profileData)) {
+        await handleInactiveAccount();
+        return null;
+      }
+
+      if (mountedRef.current) {
+        setInactiveError('');
+        setProfile(profileData);
+      }
+
+      return profileData;
+    } catch (error) {
+      console.error('fetchProfile error:', error);
+
+      if (mountedRef.current) {
+        setProfile(null);
+      }
+
+      return null;
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
   }
 
-  // Call this after any profile update to sync context with DB
+  // Call this after any profile update to sync context with DB.
   async function refreshProfile() {
-    if (session?.user) {
-      await fetchProfile(session.user.id);
+    const userId = session?.user?.id;
+
+    if (!userId) {
+      setProfile(null);
+      return null;
     }
+
+    return fetchProfile(userId);
   }
 
   async function signUp({
@@ -140,6 +216,8 @@ export function AuthProvider({ children }) {
     phone,
     emailRedirectTo,
   }) {
+    setInactiveError('');
+
     const cleanEmail = String(email || '').trim().toLowerCase();
     const cleanMobile = cleanPhone(phone);
 
@@ -161,6 +239,12 @@ export function AuthProvider({ children }) {
 
     await supabase.auth.signOut();
 
+    if (mountedRef.current) {
+      setSession(null);
+      setProfile(null);
+      setLoading(false);
+    }
+
     return data;
   }
 
@@ -169,51 +253,71 @@ export function AuthProvider({ children }) {
 
     const cleanEmail = String(email || '').trim().toLowerCase();
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: cleanEmail,
-      password,
-    });
-
-    if (error) throw error;
-
-    const userId = data?.user?.id;
-
-    if (userId) {
-      const { data: profileData, error: profileError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (profileError) {
-        console.error('Profile check after login failed:', profileError.message);
-      }
-
-      if (isInactiveProfile(profileData)) {
-        await handleInactiveAccount();
-
-        throw new Error(
-          'Your account has been deactivated. Please contact MotoFix support or the shop administrator.'
-        );
-      }
-
-      if (profileData) {
-        setProfile(profileData);
-      }
+    if (mountedRef.current) {
+      setLoading(true);
     }
 
-    return data;
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password,
+      });
+
+      if (error) throw error;
+
+      const currentSession = data?.session || null;
+      const userId = data?.user?.id;
+
+      if (mountedRef.current) {
+        setSession(currentSession);
+      }
+
+      if (userId) {
+        const profileData = await fetchProfile(userId);
+
+        if (isInactiveProfile(profileData)) {
+          await handleInactiveAccount();
+
+          throw new Error(
+            'Your account has been deactivated. Please contact MotoFix support or the shop administrator.'
+          );
+        }
+      } else if (mountedRef.current) {
+        setProfile(null);
+      }
+
+      return data;
+    } catch (error) {
+      if (mountedRef.current) {
+        setLoading(false);
+      }
+
+      throw error;
+    }
   }
 
   async function signOut() {
     setInactiveError('');
 
+    if (mountedRef.current) {
+      setLoading(true);
+    }
+
     const { error } = await supabase.auth.signOut();
 
-    if (error) throw error;
+    if (error) {
+      if (mountedRef.current) {
+        setLoading(false);
+      }
 
-    setSession(null);
-    setProfile(null);
+      throw error;
+    }
+
+    if (mountedRef.current) {
+      setSession(null);
+      setProfile(null);
+      setLoading(false);
+    }
   }
 
   const value = {
@@ -226,6 +330,7 @@ export function AuthProvider({ children }) {
     signIn,
     signOut,
     refreshProfile,
+    fetchProfile,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

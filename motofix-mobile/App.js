@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Platform, ScrollView, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -45,32 +45,9 @@ import JobsScreen from './screens/mechanic/JobsScreen';
 import JobDetailScreen from './screens/mechanic/JobDetailScreen';
 import MechanicRatingsScreen from './screens/mechanic/MechanicRatingsScreen';
 
-// --- STAFF ---
-import WalkInsScreen from './screens/staff/WalkInsScreen';
-import PaymentsScreen from './screens/staff/PaymentsScreen';
-import InventoryScreen from './screens/staff/InventoryScreen';
-import InventoryMovementsScreen from './screens/staff/InventoryMovementsScreen';
-import StaffDashboardScreen from './screens/staff/StaffDashboardScreen';
-
-// --- ADMIN ---
-import AdminDashboardScreen from './screens/admin/DashboardScreen';
-import AdminBookingsScreen from './screens/admin/BookingsScreen';
-import AdminOrdersScreen from './screens/admin/OrdersScreen';
-import ReportsScreen from './screens/admin/ReportsScreen';
-import AdminUsersScreen from './screens/admin/AdminUsersScreen';
-import AdminMotorcycleModelsScreen from './screens/admin/AdminMotorcycleModelsScreen';
-import AdminServicesScreen from './screens/admin/AdminServicesScreen';
-import AdminSettingsScreen from './screens/admin/AdminSettingsScreen';
-import AdminPreAssessmentsScreen from './screens/admin/AdminPreAssessmentsScreen';
-import AdminAuditLogsScreen from './screens/admin/AdminAuditLogsScreen';
-import AdminChatbotTemplatesScreen from './screens/admin/AdminChatbotTemplatesScreen';
-import AdminBookingDetailsScreen from './screens/admin/AdminBookingDetailsScreen';
-import AdminOrderDetailsScreen from './screens/admin/AdminOrderDetailsScreen';
-
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
 const ShopStack = createStackNavigator();
-const AdminMoreStack = createStackNavigator();
 
 const YELLOW = '#EAB308';
 
@@ -249,12 +226,10 @@ function CustomerShopStack() {
       />
 
       <ShopStack.Screen
-  name="OrderConfirmation"
-  component={OrderConfirmationScreen}
-  options={{ title: 'Order Submitted' }}
-/>
-
-
+        name="OrderConfirmation"
+        component={OrderConfirmationScreen}
+        options={{ title: 'Order Submitted' }}
+      />
     </ShopStack.Navigator>
   );
 }
@@ -336,65 +311,9 @@ export function MechanicTabs() {
       />
 
       <Tab.Screen
-  name="Ratings"
-  component={MechanicRatingsScreen}
-  options={{ tabBarIcon: makeIcon('star') }}
-/>
-
-      <Tab.Screen
-        name="Chat"
-        component={StaffChatScreen}
-        options={{ tabBarIcon: makeIcon('chatbubbles') }}
-      />
-
-      <Tab.Screen
-        name="Notifications"
-        component={NotificationsScreen}
-        options={notificationBadgeOptions(unreadNotifications)}
-      />
-
-      <Tab.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={{ tabBarIcon: makeIcon('person') }}
-      />
-    </Tab.Navigator>
-  );
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// STAFF TABS
-// ════════════════════════════════════════════════════════════════════════════
-export function StaffTabs() {
-  const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
-  const unreadNotifications = useUnreadNotificationCount();
-
-  return (
-    <Tab.Navigator screenOptions={getTabOptions(theme, insets)}>
-
-      <Tab.Screen
-  name="Dashboard"
-  component={StaffDashboardScreen}
-  options={{ tabBarIcon: makeIcon('speedometer') }}
-/>
-
-      <Tab.Screen
-        name="Walk-ins"
-        component={WalkInsScreen}
-        options={{ tabBarIcon: makeIcon('walk') }}
-      />
-
-      <Tab.Screen
-        name="Payments"
-        component={PaymentsScreen}
-        options={{ tabBarIcon: makeIcon('card') }}
-      />
-
-      <Tab.Screen
-        name="Inventory"
-        component={InventoryScreen}
-        options={{ tabBarIcon: makeIcon('cube') }}
+        name="Ratings"
+        component={MechanicRatingsScreen}
+        options={{ tabBarIcon: makeIcon('star') }}
       />
 
       <Tab.Screen
@@ -413,192 +332,6 @@ export function StaffTabs() {
         name="Profile"
         component={ProfileScreen}
         options={{ tabBarIcon: makeIcon('person') }}
-      />
-    </Tab.Navigator>
-  );
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// ADMIN MORE SCREEN
-// ════════════════════════════════════════════════════════════════════════════
-function AdminMoreScreen({ navigation }) {
-  const { theme } = useTheme();
-
-const items = [
-  { label: 'Orders', icon: 'cart', screen: 'AdminOrders' },
-  { label: 'Services', icon: 'construct', screen: 'AdminServices' },
-  { label: 'Booking Rules / Settings', icon: 'settings', screen: 'AdminSettings' },
-  { label: 'Pre-Assessments', icon: 'clipboard', screen: 'AdminPreAssessments' },
-  { label: 'Chatbot Templates', icon: 'sparkles', screen: 'AdminChatbotTemplates' },
-  { label: 'Parts & Inventory', icon: 'cube', screen: 'AdminInv' },
-  {
-  label: 'Inventory History',
-  icon: 'swap-horizontal',
-  screen: 'InventoryMovements',
-},
-  { label: 'Models', icon: 'bicycle', screen: 'AdminModels' },
-  { label: 'Users / Mechanics', icon: 'people', screen: 'AdminUsers' },
-  { label: 'Audit Logs', icon: 'shield-checkmark', screen: 'AdminAuditLogs' },
-  { label: 'Reports', icon: 'analytics', screen: 'AdminReports' },
-];
-
-  return (
-    <ScrollView
-      style={[styles.moreContainer, { backgroundColor: theme.bg }]}
-      contentContainerStyle={styles.moreContent}
-      showsVerticalScrollIndicator={false}
-    >
-      <Text style={[styles.moreTitle, { color: theme.text }]}>More</Text>
-
-      {items.map((item) => (
-        <TouchableOpacity
-          key={item.screen}
-          style={[styles.moreRow, { borderBottomColor: theme.border }]}
-          onPress={() => navigation.navigate(item.screen)}
-          activeOpacity={0.7}
-        >
-          <View style={[styles.moreIconWrap, { backgroundColor: YELLOW + '22' }]}>
-            <Ionicons name={item.icon} size={22} color={YELLOW} />
-          </View>
-
-          <Text style={[styles.moreLabel, { color: theme.text }]}>
-            {item.label}
-          </Text>
-
-          <Ionicons name="chevron-forward" size={18} color={theme.textMuted} />
-        </TouchableOpacity>
-      ))}
-    </ScrollView>
-  );
-}
-
-function AdminMoreStackNav() {
-  const { theme } = useTheme();
-
-  return (
-    <AdminMoreStack.Navigator screenOptions={{ headerShown: true, ...getHeaderOptions(theme) }}>
-      <AdminMoreStack.Screen
-        name="AdminMoreList"
-        component={AdminMoreScreen}
-        options={{ title: 'More' }}
-      />
-
-      <AdminMoreStack.Screen
-        name="AdminOrders"
-        component={AdminOrdersScreen}
-        options={{ title: 'Orders' }}
-      />
-
-      <AdminMoreStack.Screen
-        name="AdminServices"
-        component={AdminServicesScreen}
-        options={{ title: 'Services' }}
-      />
-
-      <AdminMoreStack.Screen
-  name="AdminAuditLogs"
-  component={AdminAuditLogsScreen}
-  options={{ title: 'Audit Logs' }}
-/>
-
-      <AdminMoreStack.Screen
-  name="AdminSettings"
-  component={AdminSettingsScreen}
-  options={{ title: 'Booking Rules' }}
-/>
-
-<AdminMoreStack.Screen
-  name="AdminChatbotTemplates"
-  component={AdminChatbotTemplatesScreen}
-  options={{ title: 'Chatbot Templates' }}
-/>
-
-<AdminMoreStack.Screen
-  name="AdminPreAssessments"
-  component={AdminPreAssessmentsScreen}
-  options={{ title: 'Pre-Assessments' }}
-/>
-
-      <AdminMoreStack.Screen
-        name="AdminInv"
-        component={InventoryScreen}
-        options={{ title: 'Parts & Inventory' }}
-      />
-
-      <AdminMoreStack.Screen
-        name="AdminModels"
-        component={AdminMotorcycleModelsScreen}
-        options={{ title: 'Models' }}
-      />
-
-      <AdminMoreStack.Screen
-  name="InventoryMovements"
-  component={InventoryMovementsScreen}
-  options={{ title: 'Inventory History' }}
-/>
-
-      <AdminMoreStack.Screen
-        name="AdminUsers"
-        component={AdminUsersScreen}
-        options={{ title: 'Users' }}
-      />
-
-      <AdminMoreStack.Screen
-        name="AdminReports"
-        component={ReportsScreen}
-        options={{ title: 'Reports' }}
-      />
-    </AdminMoreStack.Navigator>
-  );
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// ADMIN TABS
-// ════════════════════════════════════════════════════════════════════════════
-export function AdminTabs() {
-  const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
-  const unreadNotifications = useUnreadNotificationCount();
-
-  return (
-    <Tab.Navigator screenOptions={getTabOptions(theme, insets)}>
-      <Tab.Screen
-        name="Dashboard"
-        component={AdminDashboardScreen}
-        options={{ tabBarIcon: makeIcon('pie-chart') }}
-      />
-
-      <Tab.Screen
-        name="Bookings"
-        component={AdminBookingsScreen}
-        options={{ tabBarIcon: makeIcon('list') }}
-      />
-
-      <Tab.Screen
-        name="Chat"
-        component={StaffChatScreen}
-        options={{ tabBarIcon: makeIcon('chatbubbles') }}
-      />
-
-      <Tab.Screen
-        name="Notifications"
-        component={NotificationsScreen}
-        options={notificationBadgeOptions(unreadNotifications)}
-      />
-
-      <Tab.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={{ tabBarIcon: makeIcon('person') }}
-      />
-
-      <Tab.Screen
-        name="More"
-        component={AdminMoreStackNav}
-        options={{
-          tabBarIcon: makeIcon('grid'),
-          headerShown: false,
-        }}
       />
     </Tab.Navigator>
   );
@@ -609,16 +342,8 @@ export function AdminTabs() {
 // ════════════════════════════════════════════════════════════════════════════
 function CustomerMainGuarded({ navigation }) {
   return (
-    <RoleGuard allowedRoles={['customer']} navigation={navigation}>
+    <RoleGuard allowedRoles={['customer', 'user']} navigation={navigation}>
       <CustomerTabs />
-    </RoleGuard>
-  );
-}
-
-function AdminMainGuarded({ navigation }) {
-  return (
-    <RoleGuard allowedRoles={['admin']} navigation={navigation}>
-      <AdminTabs />
     </RoleGuard>
   );
 }
@@ -627,14 +352,6 @@ function MechanicMainGuarded({ navigation }) {
   return (
     <RoleGuard allowedRoles={['mechanic']} navigation={navigation}>
       <MechanicTabs />
-    </RoleGuard>
-  );
-}
-
-function StaffMainGuarded({ navigation }) {
-  return (
-    <RoleGuard allowedRoles={['staff', 'cashier']} navigation={navigation}>
-      <StaffTabs />
     </RoleGuard>
   );
 }
@@ -700,51 +417,27 @@ export function RootNav() {
 
       <Stack.Screen name="Main" component={CustomerMainGuarded} />
 
-      <Stack.Screen name="AdminMain" component={AdminMainGuarded} />
-
       <Stack.Screen name="MechanicMain" component={MechanicMainGuarded} />
 
-      <Stack.Screen name="StaffMain" component={StaffMainGuarded} />
+      <Stack.Screen
+        name="BookingConfirmation"
+        component={BookingConfirmationScreen}
+        options={{
+          headerShown: true,
+          title: 'Booking Submitted',
+          ...sharedHeader,
+        }}
+      />
 
-<Stack.Screen
-  name="AdminBookingDetails"
-  component={AdminBookingDetailsScreen}
-  options={{
-    headerShown: true,
-    title: 'Booking Details',
-    ...sharedHeader,
-  }}
-/>
-
-<Stack.Screen
-  name="AdminOrderDetails"
-  component={AdminOrderDetailsScreen}
-  options={{
-    headerShown: true,
-    title: 'Order Details',
-    ...sharedHeader,
-  }}
-/>
-
-<Stack.Screen
-  name="BookingConfirmation"
-  component={BookingConfirmationScreen}
-  options={{
-    headerShown: true,
-    title: 'Booking Submitted',
-    ...sharedHeader,
-  }}
-/>
-
-<Stack.Screen
-  name="Mechanics"
-  component={MechanicsScreen}
-  options={{
-    headerShown: true,
-    title: 'Mechanics',
-    ...sharedHeader,
-  }}
-/>
+      <Stack.Screen
+        name="Mechanics"
+        component={MechanicsScreen}
+        options={{
+          headerShown: true,
+          title: 'Mechanics',
+          ...sharedHeader,
+        }}
+      />
 
       <Stack.Screen
         name="Booking"
@@ -806,39 +499,3 @@ export default function App() {
     </ThemeProvider>
   );
 }
-
-// ─── Styles for AdminMoreScreen ─────────────────────────────────────────────
-const styles = StyleSheet.create({
-  moreContainer: {
-    flex: 1,
-  },
-  moreContent: {
-    paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 110,
-  },
-  moreTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    marginBottom: 16,
-  },
-  moreRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    gap: 14,
-  },
-  moreIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  moreLabel: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-});

@@ -12,21 +12,12 @@ import Login from './pages/Login';
 import AdminLogin from './pages/AdminLogin';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
-import Booking from './pages/Booking';
-import Customize from './pages/Customize';
 import Profile from './pages/Profile';
 import Appointments from './pages/Appointments';
-import Mechanics from './pages/Mechanics';
-import MechanicDashboard from './pages/MechanicDashboard';
 import Chat from './pages/Chat';
 import PreAssessment from './pages/PreAssessment';
 import MyAssessments from './pages/MyAssessments';
 import MyOrders from './pages/MyOrders';
-import Shop from './pages/Shop';
-import Checkout from './pages/Checkout';
-import OrderConfirmation from './pages/OrderConfirmation';
-import BookingConfirmation from './pages/BookingConfirmation';
-import MechanicRatings from './pages/MechanicRatings';
 import Notifications from './pages/Notifications';
 import BookingDetails from './pages/BookingDetails';
 import OrderDetails from './pages/OrderDetails';
@@ -50,11 +41,11 @@ import AdminChatbotTemplates from './pages/admin/AdminChatbotTemplates';
 
 import StaffDashboard from './pages/staff/StaffDashboard';
 
+const CUSTOMER_ROLES = ['customer', 'user'];
 const ADMIN_PORTAL_ROLES = ['admin', 'super_admin'];
 const SUPER_ADMIN_ONLY = ['super_admin'];
 const STAFF_PORTAL_ROLES = ['staff', 'admin', 'super_admin'];
-const MECHANIC_PORTAL_ROLES = ['mechanic', 'admin', 'super_admin'];
-const CHAT_PORTAL_ROLES = ['admin', 'super_admin', 'mechanic', 'staff'];
+const CHAT_PORTAL_ROLES = ['admin', 'super_admin', 'staff'];
 
 function RoleBasedDashboard() {
   const { profile } = useAuth();
@@ -68,8 +59,10 @@ function RoleBasedDashboard() {
     return <Navigate to="/staff" replace />;
   }
 
+  // Mechanics are mobile-only.
+  // Do not route mechanic accounts to any web mechanic dashboard.
   if (role === 'mechanic') {
-    return <Navigate to="/mechanic-dashboard" replace />;
+    return <Navigate to="/login" replace />;
   }
 
   return <Dashboard />;
@@ -104,19 +97,11 @@ export default function App() {
 
           <Routes>
             {/* Public */}
-              <Route path="/" element={<RootPage />} />
-              <Route path="/login" element={<Login />} />
-              <Route path="/admin/login" element={<AdminLogin />} />
-              <Route path="/register" element={<Register />} />
-              <Route
-  path="/mechanics"
-  element={
-    <ProtectedRoute>
-      <Mechanics />
-    </ProtectedRoute>
-  }
-/>
-              <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/" element={<RootPage />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/admin/login" element={<AdminLogin />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
 
             {/* Shared Protected */}
             <Route
@@ -137,30 +122,12 @@ export default function App() {
               }
             />
 
-            {/* Customer */}
+            {/* Customer Web - Limited Access */}
             <Route
               path="/dashboard"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={CUSTOMER_ROLES}>
                   <RoleBasedDashboard />
-                </ProtectedRoute>
-              }
-            />
-
-            <Route
-              path="/booking"
-              element={
-                <ProtectedRoute allowedRoles={['customer']}>
-                  <Booking />
-                </ProtectedRoute>
-              }
-            />
-
-            <Route
-              path="/customize"
-              element={
-                <ProtectedRoute allowedRoles={['customer']}>
-                  <Customize />
                 </ProtectedRoute>
               }
             />
@@ -168,7 +135,7 @@ export default function App() {
             <Route
               path="/appointments"
               element={
-                <ProtectedRoute allowedRoles={['customer']}>
+                <ProtectedRoute allowedRoles={CUSTOMER_ROLES}>
                   <Appointments />
                 </ProtectedRoute>
               }
@@ -177,7 +144,7 @@ export default function App() {
             <Route
               path="/appointments/:bookingId"
               element={
-                <ProtectedRoute allowedRoles={['customer']}>
+                <ProtectedRoute allowedRoles={CUSTOMER_ROLES}>
                   <BookingDetails />
                 </ProtectedRoute>
               }
@@ -186,7 +153,7 @@ export default function App() {
             <Route
               path="/chat"
               element={
-                <ProtectedRoute allowedRoles={['customer']}>
+                <ProtectedRoute allowedRoles={CUSTOMER_ROLES}>
                   <Chat />
                 </ProtectedRoute>
               }
@@ -195,7 +162,7 @@ export default function App() {
             <Route
               path="/pre-assessment"
               element={
-                <ProtectedRoute allowedRoles={['customer']}>
+                <ProtectedRoute allowedRoles={CUSTOMER_ROLES}>
                   <PreAssessment />
                 </ProtectedRoute>
               }
@@ -204,7 +171,7 @@ export default function App() {
             <Route
               path="/my-assessments"
               element={
-                <ProtectedRoute allowedRoles={['customer']}>
+                <ProtectedRoute allowedRoles={CUSTOMER_ROLES}>
                   <MyAssessments />
                 </ProtectedRoute>
               }
@@ -213,7 +180,7 @@ export default function App() {
             <Route
               path="/my-orders"
               element={
-                <ProtectedRoute allowedRoles={['customer']}>
+                <ProtectedRoute allowedRoles={CUSTOMER_ROLES}>
                   <MyOrders />
                 </ProtectedRoute>
               }
@@ -222,49 +189,13 @@ export default function App() {
             <Route
               path="/my-orders/:orderId"
               element={
-                <ProtectedRoute allowedRoles={['customer']}>
+                <ProtectedRoute allowedRoles={CUSTOMER_ROLES}>
                   <OrderDetails />
                 </ProtectedRoute>
               }
             />
 
-            <Route
-              path="/shop"
-              element={
-                <ProtectedRoute allowedRoles={['customer']}>
-                  <Shop />
-                </ProtectedRoute>
-              }
-            />
-
-            <Route
-              path="/checkout"
-              element={
-                <ProtectedRoute allowedRoles={['customer']}>
-                  <Checkout />
-                </ProtectedRoute>
-              }
-            />
-
-            <Route
-              path="/order-confirmation"
-              element={
-                <ProtectedRoute allowedRoles={['customer']}>
-                  <OrderConfirmation />
-                </ProtectedRoute>
-              }
-            />
-
-            <Route
-              path="/booking-confirmation"
-              element={
-                <ProtectedRoute allowedRoles={['customer']}>
-                  <BookingConfirmation />
-                </ProtectedRoute>
-              }
-            />
-
-            {/* Staff */}
+            {/* Staff Web Portal */}
             <Route
               path="/staff"
               element={
@@ -292,26 +223,7 @@ export default function App() {
               }
             />
 
-            {/* Mechanic */}
-            <Route
-              path="/mechanic-dashboard"
-              element={
-                <ProtectedRoute allowedRoles={MECHANIC_PORTAL_ROLES}>
-                  <MechanicDashboard />
-                </ProtectedRoute>
-              }
-            />
-
-            <Route
-              path="/mechanic-ratings"
-              element={
-                <ProtectedRoute allowedRoles={['mechanic']}>
-                  <MechanicRatings />
-                </ProtectedRoute>
-              }
-            />
-
-            {/* Admin */}
+            {/* Admin / Super Admin Web Portal */}
             <Route
               path="/admin"
               element={
@@ -348,7 +260,6 @@ export default function App() {
               }
             />
 
-
             <Route
               path="/admin/walk-in-queue"
               element={
@@ -377,13 +288,13 @@ export default function App() {
             />
 
             <Route
-  path="/admin/chatbot-templates"
-  element={
-    <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
-      <AdminChatbotTemplates />
-    </ProtectedRoute>
-  }
-/>
+              path="/admin/chatbot-templates"
+              element={
+                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
+                  <AdminChatbotTemplates />
+                </ProtectedRoute>
+              }
+            />
 
             <Route
               path="/admin/services"
@@ -467,6 +378,19 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
+            {/* Removed Web Mechanic Routes */}
+            <Route path="/mechanic-dashboard" element={<Navigate to="/login" replace />} />
+            <Route path="/mechanic-ratings" element={<Navigate to="/login" replace />} />
+
+            {/* Removed Customer Web Routes For Limited Access */}
+            <Route path="/booking" element={<Navigate to="/appointments" replace />} />
+            <Route path="/customize" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/mechanics" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/shop" element={<Navigate to="/my-orders" replace />} />
+            <Route path="/checkout" element={<Navigate to="/my-orders" replace />} />
+            <Route path="/order-confirmation" element={<Navigate to="/my-orders" replace />} />
+            <Route path="/booking-confirmation" element={<Navigate to="/appointments" replace />} />
 
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />

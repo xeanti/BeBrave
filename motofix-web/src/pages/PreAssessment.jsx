@@ -4,6 +4,44 @@ import { useAuth } from '../context/AuthContext';
 import { getDownPaymentPercent } from '../lib/settings';
 import { supabase } from '../lib/supabaseClient';
 
+
+function sanitizeMotorcycleText(value, max = 60) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9\s.'’\-\/()]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, max);
+}
+
+function sanitizeYear(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 4);
+}
+
+function sanitizeLongText(value, max = 500) {
+  return String(value || '')
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, max);
+}
+
+function isValidMotorcycleYear(value) {
+  if (!value) return true;
+
+  const year = Number(value);
+  const maxYear = new Date().getFullYear() + 1;
+
+  return Number.isInteger(year) && year >= 1950 && year <= maxYear;
+}
+
+function sanitizePreAssessmentForm(form) {
+  return {
+    motorcycle_make: sanitizeMotorcycleText(form.motorcycle_make).trim(),
+    motorcycle_model: sanitizeMotorcycleText(form.motorcycle_model).trim(),
+    motorcycle_year: sanitizeYear(form.motorcycle_year),
+    issue_description: sanitizeLongText(form.issue_description, 700).trim(),
+    service_id: String(form.service_id || '').trim(),
+  };
+}
+
 function StepHeader({ number, title }) {
   return (
     <div className="flex items-center gap-3 mb-4">
@@ -43,9 +81,9 @@ export default function PreAssessment() {
     if (profile) {
       setForm((f) => ({
         ...f,
-        motorcycle_make: profile.moto_make || '',
-        motorcycle_model: profile.moto_model || '',
-        motorcycle_year: profile.moto_year || '',
+        motorcycle_make: sanitizeMotorcycleText(profile.moto_make || ''),
+        motorcycle_model: sanitizeMotorcycleText(profile.moto_model || ''),
+        motorcycle_year: sanitizeYear(profile.moto_year || ''),
       }));
     }
   }, [profile]);
@@ -59,34 +97,54 @@ export default function PreAssessment() {
   }
 
   function handleChange(e) {
-    const updated = { ...form, [e.target.name]: e.target.value };
+    const { name, value } = e.target;
+    let safeValue = value;
+
+    if (name === 'motorcycle_make' || name === 'motorcycle_model') {
+      safeValue = sanitizeMotorcycleText(value);
+    } else if (name === 'motorcycle_year') {
+      safeValue = sanitizeYear(value);
+    } else if (name === 'issue_description') {
+      safeValue = sanitizeLongText(value, 700);
+    }
+
+    const updated = { ...form, [name]: safeValue };
     setForm(updated);
 
-    if (e.target.name === 'service_id' && e.target.value) {
-      const svc = services.find((s) => s.id === e.target.value);
+    if (name === 'service_id' && safeValue) {
+      const svc = services.find((s) => s.id === safeValue);
       if (svc) {
-        const laborCost = svc.labor_cost || 0;
-        const baseCost = svc.base_price || 0;
+        const laborCost = Number(svc.labor_cost) || 0;
+        const baseCost = Number(svc.base_price) || 0;
         const total = baseCost + laborCost;
-        const downPayment = total * downPaymentRate;
-setEstimate({
-  service: svc,
-  laborCost,
-  baseCost,
-  total,
-});
+
+        setEstimate({
+          service: svc,
+          laborCost,
+          baseCost,
+          total,
+        });
       }
-    } else if (e.target.name === 'service_id' && !e.target.value) {
+    } else if (name === 'service_id' && !safeValue) {
       setEstimate(null);
     }
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
+
+    const safeForm = sanitizePreAssessmentForm(form);
+
     if (!estimate) {
       setError('Please select a service to generate an estimate.');
       return;
     }
+
+    if (!isValidMotorcycleYear(safeForm.motorcycle_year)) {
+      setError(`Motorcycle year must be between 1950 and ${new Date().getFullYear() + 1}.`);
+      return;
+    }
+
     setError('');
     setSaving(true);
 
@@ -95,21 +153,23 @@ setEstimate({
         .from('pre_assessments')
         .insert({
           customer_id: user.id,
-          motorcycle_make: form.motorcycle_make,
-          motorcycle_model: form.motorcycle_model,
-          motorcycle_year: form.motorcycle_year
-            ? parseInt(form.motorcycle_year)
+          motorcycle_make: safeForm.motorcycle_make || null,
+          motorcycle_model: safeForm.motorcycle_model || null,
+          motorcycle_year: safeForm.motorcycle_year
+            ? parseInt(safeForm.motorcycle_year, 10)
             : null,
-          issue_description: form.issue_description,
-          service_id: form.service_id,
+          issue_description: safeForm.issue_description || null,
+          service_id: safeForm.service_id,
           estimated_labor_cost: estimate.laborCost,
           estimated_parts_cost: 0,
           estimated_total: estimate.total,
-down_payment_required: estimate.total * downPaymentRate,
+          down_payment_required: estimate.total * downPaymentRate,
           status: 'pending',
         });
 
       if (insertError) throw insertError;
+
+      setForm(safeForm);
       setSaved(true);
     } catch (err) {
       setError(err.message || 'Failed to save assessment.');
@@ -166,7 +226,7 @@ down_payment_required: estimate.total * downPaymentRate,
                 state: {
                   service_id: form.service_id,
                   estimated_total: estimate?.total,
-                  down_payment: estimate?.downPayment,
+                  down_payment: estimate ? estimate.total * downPaymentRate : 0,
                 }
               })}
               className="flex-1 bg-primary-600 hover:bg-primary-700 py-2.5 rounded-lg font-semibold transition text-sm shadow-lg shadow-primary-600/10"
@@ -178,9 +238,9 @@ down_payment_required: estimate.total * downPaymentRate,
                 setSaved(false);
                 setEstimate(null);
                 setForm({
-                  motorcycle_make: profile?.moto_make || '',
-                  motorcycle_model: profile?.moto_model || '',
-                  motorcycle_year: profile?.moto_year || '',
+                  motorcycle_make: sanitizeMotorcycleText(profile?.moto_make || ''),
+                  motorcycle_model: sanitizeMotorcycleText(profile?.moto_model || ''),
+                  motorcycle_year: sanitizeYear(profile?.moto_year || ''),
                   issue_description: '',
                   service_id: '',
                 });
@@ -246,6 +306,8 @@ down_payment_required: estimate.total * downPaymentRate,
                   value={form.motorcycle_year}
                   onChange={handleChange}
                   placeholder="e.g. 2023"
+                  inputMode="numeric"
+                  maxLength={4}
                   className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 transition placeholder:text-gray-600"
                 />
               </div>
@@ -260,6 +322,7 @@ down_payment_required: estimate.total * downPaymentRate,
               value={form.issue_description}
               onChange={handleChange}
               rows={4}
+              maxLength={700}
               placeholder="Describe what's wrong with your motorcycle or what service you need... (e.g. Strange noise when braking, oil leaking from engine, needs full tune-up)"
               className="w-full px-3 py-2.5 rounded-lg bg-dark-900 border border-gray-700 text-white text-sm focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 transition resize-none placeholder:text-gray-600"
             />

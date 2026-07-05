@@ -15,7 +15,13 @@ const inputBase =
 
 const labelBase = 'block text-sm text-gray-600 dark:text-gray-300 mb-1';
 
-const PERSONNEL_ROLES = ['admin', 'super_admin', 'staff', 'mechanic'];
+const CUSTOMER_ROLES = ['customer', 'user'];
+const ADMIN_PORTAL_ROLES = ['admin', 'super_admin', 'staff'];
+const MOBILE_ONLY_ROLES = ['mechanic'];
+
+function normalizeRole(role) {
+  return String(role || '').toLowerCase().trim();
+}
 
 function FieldIcon({ children }) {
   return (
@@ -73,14 +79,44 @@ function getFriendlyLoginError(err) {
   };
 }
 
+function getRoleAccessError(role) {
+  if (ADMIN_PORTAL_ROLES.includes(role)) {
+    return {
+      title: 'Use the Admin Login',
+      message:
+        'This account is not a customer account. Please use the Admin Login page.',
+      tips: ['Click “Use the Admin Login” below to continue.'],
+      canResend: false,
+    };
+  }
+
+  if (MOBILE_ONLY_ROLES.includes(role)) {
+    return {
+      title: 'Use the MotoFix Mobile App',
+      message:
+        'Mechanic accounts must use the MotoFix mobile application.',
+      tips: [],
+      canResend: false,
+    };
+  }
+
+  return {
+    title: 'Access Restricted',
+    message: 'This account role is not allowed to access the customer web portal.',
+    tips: [],
+    canResend: false,
+  };
+}
 export default function Login() {
   const { signIn, user, profile } = useAuth();
   const navigate = useNavigate();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState('');
+
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -88,24 +124,46 @@ export default function Login() {
   useEffect(() => {
     if (!user || !profile) return;
 
-    if (profile.role === 'customer') {
-      navigate('/dashboard', { replace: true });
-      return;
+    async function handleExistingSession() {
+      const role = normalizeRole(profile.role);
+
+      if (CUSTOMER_ROLES.includes(role)) {
+        navigate('/dashboard', { replace: true });
+        return;
+      }
+
+      // Important:
+      // Do not silently redirect non-customer accounts.
+      // Sign them out and show a clear message on this login page.
+      await supabase.auth.signOut();
+      setError(getRoleAccessError(role));
     }
 
-    if (PERSONNEL_ROLES.includes(profile.role)) {
-      navigate('/admin/login', { replace: true });
-    }
+    handleExistingSession();
   }, [user, profile, navigate]);
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
     setSuccessMessage('');
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail || !password) {
+      setError({
+        title: 'Missing login details',
+        message: 'Please enter your email and password.',
+        tips: [],
+        canResend: false,
+      });
+      return;
+    }
+
     setLoading(true);
 
     try {
-      const cleanEmail = email.trim().toLowerCase();
+      // Clear old/stuck session first so the wrong account does not auto-redirect.
+      await supabase.auth.signOut();
 
       await signIn({
         email: cleanEmail,
@@ -130,17 +188,11 @@ export default function Login() {
 
       if (profileError) throw profileError;
 
-      if (profileRow?.role !== 'customer') {
+      const role = normalizeRole(profileRow?.role);
+
+      if (!CUSTOMER_ROLES.includes(role)) {
         await supabase.auth.signOut();
-
-        setError({
-          title: 'Use the MotoFix Admin Portal',
-          message:
-            'Staff, mechanics, admins, and super admins must sign in through the admin login page.',
-          tips: ['Go to /admin/login to access the personnel portal.'],
-          canResend: false,
-        });
-
+        setError(getRoleAccessError(role));
         return;
       }
 
@@ -221,27 +273,27 @@ export default function Login() {
             </div>
 
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-4 leading-relaxed">
-              Log in to check on your bookings, message your mechanic, and manage your ride.
+              Log in to check your appointments, orders, pre-assessments, messages, and profile.
             </p>
 
             <div className="mt-6 space-y-2.5">
               <FeatureRow
                 icon="📅"
                 color="bg-blue-500/10 text-blue-500 dark:text-blue-400"
-                title="Live booking status"
-                description="Know exactly where your bike's at"
+                title="Appointment tracking"
+                description="View your booking status"
               />
               <FeatureRow
-                icon="🔧"
+                icon="📋"
                 color="bg-primary-500/10 text-primary-500 dark:text-primary-400"
-                title="Service history"
-                description="Every visit, logged in one place"
+                title="Pre-assessments"
+                description="Check service estimates"
               />
               <FeatureRow
-                icon="👤"
+                icon="💬"
                 color="bg-purple-500/10 text-purple-500 dark:text-purple-400"
-                title="GCash"
-                description="Pay your way, no cash required"
+                title="Customer messages"
+                description="Chat with MotoFix support"
               />
             </div>
           </div>
@@ -299,6 +351,7 @@ export default function Login() {
                     onChange={(e) => setEmail(e.target.value)}
                     className={inputBase}
                     placeholder="you@example.com"
+                    disabled={loading}
                   />
                 </div>
               </div>
@@ -310,6 +363,7 @@ export default function Login() {
                     type="button"
                     onClick={() => setShowPassword((s) => !s)}
                     className="text-[11px] font-semibold text-primary-600 dark:text-primary-500 hover:underline"
+                    disabled={loading}
                   >
                     {showPassword ? 'Hide' : 'Show'}
                   </button>
@@ -324,6 +378,7 @@ export default function Login() {
                     onChange={(e) => setPassword(e.target.value)}
                     className={inputBase}
                     placeholder="••••••••"
+                    disabled={loading}
                   />
                 </div>
               </div>
@@ -341,13 +396,17 @@ export default function Login() {
             </form>
 
             <div className="mt-5 rounded-xl bg-gray-50 dark:bg-dark-900 border border-gray-200 dark:border-white/10 p-3 text-xs text-gray-500 dark:text-gray-400">
-              Staff, mechanic, admin, or super admin?{' '}
+              Staff, admin, or super admin?{' '}
               <Link
                 to="/admin/login"
                 className="font-semibold text-primary-600 dark:text-primary-500 hover:underline"
               >
-                Use the Admin Portal
+                Use the Admin Login
               </Link>
+              <br />
+              <span className="mt-1 inline-block">
+                Mechanic account? Use the MotoFix mobile app.
+              </span>
             </div>
 
             <p className="text-gray-500 dark:text-gray-400 text-sm text-center mt-6">

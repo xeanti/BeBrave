@@ -63,6 +63,7 @@ export default function LoginScreen({ navigation }) {
       } = await supabase.auth.getUser();
 
       if (userError || !user) {
+        await supabase.auth.signOut();
         throw new Error(userError?.message || 'Could not retrieve user data.');
       }
 
@@ -82,17 +83,50 @@ export default function LoginScreen({ navigation }) {
         throw new Error('No profile found for this account.');
       }
 
-      const role = profile.role || 'customer';
+      const role = String(profile.role || 'customer').toLowerCase().trim();
 
-      if (role === 'admin') {
-        resetToScreen('AdminMain');
-      } else if (role === 'mechanic') {
-        resetToScreen('MechanicMain');
-      } else if (role === 'staff') {
-        resetToScreen('StaffMain');
-      } else {
-        resetToScreen('Main');
+      const webOnlyRoles = [
+        'admin',
+        'super_admin',
+        'super-admin',
+        'superadmin',
+        'staff',
+        'cashier',
+      ];
+
+      const customerRoles = ['customer', 'user'];
+
+      // Block web-only roles from mobile
+      if (webOnlyRoles.includes(role)) {
+        await supabase.auth.signOut();
+
+        Alert.alert(
+          'Access Restricted',
+          'Admin, super admin, and staff accounts must use the web portal.'
+        );
+
+        return;
       }
+
+      // Allow mechanic in mobile
+      if (role === 'mechanic') {
+        resetToScreen('MechanicMain');
+        return;
+      }
+
+      // Allow customer/user in mobile
+      if (customerRoles.includes(role)) {
+        resetToScreen('Main');
+        return;
+      }
+
+      // Block unknown roles
+      await supabase.auth.signOut();
+
+      Alert.alert(
+        'Access Restricted',
+        'Your account role is not allowed to access the mobile application.'
+      );
     } catch (error) {
       Alert.alert('Login Error', error.message || 'Something went wrong.');
     } finally {

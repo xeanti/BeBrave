@@ -1,72 +1,168 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
+import { useAuth } from '../context/AuthContext';
 
-const PORTAL_ROLES = ['admin', 'super_admin', 'staff', 'mechanic'];
+const PORTAL_ROLES = ['admin', 'super_admin', 'staff'];
+const CUSTOMER_ROLES = ['customer', 'user'];
+const MOBILE_ONLY_ROLES = ['mechanic'];
+
+const inputBase =
+  'w-full pl-10 pr-12 py-2.5 rounded-xl bg-gray-50 dark:bg-dark-900 border border-gray-200 dark:border-white/10 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-colors';
+
+const labelBase = 'block text-sm text-gray-600 dark:text-gray-300 mb-1';
+
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function normalizeRole(role) {
+  return String(role || '').toLowerCase().trim();
+}
 
 function getPortalHome(role) {
-  if (role === 'admin' || role === 'super_admin') return '/admin';
-  if (role === 'staff') return '/staff';
-  if (role === 'mechanic') return '/mechanic-dashboard';
-  return '/dashboard';
+  const cleanRole = normalizeRole(role);
+
+  if (cleanRole === 'admin' || cleanRole === 'super_admin') return '/admin';
+  if (cleanRole === 'staff') return '/staff';
+
+  return '/admin/login';
+}
+
+function FieldIcon({ children }) {
+  return (
+    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-base leading-none opacity-70 pointer-events-none">
+      {children}
+    </span>
+  );
+}
+
+function FeatureRow({ icon, color, title, description }) {
+  return (
+    <div className="flex items-center gap-3 bg-gray-50 dark:bg-dark-900 rounded-xl p-3.5 border border-transparent">
+      <div className={`w-9 h-9 rounded-lg flex items-center justify-center text-base shrink-0 ${color}`}>
+        {icon}
+      </div>
+
+      <div>
+        <p className="font-medium text-sm text-gray-900 dark:text-white leading-tight">
+          {title}
+        </p>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+          {description}
+        </p>
+      </div>
+    </div>
+  );
 }
 
 function getFriendlyError(err) {
   const message = err?.message || '';
 
   if (message.toLowerCase().includes('invalid login credentials')) {
-    return 'Incorrect email or password.';
+    return {
+      title: 'Incorrect email or password',
+      message: 'Please check your email and password, then try again.',
+    };
   }
 
   if (message.toLowerCase().includes('email not confirmed')) {
-    return 'Please confirm your email first before logging in.';
+    return {
+      title: 'Please confirm your email first',
+      message: 'Open the verification email sent to your inbox before logging in.',
+    };
   }
 
-  return message || 'Admin login failed. Please try again.';
+  return {
+    title: 'Admin login failed',
+    message: message || 'Something went wrong while logging in. Please try again.',
+  };
+}
+
+function getBlockedRoleError(role) {
+  if (CUSTOMER_ROLES.includes(role)) {
+    return {
+      title: 'Use the Customer Login',
+      message: 'Customer accounts must sign in through the normal customer login page.',
+    };
+  }
+
+  if (MOBILE_ONLY_ROLES.includes(role)) {
+    return {
+      title: 'Use the Mobile App',
+      message: 'Mechanic accounts are mobile-only and cannot access the web personnel portal.',
+    };
+  }
+
+  return {
+    title: 'Access Restricted',
+    message: 'This account role is not allowed to access the MotoFix personnel portal.',
+  };
 }
 
 export default function AdminLogin() {
   const navigate = useNavigate();
-  const { user, profile, refreshProfile } = useAuth();
+  const { user, profile, signIn, signOut } = useAuth();
+
+  const navigatingRef = useRef(false);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
-    if (!user || !profile) return;
+    if (!user || !profile || loading || navigatingRef.current) return;
 
-    if (PORTAL_ROLES.includes(profile.role)) {
-      navigate(getPortalHome(profile.role), { replace: true });
+    async function handleExistingSession() {
+      const role = normalizeRole(profile.role);
+
+      if (PORTAL_ROLES.includes(role)) {
+        navigatingRef.current = true;
+        navigate(getPortalHome(role), { replace: true });
+        return;
+      }
+
+      // Wrong existing web session should not stay active on the personnel login page.
+      await signOut();
+
+      setError(getBlockedRoleError(role));
     }
-  }, [user, profile, navigate]);
+
+    handleExistingSession();
+  }, [user, profile, loading, navigate, signOut]);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setError('');
+
+    if (loading || navigatingRef.current) return;
+
+    setError(null);
 
     const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanEmail || !password) {
-      setError('Email and password are required.');
+      setError({
+        title: 'Missing login details',
+        message: 'Email and password are required.',
+      });
       return;
     }
 
     setLoading(true);
 
     try {
-      const { data, error: loginError } = await supabase.auth.signInWithPassword({
+      const authData = await signIn({
         email: cleanEmail,
         password,
       });
 
-      if (loginError) throw loginError;
-
-      const userId = data?.user?.id;
+      const userId = authData?.user?.id;
 
       if (!userId) {
         throw new Error('No user account was returned.');
@@ -80,18 +176,17 @@ export default function AdminLogin() {
 
       if (profileError) throw profileError;
 
-      if (!PORTAL_ROLES.includes(profileRow?.role)) {
-        await supabase.auth.signOut();
+      const role = normalizeRole(profileRow?.role);
 
-        setError(
-          'This portal is only for MotoFix staff, mechanics, admins, and super admins. Customers should use the customer login page.'
-        );
+      if (PORTAL_ROLES.includes(role)) {
+        navigatingRef.current = true;
+        navigate(getPortalHome(role), { replace: true });
         return;
       }
 
-      await refreshProfile?.();
+      await signOut();
 
-      navigate(getPortalHome(profileRow.role), { replace: true });
+      setError(getBlockedRoleError(role));
     } catch (err) {
       setError(getFriendlyError(err));
     } finally {
@@ -100,116 +195,144 @@ export default function AdminLogin() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 px-4 py-10 text-gray-900 dark:bg-dark-950 dark:text-white">
-      <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-6xl items-center justify-center">
-        <div className="grid w-full overflow-hidden rounded-[2rem] border border-gray-200 bg-white shadow-2xl dark:border-white/10 dark:bg-dark-900 lg:grid-cols-2">
-          <section className="hidden bg-gradient-to-br from-yellow-500 via-yellow-600 to-orange-600 p-10 text-white lg:flex lg:flex-col lg:justify-between">
-            <div>
-              <div className="mb-8 flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/20 text-2xl">
-                  🛠️
-                </div>
-                <div>
-                  <p className="text-sm font-bold uppercase tracking-[0.3em] text-white/70">
-                    MotoFix
-                  </p>
-                  <h1 className="text-2xl font-black">Admin Portal</h1>
-                </div>
-              </div>
+    <main className="min-h-[calc(100vh-72px)] bg-gray-50 dark:bg-dark-900 text-gray-900 dark:text-white px-4 sm:px-6 py-8 sm:py-10 transition-colors flex items-center justify-center">
+      <div className="w-full max-w-3xl">
+        <div className="relative rounded-2xl bg-white dark:bg-dark-800 border border-gray-200 dark:border-white/10 shadow-sm dark:shadow-none overflow-hidden transition-colors md:flex">
+          <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-primary-500 to-accent-400" />
 
-              <h2 className="text-4xl font-black leading-tight">
-                Personnel access for MotoFix operations.
-              </h2>
-
-              <p className="mt-5 max-w-md text-sm leading-7 text-white/80">
-                Use this portal for bookings, walk-ins, orders, inventory,
-                payments, mechanics, staff accounts, reports, and system
-                administration.
-              </p>
-            </div>
-
-            <div className="rounded-3xl bg-black/20 p-5 text-sm text-white/80">
-              Customers should not use this page. They must log in through the
-              normal customer login.
-            </div>
-          </section>
-
-          <section className="p-6 sm:p-10">
-            <div className="mb-8">
-              <p className="text-sm font-black uppercase tracking-[0.3em] text-primary-600 dark:text-primary-400">
-                Secure Login
-              </p>
-              <h1 className="mt-2 text-3xl font-black">Admin / Staff Login</h1>
-              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                Sign in using your MotoFix personnel account.
-              </p>
-            </div>
-
-            {error && (
-              <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
-                {error}
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div>
-                <label className="mb-1 block text-sm font-bold text-gray-600 dark:text-gray-300">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@example.com"
-                  autoComplete="email"
-                  className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-900 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-white/10 dark:bg-dark-950 dark:text-white"
+          {/* Brand panel */}
+          <div className="md:w-[40%] p-6 sm:p-7 pl-7 sm:pl-8 border-b md:border-b-0 md:border-r border-gray-200 dark:border-white/10">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 flex items-center justify-center shrink-0 overflow-hidden">
+                <img
+                  src="/favicon.png"
+                  alt="MotoFix Logo"
+                  className="w-full h-full object-contain"
                 />
               </div>
 
               <div>
-                <div className="mb-1 flex items-center justify-between">
-                  <label className="block text-sm font-bold text-gray-600 dark:text-gray-300">
-                    Password
-                  </label>
+                <p className="text-[11px] uppercase tracking-wide font-semibold text-accent-600 dark:text-accent-400">
+                  {greeting()}
+                </p>
+                <h1 className="text-xl font-bold leading-tight">Personnel Portal</h1>
+              </div>
+            </div>
 
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-4 leading-relaxed">
+              Log in to manage bookings, walk-ins, products, orders, payments, and service operations.
+            </p>
+
+            <div className="mt-6 space-y-2.5">
+              <FeatureRow
+                icon="📋"
+                color="bg-blue-500/10 text-blue-500 dark:text-blue-400"
+                title="Booking management"
+                description="Review appointments and schedules"
+              />
+              <FeatureRow
+                icon="🧾"
+                color="bg-primary-500/10 text-primary-500 dark:text-primary-400"
+                title="Orders and payments"
+                description="Track billing and customer orders"
+              />
+              <FeatureRow
+                icon="🛡️"
+                color="bg-purple-500/10 text-purple-500 dark:text-purple-400"
+                title="Role-based access"
+                description="Staff, admin, and super admin only"
+              />
+            </div>
+          </div>
+
+          {/* Form panel */}
+          <div className="flex-1 p-6 sm:p-7 pl-7 sm:pl-8 flex flex-col justify-center">
+            <h2 className="text-lg font-semibold mb-5">Log in to personnel account</h2>
+
+            {error && (
+              <div className="bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-sm rounded-xl p-4 mb-4">
+                <p className="font-semibold text-red-700 dark:text-red-300 mb-1">
+                  {error.title}
+                </p>
+
+                <p className="leading-relaxed">
+                  {error.message}
+                </p>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className={labelBase}>Email</label>
+                <div className="relative">
+                  <FieldIcon>✉️</FieldIcon>
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className={inputBase}
+                    placeholder="admin@example.com"
+                    autoComplete="email"
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className={labelBase + ' mb-0'}>Password</label>
                   <button
                     type="button"
-                    onClick={() => setShowPassword((value) => !value)}
-                    className="text-xs font-black text-primary-600 hover:underline dark:text-primary-400"
+                    onClick={() => setShowPassword((s) => !s)}
+                    className="text-[11px] font-semibold text-primary-600 dark:text-primary-500 hover:underline"
+                    disabled={loading}
                   >
                     {showPassword ? 'Hide' : 'Show'}
                   </button>
                 </div>
 
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  autoComplete="current-password"
-                  className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-900 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-white/10 dark:bg-dark-950 dark:text-white"
-                />
+                <div className="relative">
+                  <FieldIcon>🔒</FieldIcon>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className={inputBase}
+                    placeholder="••••••••"
+                    autoComplete="current-password"
+                    disabled={loading}
+                  />
+                </div>
               </div>
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full rounded-2xl bg-primary-600 px-5 py-3 font-black text-white shadow-lg shadow-primary-600/25 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="w-full flex items-center justify-center gap-2 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl shadow-md shadow-primary-500/30 transition"
               >
-                {loading ? 'Checking access...' : 'Log in to Admin Portal'}
+                {loading && (
+                  <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                )}
+                {loading ? 'Checking access...' : 'Log In'}
               </button>
             </form>
 
-            <div className="mt-6 rounded-2xl bg-gray-50 p-4 text-sm text-gray-500 dark:bg-dark-950 dark:text-gray-400">
+            <div className="mt-5 rounded-xl bg-gray-50 dark:bg-dark-900 border border-gray-200 dark:border-white/10 p-3 text-xs text-gray-500 dark:text-gray-400">
               Customer account?{' '}
               <Link
                 to="/login"
-                className="font-black text-primary-600 hover:underline dark:text-primary-400"
+                className="font-semibold text-primary-600 dark:text-primary-500 hover:underline"
               >
-                Go to customer login
+                Use the Customer Login
               </Link>
             </div>
-          </section>
+
+            <p className="text-gray-500 dark:text-gray-400 text-xs text-center mt-6 leading-relaxed">
+              Mechanics must use the MotoFix mobile application.
+            </p>
+          </div>
         </div>
       </div>
     </main>

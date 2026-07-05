@@ -32,6 +32,9 @@ function generateTimeSlots() {
 const timeSlots = generateTimeSlots();
 const TOTAL_STEPS = 5;
 
+const PERSONAL_GCASH_NUMBER = '09087532431';
+const PERSONAL_GCASH_NAME = 'Sean Timothy M.';
+
 const PAYMENT_METHODS = [
   {
     key: 'paymongo_qrph',
@@ -42,7 +45,7 @@ const PAYMENT_METHODS = [
   {
     key: 'gcash_manual',
     title: 'Personal GCash / Manual',
-    subtitle: 'Enter your GCash reference number for staff verification.',
+    subtitle: `Send payment to ${PERSONAL_GCASH_NUMBER} - ${PERSONAL_GCASH_NAME}, then enter your reference number.`,
     icon: '💸',
   },
   {
@@ -105,8 +108,35 @@ function getExistingBookingDuration(booking) {
   return Number(booking?.services?.estimated_duration_minutes) || 30;
 }
 
+function sanitizeMotorcycleText(value, max = 60) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9\s.'’\-\/()]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, max);
+}
+
+function sanitizeYear(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 4);
+}
+
+function sanitizeLongText(value, max = 700) {
+  return String(value || '')
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, max);
+}
+
 function sanitizeGcashReference(value) {
-  return String(value || '').replace(/[^0-9A-Za-z-]/g, '').slice(0, 30);
+  return String(value || '').replace(/\D/g, '').slice(0, 20);
+}
+
+function isValidMotorcycleYear(value) {
+  if (!value) return true;
+
+  const year = Number(value);
+  const maxYear = new Date().getFullYear() + 1;
+
+  return Number.isInteger(year) && year >= 1950 && year <= maxYear;
 }
 
 
@@ -542,9 +572,30 @@ if (!consentsAccepted) {
   return;
 }
 
-if (paymentMethod === 'gcash_manual' && manualReference.trim().length < 4) {
+const safeMotorcycleMake = sanitizeMotorcycleText(motorcycleMake).trim();
+const safeMotorcycleModel = sanitizeMotorcycleText(motorcycleModel).trim();
+const safeMotorcycleYear = sanitizeYear(motorcycleYear);
+const safeIssueDescription = sanitizeLongText(issueDescription, 700).trim();
+const safeNotes = sanitizeLongText(notes, 500).trim();
+const safeManualReference = sanitizeGcashReference(manualReference);
+
+if (!safeMotorcycleMake || !safeMotorcycleModel) {
   setSubmitting(false);
-  Alert.alert('GCash Reference Required', 'Please enter your GCash reference number.');
+  Alert.alert('Motorcycle Details Required', 'Please enter a valid motorcycle make and model.');
+  setStep(2);
+  return;
+}
+
+if (!isValidMotorcycleYear(safeMotorcycleYear)) {
+  setSubmitting(false);
+  Alert.alert('Invalid Motorcycle Year', `Motorcycle year must be between 1950 and ${new Date().getFullYear() + 1}.`);
+  setStep(2);
+  return;
+}
+
+if (paymentMethod === 'gcash_manual' && safeManualReference.length < 4) {
+  setSubmitting(false);
+  Alert.alert('GCash Reference Required', 'Please enter a valid GCash reference number.');
   setStep(5);
   return;
 }
@@ -609,15 +660,15 @@ const bookingDateStr = toISODateString(bookingDate);
       .from('pre_assessments')
       .insert({
         customer_id: user.id,
-        motorcycle_make: motorcycleMake,
-        motorcycle_model: motorcycleModel,
-        motorcycle_year: parseInt(motorcycleYear) || null,
-        issue_description: issueDescription,
+        motorcycle_make: safeMotorcycleMake,
+        motorcycle_model: safeMotorcycleModel,
+        motorcycle_year: safeMotorcycleYear ? parseInt(safeMotorcycleYear, 10) : null,
+        issue_description: safeIssueDescription || null,
         service_id: selectedService?.id || null,
         estimated_labor_cost: selectedServices.reduce((sum, service) => sum + (Number(service.labor_cost) || 0), 0),
         estimated_total: servicesTotal,
         status: 'pending',
-        notes: [notes, `Selected services: ${servicesSummary}`].filter(Boolean).join('\n'),
+        notes: [safeNotes, `Selected services: ${servicesSummary}`].filter(Boolean).join('\n'),
       })
       .select()
       .single();
@@ -637,7 +688,7 @@ const { data: booking, error: bookingError } = await supabase
     booking_date: bookingDateStr,
     booking_time: bookingTime,
     status: 'pending',
-    notes: notes || null,
+    notes: safeNotes || null,
     service_total: servicesTotal,
     services_summary: servicesSummary,
     total_amount: servicesTotal,
@@ -646,7 +697,7 @@ const { data: booking, error: bookingError } = await supabase
     payment_method: paymentMethod,
     payment_status: getInitialPaymentStatus(paymentMethod),
     payment_reference:
-      paymentMethod === 'gcash_manual' ? manualReference.trim() : null,
+      paymentMethod === 'gcash_manual' ? safeManualReference : null,
   })
   .select()
   .single();
@@ -714,7 +765,7 @@ if (paymentMethod === 'paymongo_qrph') {
 } else if (paymentMethod === 'gcash_manual') {
   Alert.alert(
     'Booking Submitted',
-    'Your manual GCash reference was submitted. Please wait for staff verification.'
+    `Your manual GCash reference was submitted. Please wait for staff verification.\n\nGCash Account: ${PERSONAL_GCASH_NUMBER}\nAccount Name: ${PERSONAL_GCASH_NAME}`
   );
 } else if (paymentMethod === 'cash_at_shop') {
   Alert.alert(
@@ -729,7 +780,7 @@ const customerBookingMessage =
       ? 'Your booking request has been submitted. Please complete your PayMongo QR / GCash reservation payment.'
       : 'Your booking request has been submitted, but payment is still unpaid. You can pay later from your booking details.'
     : paymentMethod === 'gcash_manual'
-      ? 'Your booking request has been submitted with manual GCash payment pending staff verification.'
+      ? `Your booking request has been submitted with manual GCash payment pending staff verification. Send payment to ${PERSONAL_GCASH_NUMBER} - ${PERSONAL_GCASH_NAME}.`
       : 'Your booking request has been submitted. Please pay the reservation fee at the shop counter.';
 
 const adminBookingMessage =
@@ -738,7 +789,7 @@ const adminBookingMessage =
       ? 'A customer submitted a new service booking request and PayMongo QR payment was created.'
       : 'A customer submitted a new service booking request, but PayMongo payment checkout was not created.'
     : paymentMethod === 'gcash_manual'
-      ? 'A customer submitted a new booking with manual GCash reference for verification.'
+      ? `A customer submitted a new booking with manual GCash reference for verification. Personal GCash: ${PERSONAL_GCASH_NUMBER} - ${PERSONAL_GCASH_NAME}.`
       : 'A customer submitted a new booking and selected Cash at Shop.';
 
     await notifyUser({
@@ -776,7 +827,7 @@ const adminBookingMessage =
           paymentMethod === 'paymongo_qrph' && checkoutData
             ? 'A customer selected you for a new pending booking and reservation payment was started.'
             : paymentMethod === 'gcash_manual'
-              ? 'A customer selected you for a new pending booking with manual GCash pending verification.'
+              ? `A customer selected you for a new pending booking with manual GCash pending verification. Personal GCash: ${PERSONAL_GCASH_NUMBER} - ${PERSONAL_GCASH_NAME}.`
               : paymentMethod === 'cash_at_shop'
                 ? 'A customer selected you for a new pending booking with cash payment at shop.'
                 : 'A customer selected you for a new pending booking.',
@@ -791,7 +842,7 @@ const adminBookingMessage =
     navigation.replace('BookingConfirmation', {
       bookingId: booking.id,
       serviceName: servicesSummary,
-      motorcycle: `${motorcycleMake} ${motorcycleModel} ${motorcycleYear}`.trim(),
+      motorcycle: `${safeMotorcycleMake} ${safeMotorcycleModel} ${safeMotorcycleYear}`.trim(),
       bookingDate: bookingDateStr,
       bookingTime,
       mechanicName: assignedMechanic
@@ -808,7 +859,7 @@ const adminBookingMessage =
       reservationFee: checkoutData?.amount || reservationFeePreview,
       paymentReference:
         checkoutData?.reference_number ||
-        (paymentMethod === 'gcash_manual' ? manualReference.trim() : null),
+        (paymentMethod === 'gcash_manual' ? safeManualReference : null),
       checkoutUrl: checkoutData?.checkout_url || null,
       paymentMethod: getPaymentMethodLabel(paymentMethod),
     });
@@ -820,9 +871,26 @@ const adminBookingMessage =
       return;
     }
 
-    if (step === 2 && (!motorcycleMake || !motorcycleModel)) {
-      Alert.alert('Error', 'Please enter your motorcycle make and model.');
-      return;
+    if (step === 2) {
+      const safeMotorcycleMake = sanitizeMotorcycleText(motorcycleMake).trim();
+      const safeMotorcycleModel = sanitizeMotorcycleText(motorcycleModel).trim();
+      const safeMotorcycleYear = sanitizeYear(motorcycleYear);
+      const safeIssueDescription = sanitizeLongText(issueDescription, 700).trim();
+
+      if (!safeMotorcycleMake || !safeMotorcycleModel) {
+        Alert.alert('Error', 'Please enter your motorcycle make and model.');
+        return;
+      }
+
+      if (!isValidMotorcycleYear(safeMotorcycleYear)) {
+        Alert.alert('Invalid Motorcycle Year', `Motorcycle year must be between 1950 and ${new Date().getFullYear() + 1}.`);
+        return;
+      }
+
+      setMotorcycleMake(safeMotorcycleMake);
+      setMotorcycleModel(safeMotorcycleModel);
+      setMotorcycleYear(safeMotorcycleYear);
+      setIssueDescription(safeIssueDescription);
     }
 
     if (step === 3 && !bookingDate) {
@@ -963,7 +1031,8 @@ const adminBookingMessage =
               placeholder="e.g. Honda, Yamaha, Kawasaki"
               placeholderTextColor={theme.textMuted}
               value={motorcycleMake}
-              onChangeText={setMotorcycleMake}
+              onChangeText={(value) => setMotorcycleMake(sanitizeMotorcycleText(value))}
+              maxLength={60}
             />
 
             <Text style={s.label}>Model</Text>
@@ -972,7 +1041,8 @@ const adminBookingMessage =
               placeholder="e.g. CBR500R, MT-07"
               placeholderTextColor={theme.textMuted}
               value={motorcycleModel}
-              onChangeText={setMotorcycleModel}
+              onChangeText={(value) => setMotorcycleModel(sanitizeMotorcycleText(value))}
+              maxLength={60}
             />
 
             <Text style={s.label}>Year</Text>
@@ -981,8 +1051,9 @@ const adminBookingMessage =
               placeholder="e.g. 2022"
               placeholderTextColor={theme.textMuted}
               value={motorcycleYear}
-              onChangeText={setMotorcycleYear}
+              onChangeText={(value) => setMotorcycleYear(sanitizeYear(value))}
               keyboardType="numeric"
+              maxLength={4}
             />
 
             <Text style={s.label}>Issue Description</Text>
@@ -991,7 +1062,8 @@ const adminBookingMessage =
               placeholder="Describe what is wrong with your motorcycle..."
               placeholderTextColor={theme.textMuted}
               value={issueDescription}
-              onChangeText={setIssueDescription}
+              onChangeText={(value) => setIssueDescription(sanitizeLongText(value, 700))}
+              maxLength={700}
               multiline
               numberOfLines={4}
             />
@@ -1010,8 +1082,8 @@ const adminBookingMessage =
                       key={m.id}
                       style={s.quickPickChip}
                       onPress={() => {
-                        setMotorcycleMake(m.make);
-                        setMotorcycleModel(m.model);
+                        setMotorcycleMake(sanitizeMotorcycleText(m.make));
+                        setMotorcycleModel(sanitizeMotorcycleText(m.model));
                       }}
                     >
                       <Text style={s.quickPickText}>
@@ -1130,7 +1202,8 @@ const adminBookingMessage =
               placeholder="Any other details..."
               placeholderTextColor={theme.textMuted}
               value={notes}
-              onChangeText={setNotes}
+              onChangeText={(value) => setNotes(sanitizeLongText(value, 500))}
+              maxLength={500}
               multiline
               numberOfLines={3}
             />
@@ -1378,6 +1451,20 @@ const adminBookingMessage =
 
               {paymentMethod === 'gcash_manual' && (
                 <View style={s.manualReferenceBox}>
+                  <Text style={s.summaryTitle}>Personal GCash Payment Details</Text>
+
+                  <View style={s.gcashAccountBox}>
+                    <Text style={s.gcashAccountLabel}>GCash Number</Text>
+                    <Text style={s.gcashAccountValue}>{PERSONAL_GCASH_NUMBER}</Text>
+
+                    <Text style={s.gcashAccountLabel}>Account Name</Text>
+                    <Text style={s.gcashAccountValue}>{PERSONAL_GCASH_NAME}</Text>
+                  </View>
+
+                  <Text style={s.manualReferenceHelp}>
+                    Send the reservation fee to this GCash account, then enter the reference number below for staff verification.
+                  </Text>
+
                   <Text style={s.summaryTitle}>GCash Reference Number</Text>
                   <TextInput
                     style={s.input}
@@ -1385,7 +1472,8 @@ const adminBookingMessage =
                     placeholderTextColor={theme.textMuted}
                     value={manualReference}
                     onChangeText={(value) => setManualReference(sanitizeGcashReference(value))}
-                    autoCapitalize="characters"
+                    keyboardType="numeric"
+                    maxLength={20}
                   />
                 </View>
               )}
@@ -2014,6 +2102,34 @@ const styles = (theme) => StyleSheet.create({
     backgroundColor: theme.bg2,
     borderWidth: 1,
     borderColor: theme.border,
+  },
+  gcashAccountBox: {
+    backgroundColor: theme.card,
+    borderWidth: 1,
+    borderColor: theme.primary + '44',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+  },
+  gcashAccountLabel: {
+    color: theme.textMuted,
+    fontSize: 11,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 3,
+  },
+  gcashAccountValue: {
+    color: theme.primaryLight,
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  manualReferenceHelp: {
+    color: theme.textSub,
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 12,
   },
   selectedServicesBox: {
     backgroundColor: theme.primary + '10',

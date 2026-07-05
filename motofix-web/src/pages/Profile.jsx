@@ -27,6 +27,115 @@ function isValidFileSize(file, maxMb) {
   return file.size <= maxMb * 1024 * 1024;
 }
 
+function cleanDigits(value = '') {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function sanitizeName(value = '') {
+  return String(value || '')
+    .replace(/[^A-Za-zÀ-ÿÑñ .'-]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 50);
+}
+
+function sanitizePhone(value = '') {
+  return cleanDigits(value).slice(0, 11);
+}
+
+function isValidPhilippineMobile(value = '') {
+  return /^09\d{9}$/.test(value);
+}
+
+function sanitizeMotorcycleText(value = '') {
+  return String(value || '')
+    .replace(/[^A-Za-z0-9À-ÿÑñ ._()/-]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 60);
+}
+
+function sanitizeSpecialization(value = '') {
+  return String(value || '')
+    .replace(/[^A-Za-z0-9À-ÿÑñ .,&()/-]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 120);
+}
+
+function sanitizeCertificateName(value = '') {
+  return String(value || '')
+    .replace(/[^A-Za-z0-9À-ÿÑñ ._()/-]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 80);
+}
+
+function sanitizeYear(value = '') {
+  return cleanDigits(value).slice(0, 4);
+}
+
+function getValidatedYear(value = '') {
+  if (!value) return null;
+
+  const year = Number.parseInt(value, 10);
+  const minYear = 1950;
+  const maxYear = new Date().getFullYear() + 1;
+
+  if (!Number.isInteger(year) || year < minYear || year > maxYear) {
+    throw new Error(`Motorcycle year must be between ${minYear} and ${maxYear}.`);
+  }
+
+  return year;
+}
+
+function getSafeFileExtension(file, allowedExtensions) {
+  const rawExtension = String(file?.name || '')
+    .split('.')
+    .pop()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+  if (!rawExtension || !allowedExtensions.includes(rawExtension)) {
+    throw new Error(`Invalid file type. Allowed types: ${allowedExtensions.join(', ')}.`);
+  }
+
+  return rawExtension;
+}
+
+function validateProfileForm(form, isMechanic) {
+  const firstName = sanitizeName(form.first_name).trim();
+  const lastName = sanitizeName(form.last_name).trim();
+  const phone = sanitizePhone(form.phone);
+
+  if (!firstName) {
+    throw new Error('First name is required.');
+  }
+
+  if (!lastName) {
+    throw new Error('Last name is required.');
+  }
+
+  if (phone && !isValidPhilippineMobile(phone)) {
+    throw new Error('Phone number must be exactly 11 digits and start with 09.');
+  }
+
+  if (isMechanic) {
+    return {
+      first_name: firstName,
+      last_name: lastName,
+      phone: phone || null,
+      specialization: sanitizeSpecialization(form.specialization).trim() || null,
+    };
+  }
+
+  return {
+    first_name: firstName,
+    last_name: lastName,
+    phone: phone || null,
+    moto_make: sanitizeMotorcycleText(form.moto_make).trim() || null,
+    moto_model: sanitizeMotorcycleText(form.moto_model).trim() || null,
+    moto_year: getValidatedYear(sanitizeYear(form.moto_year)),
+  };
+}
+
+
 function SectionCard({ title, description, icon, children }) {
   return (
     <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm transition dark:border-dark-700 dark:bg-dark-800">
@@ -185,12 +294,39 @@ export default function Profile() {
   }
 
   function handleChange(event) {
-    setForm({ ...form, [event.target.name]: event.target.value });
+    const { name, value } = event.target;
+
+    const sanitizers = {
+      first_name: sanitizeName,
+      last_name: sanitizeName,
+      phone: sanitizePhone,
+      moto_make: sanitizeMotorcycleText,
+      moto_model: sanitizeMotorcycleText,
+      moto_year: sanitizeYear,
+      specialization: sanitizeSpecialization,
+    };
+
+    const sanitize = sanitizers[name] || ((input) => input);
+
+    setForm((current) => ({
+      ...current,
+      [name]: sanitize(value),
+    }));
   }
 
   function validateImageFile(file, label) {
-    if (!file.type.startsWith('image/')) {
-      setError(`Please choose a valid image file for ${label}.`);
+    const allowedImageTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    const allowedImageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
+
+    if (!allowedImageTypes.includes(file.type)) {
+      setError(`Please choose a JPG, PNG, or WebP image for ${label}.`);
+      return false;
+    }
+
+    try {
+      getSafeFileExtension(file, allowedImageExtensions);
+    } catch (err) {
+      setError(err.message);
       return false;
     }
 
@@ -237,12 +373,16 @@ export default function Profile() {
   }
 
   async function uploadImageFile(file, folder, filePrefix) {
-    const fileExt = file.name.split('.').pop();
+    const fileExt = getSafeFileExtension(file, ['jpg', 'jpeg', 'png', 'webp']);
     const filePath = `${user.id}/${folder}/${filePrefix}_${Date.now()}.${fileExt}`;
 
     const { error: uploadError } = await supabase.storage
       .from('motorcycle-photos')
-      .upload(filePath, file, { upsert: true });
+      .upload(filePath, file, {
+        cacheControl: '3600',
+        contentType: file.type,
+        upsert: true,
+      });
 
     if (uploadError) throw uploadError;
 
@@ -405,6 +545,8 @@ export default function Profile() {
     setSaving(true);
 
     try {
+      const sanitizedProfile = validateProfileForm(form, isMechanic);
+
       let newPhotoUrl = null;
       let newMotoPhotoUrl = null;
 
@@ -417,20 +559,20 @@ export default function Profile() {
       }
 
       const updatePayload = {
-        first_name: form.first_name.trim(),
-        last_name: form.last_name.trim(),
-        phone: form.phone.trim() || null,
+        first_name: sanitizedProfile.first_name,
+        last_name: sanitizedProfile.last_name,
+        phone: sanitizedProfile.phone,
         updated_at: new Date().toISOString(),
       };
 
       if (newPhotoUrl) updatePayload.profile_photo_url = newPhotoUrl;
 
       if (profile?.role === 'mechanic') {
-        updatePayload.specialization = form.specialization.trim() || null;
+        updatePayload.specialization = sanitizedProfile.specialization;
       } else {
-        updatePayload.moto_make = form.moto_make.trim() || null;
-        updatePayload.moto_model = form.moto_model.trim() || null;
-        updatePayload.moto_year = form.moto_year ? parseInt(form.moto_year, 10) : null;
+        updatePayload.moto_make = sanitizedProfile.moto_make;
+        updatePayload.moto_model = sanitizedProfile.moto_model;
+        updatePayload.moto_year = sanitizedProfile.moto_year;
         if (newMotoPhotoUrl) updatePayload.moto_photo_url = newMotoPhotoUrl;
       }
 
@@ -463,10 +605,18 @@ export default function Profile() {
     setCertError('');
     setCertSuccess('');
 
-    const validType = file.type.startsWith('image/') || file.type === 'application/pdf';
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    const allowedExtensions = ['jpg', 'jpeg', 'png', 'webp', 'pdf'];
 
-    if (!validType) {
-      setCertError('Please upload an image or PDF certificate.');
+    if (!allowedTypes.includes(file.type)) {
+      setCertError('Please upload a JPG, PNG, WebP, or PDF certificate.');
+      return;
+    }
+
+    try {
+      getSafeFileExtension(file, allowedExtensions);
+    } catch (err) {
+      setCertError(err.message);
       return;
     }
 
@@ -478,7 +628,7 @@ export default function Profile() {
     setCertFile(file);
 
     if (!certName) {
-      setCertName(file.name.replace(/\.[^/.]+$/, ''));
+      setCertName(sanitizeCertificateName(file.name.replace(/\.[^/.]+$/, '')));
     }
   }
 
@@ -488,7 +638,9 @@ export default function Profile() {
     setCertError('');
     setCertSuccess('');
 
-    if (!certName.trim()) {
+    const cleanCertName = sanitizeCertificateName(certName).trim();
+
+    if (!cleanCertName) {
       setCertError('Please enter a certificate name.');
       return;
     }
@@ -501,12 +653,16 @@ export default function Profile() {
     setUploadingCert(true);
 
     try {
-      const fileExt = certFile.name.split('.').pop();
+      const fileExt = getSafeFileExtension(certFile, ['jpg', 'jpeg', 'png', 'webp', 'pdf']);
       const filePath = `${user.id}/${Date.now()}.${fileExt}`;
 
       const { error: uploadError } = await supabase.storage
         .from('mechanic-certificates')
-        .upload(filePath, certFile);
+        .upload(filePath, certFile, {
+          cacheControl: '3600',
+          contentType: certFile.type,
+          upsert: false,
+        });
 
       if (uploadError) throw uploadError;
 
@@ -518,7 +674,7 @@ export default function Profile() {
         .from('mechanic_certificates')
         .insert({
           mechanic_id: user.id,
-          name: certName.trim(),
+          name: cleanCertName,
           file_url: urlData.publicUrl,
           uploaded_by: user.id,
         });
@@ -820,6 +976,8 @@ export default function Profile() {
                   value={form.first_name}
                   onChange={handleChange}
                   placeholder="First name"
+                  maxLength={50}
+                  helper="Letters, spaces, period, hyphen, and apostrophe only."
                   required
                 />
 
@@ -829,6 +987,8 @@ export default function Profile() {
                   value={form.last_name}
                   onChange={handleChange}
                   placeholder="Last name"
+                  maxLength={50}
+                  helper="Letters, spaces, period, hyphen, and apostrophe only."
                   required
                 />
 
@@ -844,7 +1004,9 @@ export default function Profile() {
                   name="phone"
                   value={form.phone}
                   onChange={handleChange}
-                  placeholder="09XX XXX XXXX"
+                  placeholder="09123456789"
+                  maxLength={11}
+                  helper="Numbers only. Must be 11 digits and start with 09."
                 />
               </div>
             </SectionCard>
@@ -862,6 +1024,7 @@ export default function Profile() {
                     value={form.moto_make}
                     onChange={handleChange}
                     placeholder="e.g. Yamaha"
+                    maxLength={60}
                   />
 
                   <TextInput
@@ -870,6 +1033,7 @@ export default function Profile() {
                     value={form.moto_model}
                     onChange={handleChange}
                     placeholder="e.g. Aerox 155"
+                    maxLength={60}
                   />
 
                   <TextInput
@@ -881,6 +1045,8 @@ export default function Profile() {
                     placeholder="e.g. 2023"
                     min="1950"
                     max={new Date().getFullYear() + 1}
+                    maxLength={4}
+                    helper="Year must be between 1950 and next year."
                   />
                 </div>
               </SectionCard>
@@ -899,6 +1065,7 @@ export default function Profile() {
                     value={form.specialization}
                     onChange={handleChange}
                     placeholder="e.g. Engine Repair, Electrical, General Maintenance"
+                    maxLength={120}
                   />
                 </SectionCard>
 
@@ -925,8 +1092,9 @@ export default function Profile() {
                         label="Certificate Name"
                         type="text"
                         value={certName}
-                        onChange={(event) => setCertName(event.target.value)}
+                        onChange={(event) => setCertName(sanitizeCertificateName(event.target.value))}
                         placeholder="e.g. TESDA NC II"
+                        maxLength={80}
                       />
 
                       <div>

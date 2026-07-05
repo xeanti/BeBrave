@@ -56,7 +56,7 @@ const ALLOWED_ROLE_FILTERS = ['all', ...ALLOWED_ROLES];
 const ALLOWED_STATUS_FILTERS = ['active', 'inactive', 'all'];
 const ALLOWED_SORT_OPTIONS = ['newest', 'oldest', 'name_asc', 'name_desc', 'role_asc'];
 const ALLOWED_BOOKING_STATUSES = ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'];
-const ALLOWED_CERT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'pdf'];
+const ALLOWED_CERT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'pdf'];
 const MAX_PASSWORD_LENGTH = 72;
 
 const STATUS_FILTERS = [
@@ -260,6 +260,15 @@ function isValidPhilippineMobile(value) {
   return /^09\d{9}$/.test(value);
 }
 
+function isPrivilegedRole(role) {
+  return ['admin', 'super_admin'].includes(role);
+}
+
+function canManagePrivilegedAccount({ currentIsSuperAdmin, targetRole }) {
+  if (!isPrivilegedRole(targetRole)) return true;
+  return currentIsSuperAdmin === true;
+}
+
 function getStatusFilterLabel(value) {
   const match = STATUS_FILTERS.find((item) => item.key === value);
   return match?.label || 'Active';
@@ -283,7 +292,7 @@ function getInitials(profile) {
 }
 
 function isImageFile(url = '') {
-  return /\.(png|jpe?g|webp|gif|bmp|svg)(\?.*)?$/i.test(url);
+  return /\.(png|jpe?g|webp)(\?.*)?$/i.test(url);
 }
 
 function isValidCertFile(file) {
@@ -782,7 +791,7 @@ export default function AdminUsers() {
     setCertError('');
 
     if (!isValidCertFile(file)) {
-      setCertError(`Please upload an image or PDF up to ${MAX_CERT_SIZE_MB}MB.`);
+      setCertError(`Please upload JPG, PNG, WEBP, or PDF up to ${MAX_CERT_SIZE_MB}MB.`);
       return;
     }
 
@@ -811,7 +820,7 @@ export default function AdminUsers() {
     }
 
     if (!isValidCertFile(certFile)) {
-      setCertError(`Please upload an image or PDF up to ${MAX_CERT_SIZE_MB}MB.`);
+      setCertError(`Please upload JPG, PNG, WEBP, or PDF up to ${MAX_CERT_SIZE_MB}MB.`);
       return;
     }
 
@@ -825,7 +834,7 @@ export default function AdminUsers() {
       const fileExt = getCertExtension(certFile);
 
       if (!fileExt) {
-        throw new Error('Invalid certificate file type. Upload JPG, PNG, WEBP, GIF, or PDF only.');
+        throw new Error('Invalid certificate file type. Upload JPG, PNG, WEBP, or PDF only.');
       }
 
       const filePath = `${mechanicId}/${Date.now()}.${fileExt}`;
@@ -897,6 +906,16 @@ export default function AdminUsers() {
   }
 
   function openEdit(profile) {
+    if (
+      !canManagePrivilegedAccount({
+        currentIsSuperAdmin: isCurrentUserSuperAdmin,
+        targetRole: profile.role,
+      })
+    ) {
+      setToast('❌ Only super admins can edit admin and super admin accounts.');
+      return;
+    }
+
     setEditingUser(profile);
     setEditForm({
       first_name: sanitizeName(profile.first_name || ''),
@@ -971,7 +990,36 @@ export default function AdminUsers() {
       return;
     }
 
-    const roleChanged = editForm.role !== editingUser.role;
+    if (
+      !canManagePrivilegedAccount({
+        currentIsSuperAdmin: isCurrentUserSuperAdmin,
+        targetRole: editingUser.role,
+      })
+    ) {
+      setEditError('Only super admins can edit admin and super admin accounts.');
+      setSaving(false);
+      return;
+    }
+
+    const cleanRole = sanitizeRole(editForm.role);
+    const roleChanged = cleanRole !== editingUser.role;
+
+    if (isPrivilegedRole(cleanRole) && !isCurrentUserSuperAdmin) {
+      setEditError('Only super admins can assign admin or super admin roles.');
+      setSaving(false);
+      return;
+    }
+
+    if (
+      roleChanged &&
+      editingUser.role === 'super_admin' &&
+      cleanRole !== 'super_admin' &&
+      activeSuperAdminCount <= 1
+    ) {
+      setEditError('At least one active super admin account must remain.');
+      setSaving(false);
+      return;
+    }
 
     if (roleChanged && !isCurrentUserSuperAdmin) {
       setEditError('Only super admins can change user roles.');
@@ -987,7 +1035,7 @@ export default function AdminUsers() {
 
     if (
       roleChanged &&
-      !window.confirm(`Change ${getFullName(editingUser)} from ${editingUser.role} to ${editForm.role}?`)
+      !window.confirm(`Change ${getFullName(editingUser)} from ${editingUser.role} to ${cleanRole}?`)
     ) {
       setSaving(false);
       return;
@@ -1003,8 +1051,6 @@ export default function AdminUsers() {
         return;
       }
     }
-
-    const cleanRole = sanitizeRole(editForm.role);
 
     const payload = {
       first_name: sanitizeName(editForm.first_name).trim(),
@@ -1066,6 +1112,16 @@ export default function AdminUsers() {
 
     setPasswordError('');
     setPasswordSuccess('');
+
+    if (!isCurrentUserSuperAdmin) {
+      setPasswordError('Only super admins can change user passwords from this page.');
+      return;
+    }
+
+    if (editingUser?.id === user?.id) {
+      setPasswordError('Use your own Profile page to change your password.');
+      return;
+    }
 
     const cleanPassword = sanitizePasswordInput(newPassword);
     const cleanConfirmPassword = sanitizePasswordInput(confirmNewPassword);
@@ -1129,6 +1185,16 @@ export default function AdminUsers() {
 
     if (userId === user?.id) {
       setToast('❌ You cannot change your own role.');
+      return;
+    }
+
+    if (currentRole === 'super_admin' && activeSuperAdminCount <= 1) {
+      setToast('❌ At least one active super admin account must remain.');
+      return;
+    }
+
+    if (currentRole === 'super_admin') {
+      setToast('❌ Use Edit to carefully change another super admin role.');
       return;
     }
 
@@ -1366,6 +1432,14 @@ export default function AdminUsers() {
   );
 
   const isCurrentUserSuperAdmin = authProfile?.role === 'super_admin' || currentUserProfile?.role === 'super_admin';
+
+  const activeSuperAdminCount = useMemo(
+    () =>
+      users.filter(
+        (profile) => profile.role === 'super_admin' && profile.is_active !== false
+      ).length,
+    [users]
+  );
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -1788,7 +1862,7 @@ export default function AdminUsers() {
                         {isCurrentUserSuperAdmin &&
                           !isSelf &&
                           profile.is_active !== false &&
-                          ['mechanic', 'staff', 'admin', 'super_admin'].includes(profile.role) && (
+                          ['mechanic', 'staff', 'admin'].includes(profile.role) && (
                             <button
                               type="button"
                               onClick={() => handleDemote(profile.id, profile.role)}
@@ -2381,7 +2455,7 @@ export default function AdminUsers() {
                   <button
                     type="submit"
                     disabled={changingPassword || !newPassword}
-                    className="w-full rounded-2xl bg-gray-800 px-4 py-3 text-sm font-black text-white transition hover:bg-gray-900 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-dark-700 dark:hover:bg-dark-900"
+                    className="w-full rounded-2xl bg-yellow-500 px-4 py-3 text-sm font-black text-gray-950 shadow-lg shadow-yellow-500/20 transition hover:bg-yellow-400 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-yellow-400 dark:text-gray-950 dark:hover:bg-yellow-300"
                   >
                     {changingPassword ? 'Updating Password...' : 'Update Password'}
                   </button>
