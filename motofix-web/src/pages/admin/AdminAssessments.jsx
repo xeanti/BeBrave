@@ -236,6 +236,17 @@ export default function AdminAssessments() {
   }
 
   async function updateStatus(id, status) {
+    const assessment = assessments.find((item) => item.id === id);
+    const customerName = assessment ? getCustomerName(assessment) : 'this customer';
+    const motorcycle = assessment ? getMotorcycleLabel(assessment) : 'this assessment';
+    const statusLabel = String(status || '').replace('_', ' ');
+
+    const confirmed = window.confirm(
+      `Are you sure you want to mark ${customerName}'s assessment for ${motorcycle} as "${statusLabel}"?`
+    );
+
+    if (!confirmed) return;
+
     setUpdating(`${id}-${status}`);
     setFetchError('');
 
@@ -485,7 +496,7 @@ export default function AdminAssessments() {
 
                   {/* Costs */}
                   <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    <PriceCard label="Base / Parts Cost" value={assessment.estimated_parts_cost} />
+                    <PriceCard label="Base / Products Cost" value={assessment.estimated_parts_cost} />
                     <PriceCard label="Labor Cost" value={assessment.estimated_labor_cost} />
                     <PriceCard label="Total Estimate" value={assessment.estimated_total} strong />
                     <PriceCard label="Down Payment" value={assessment.down_payment_required} accent />

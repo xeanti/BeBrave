@@ -660,8 +660,8 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
 
     const confirmText =
       restorableParts.length > 0 && !booking?.inventory_restored_at
-        ? `Cancel this appointment and return ${restorableParts.length} deducted part line(s) back to inventory?`
-        : 'Cancel this appointment?';
+      ? `Cancel this appointment and return ${restorableParts.length} deducted product line(s) back to inventory?`
+      : 'Cancel this appointment?';
 
     const confirmed = window.confirm(confirmText);
     if (!confirmed) return;
@@ -715,7 +715,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
           title: 'Booking Cancelled',
           description:
             restorableParts.length > 0
-              ? 'Booking was cancelled and deducted parts were returned to inventory.'
+              ? 'Booking was cancelled and deducted products were returned to inventory.'
               : 'Booking was cancelled.',
           progress_percent: 0,
           event_type: 'status_update',
@@ -747,7 +747,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
 
       setMessage(
         restorableParts.length > 0 && !booking?.inventory_restored_at
-          ? 'Booking cancelled. Deducted parts were returned to inventory.'
+          ? 'Booking cancelled. Deducted products were returned to inventory.'
           : 'Booking cancelled.'
       );
 
@@ -795,7 +795,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
             Service Progress
           </p>
           <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-            Use simple status buttons. Parts used can be added during service.
+            Use simple status buttons. Products used can be added during service.
           </p>
         </div>
 

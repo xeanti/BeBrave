@@ -50,6 +50,15 @@ const SHOP_CLOSE = 17;
 const MAX_CERT_SIZE_MB = 10;
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
+const ALLOWED_ROLES = ['customer', 'mechanic', 'staff', 'admin', 'super_admin'];
+const ALLOWED_CREATE_ROLES = ['mechanic', 'staff', 'admin', 'super_admin'];
+const ALLOWED_ROLE_FILTERS = ['all', ...ALLOWED_ROLES];
+const ALLOWED_STATUS_FILTERS = ['active', 'inactive', 'all'];
+const ALLOWED_SORT_OPTIONS = ['newest', 'oldest', 'name_asc', 'name_desc', 'role_asc'];
+const ALLOWED_BOOKING_STATUSES = ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'];
+const ALLOWED_CERT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'pdf'];
+const MAX_PASSWORD_LENGTH = 72;
+
 const STATUS_FILTERS = [
   { key: 'active', label: 'Active' },
   { key: 'inactive', label: 'Inactive' },
@@ -136,16 +145,19 @@ function formatDateTime(value) {
   });
 }
 
+function collapseSpaces(value) {
+  return String(value || '').replace(/\s+/g, ' ').trimStart();
+}
+
 function sanitizeSearch(value) {
-  return String(value || '')
+  return collapseSpaces(value)
     .replace(/[^a-zA-Z0-9ñÑ @._+\-]/g, '')
     .slice(0, 80);
 }
 
 function sanitizeName(value) {
-  return String(value || '')
+  return collapseSpaces(value)
     .replace(/[^a-zA-ZñÑ .'-]/g, '')
-    .replace(/\s+/g, ' ')
     .slice(0, 50);
 }
 
@@ -162,16 +174,14 @@ function sanitizePhone(value) {
 }
 
 function sanitizeSpecialization(value) {
-  return String(value || '')
+  return collapseSpaces(value)
     .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&#]/g, '')
-    .replace(/\s+/g, ' ')
     .slice(0, 80);
 }
 
 function sanitizeMotorcycleText(value) {
-  return String(value || '')
+  return collapseSpaces(value)
     .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&]/g, '')
-    .replace(/\s+/g, ' ')
     .slice(0, 60);
 }
 
@@ -180,20 +190,74 @@ function sanitizeYear(value) {
 }
 
 function sanitizeCertName(value) {
-  return String(value || '')
+  return collapseSpaces(value)
     .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&#]/g, '')
-    .replace(/\s+/g, ' ')
     .slice(0, 80);
+}
+
+function sanitizePasswordInput(value) {
+  return String(value || '').replace(/[\u0000-\u001F\u007F]/g, '').slice(0, MAX_PASSWORD_LENGTH);
+}
+
+function sanitizeSelect(value, allowed, fallback) {
+  return allowed.includes(value) ? value : fallback;
+}
+
+function sanitizeRole(value) {
+  return sanitizeSelect(value, ALLOWED_ROLES, 'customer');
+}
+
+function sanitizeCreateRole(value) {
+  return sanitizeSelect(value, ALLOWED_CREATE_ROLES, 'mechanic');
+}
+
+function sanitizeRoleFilter(value) {
+  return sanitizeSelect(value, ALLOWED_ROLE_FILTERS, 'all');
+}
+
+function sanitizeStatusFilter(value) {
+  return sanitizeSelect(value, ALLOWED_STATUS_FILTERS, 'active');
+}
+
+function sanitizeSortOption(value) {
+  return sanitizeSelect(value, ALLOWED_SORT_OPTIONS, 'newest');
+}
+
+function sanitizeBookingStatus(value) {
+  return sanitizeSelect(value, ALLOWED_BOOKING_STATUSES, 'pending');
+}
+
+function sanitizePageSize(value) {
+  const parsed = Number(value);
+  return PAGE_SIZE_OPTIONS.includes(parsed) ? parsed : 10;
+}
+
+function sanitizeDate(value) {
+  const date = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '';
+}
+
+function sanitizeBookingTime(value) {
+  const time = normalizeBookingTime(value);
+  return TIME_SLOTS.includes(time) ? time : '';
+}
+
+function sanitizeCertExtension(value) {
+  const ext = String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return ALLOWED_CERT_EXTENSIONS.includes(ext) ? ext : '';
+}
+
+function getCertExtension(file) {
+  return sanitizeCertExtension(file?.name?.split('.').pop());
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sanitizeEmail(value));
 }
 
 function isValidPhilippineMobile(value) {
   if (!value) return true;
   return /^09\d{9}$/.test(value);
-}
-
-function sanitizeRole(value) {
-  const allowed = ['customer', 'mechanic', 'staff', 'admin', 'super_admin'];
-  return allowed.includes(value) ? value : 'customer';
 }
 
 function getStatusFilterLabel(value) {
@@ -223,10 +287,13 @@ function isImageFile(url = '') {
 }
 
 function isValidCertFile(file) {
+  if (!file) return false;
+
   const validType = file.type.startsWith('image/') || file.type === 'application/pdf';
+  const validExt = Boolean(getCertExtension(file));
   const validSize = file.size <= MAX_CERT_SIZE_MB * 1024 * 1024;
 
-  return validType && validSize;
+  return validType && validExt && validSize;
 }
 
 function RoleBadge({ role }) {
@@ -330,7 +397,7 @@ function PaginationControls({
         Per page
         <select
           value={pageSize}
-          onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          onChange={(event) => onPageSizeChange(sanitizePageSize(event.target.value))}
           className="rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm font-black text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-800 dark:text-white"
         >
           {PAGE_SIZE_OPTIONS.map((size) => (
@@ -600,22 +667,57 @@ export default function AdminUsers() {
   }
 
   async function updateSchedule(bookingId, updates) {
+    const cleanUpdates = {};
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'booking_date')) {
+      const cleanDate = sanitizeDate(updates.booking_date);
+      if (!cleanDate) {
+        setToast('❌ Invalid booking date.');
+        return;
+      }
+      cleanUpdates.booking_date = cleanDate;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'booking_time')) {
+      const cleanTime = sanitizeBookingTime(updates.booking_time);
+      if (!cleanTime) {
+        setToast('❌ Invalid booking time.');
+        return;
+      }
+      cleanUpdates.booking_time = cleanTime;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'status')) {
+      cleanUpdates.status = sanitizeBookingStatus(updates.status);
+    }
+
+    if (Object.keys(cleanUpdates).length === 0) return;
+
+    const changeText = Object.entries(cleanUpdates)
+      .map(([key, value]) => `${key.replace('_', ' ')}: ${value}`)
+      .join(', ');
+
+    if (!window.confirm(`Update this mechanic schedule? ${changeText}`)) {
+      return;
+    }
+
     setUpdatingScheduleId(bookingId);
 
     try {
       const { error } = await supabase
         .from('bookings')
         .update({
-          ...updates,
+          ...cleanUpdates,
           updated_at: new Date().toISOString(),
         })
         .eq('id', bookingId);
 
       if (error) throw error;
 
-      await insertAuditLog('UPDATE_MECHANIC_SCHEDULE', 'bookings', bookingId, updates);
+      await insertAuditLog('UPDATE_MECHANIC_SCHEDULE', 'bookings', bookingId, cleanUpdates);
       await fetchMechanicSchedule(selectedMechanicId, false);
       await fetchUsers(false);
+      setToast('Schedule updated.');
     } catch (err) {
       setToast(`❌ ${err.message || 'Failed to update schedule.'}`);
     } finally {
@@ -696,7 +798,9 @@ export default function AdminUsers() {
 
     setCertError('');
 
-    if (!sanitizeCertName(certName).trim()) {
+    const cleanCertificateName = sanitizeCertName(certName).trim();
+
+    if (!cleanCertificateName) {
       setCertError('Please enter a certificate name.');
       return;
     }
@@ -711,10 +815,19 @@ export default function AdminUsers() {
       return;
     }
 
+    if (!window.confirm(`Upload certificate "${cleanCertificateName}" for this mechanic?`)) {
+      return;
+    }
+
     setUploadingCert(true);
 
     try {
-      const fileExt = certFile.name.split('.').pop();
+      const fileExt = getCertExtension(certFile);
+
+      if (!fileExt) {
+        throw new Error('Invalid certificate file type. Upload JPG, PNG, WEBP, GIF, or PDF only.');
+      }
+
       const filePath = `${mechanicId}/${Date.now()}.${fileExt}`;
 
       const { error: uploadError } = await supabase.storage
@@ -731,7 +844,7 @@ export default function AdminUsers() {
         .from('mechanic_certificates')
         .insert({
           mechanic_id: mechanicId,
-          name: sanitizeCertName(certName).trim(),
+          name: cleanCertificateName,
           file_url: urlData.publicUrl,
           uploaded_by: user?.id,
         })
@@ -741,7 +854,7 @@ export default function AdminUsers() {
       if (insertError) throw insertError;
 
       await insertAuditLog('UPLOAD_MECHANIC_CERTIFICATE', 'mechanic_certificates', data?.id || mechanicId, {
-        name: sanitizeCertName(certName).trim(),
+        name: cleanCertificateName,
         mechanic_id: mechanicId,
       });
 
@@ -820,19 +933,22 @@ export default function AdminUsers() {
   }
 
   function validateEditForm() {
+    const cleanRole = sanitizeRole(editForm.role);
+    const cleanPhone = sanitizePhone(editForm.phone);
+
     if (!sanitizeName(editForm.first_name).trim()) return 'First name is required.';
     if (!sanitizeName(editForm.last_name).trim()) return 'Last name is required.';
-    if (!sanitizeRole(editForm.role)) return 'Role is required.';
+    if (!ALLOWED_ROLES.includes(cleanRole)) return 'Role is required.';
 
-    if (editForm.phone && !isValidPhilippineMobile(editForm.phone)) {
+    if (cleanPhone && !isValidPhilippineMobile(cleanPhone)) {
       return 'Phone number must be 11 digits and start with 09.';
     }
 
     if (editForm.moto_year) {
-      const year = Number(editForm.moto_year);
+      const year = Number(sanitizeYear(editForm.moto_year));
       const nextYear = new Date().getFullYear() + 1;
 
-      if (!/^\d{4}$/.test(String(editForm.moto_year)) || year < 1980 || year > nextYear) {
+      if (!/^\d{4}$/.test(sanitizeYear(editForm.moto_year)) || year < 1980 || year > nextYear) {
         return `Motorcycle year must be between 1980 and ${nextYear}.`;
       }
     }
@@ -875,6 +991,17 @@ export default function AdminUsers() {
     ) {
       setSaving(false);
       return;
+    }
+
+    if (!roleChanged) {
+      const confirmed = window.confirm(
+        `Save profile changes for ${getFullName(editingUser)}?`
+      );
+
+      if (!confirmed) {
+        setSaving(false);
+        return;
+      }
     }
 
     const cleanRole = sanitizeRole(editForm.role);
@@ -940,18 +1067,30 @@ export default function AdminUsers() {
     setPasswordError('');
     setPasswordSuccess('');
 
-    if (!newPassword) {
+    const cleanPassword = sanitizePasswordInput(newPassword);
+    const cleanConfirmPassword = sanitizePasswordInput(confirmNewPassword);
+
+    if (!cleanPassword) {
       setPasswordError('Please enter a new password.');
       return;
     }
 
-    if (newPassword.length < 6) {
+    if (cleanPassword.length < 6) {
       setPasswordError('Password must be at least 6 characters.');
       return;
     }
 
-    if (newPassword !== confirmNewPassword) {
+    if (cleanPassword.length > MAX_PASSWORD_LENGTH) {
+      setPasswordError(`Password must not exceed ${MAX_PASSWORD_LENGTH} characters.`);
+      return;
+    }
+
+    if (cleanPassword !== cleanConfirmPassword) {
       setPasswordError('Passwords do not match.');
+      return;
+    }
+
+    if (!window.confirm(`Change password for ${getFullName(editingUser)}?`)) {
       return;
     }
 
@@ -961,7 +1100,7 @@ export default function AdminUsers() {
       const { data, error } = await supabase.functions.invoke('admin-change-password', {
         body: {
           userId: editingUser.id,
-          newPassword,
+          newPassword: cleanPassword,
         },
       });
 
@@ -1130,14 +1269,16 @@ export default function AdminUsers() {
     const cleanLastName = sanitizeName(newAccount.lastName).trim();
     const cleanEmail = sanitizeEmail(newAccount.email);
     const cleanPhone = sanitizePhone(newAccount.phone);
-    const cleanRole = sanitizeRole(newAccount.role);
+    const cleanRole = sanitizeCreateRole(newAccount.role);
+    const cleanPassword = sanitizePasswordInput(newAccount.password);
+    const cleanConfirmPassword = sanitizePasswordInput(newAccount.confirmPassword);
 
     if (!cleanFirstName || !cleanLastName) {
       setCreateError('First name and last name are required.');
       return;
     }
 
-    if (!cleanEmail || !cleanEmail.includes('@')) {
+    if (!cleanEmail || !isValidEmail(cleanEmail)) {
       setCreateError('Please enter a valid email address.');
       return;
     }
@@ -1147,13 +1288,18 @@ export default function AdminUsers() {
       return;
     }
 
-    if (newAccount.password !== newAccount.confirmPassword) {
+    if (cleanPassword !== cleanConfirmPassword) {
       setCreateError('Passwords do not match.');
       return;
     }
 
-    if (newAccount.password.length < 6) {
+    if (cleanPassword.length < 6) {
       setCreateError('Password must be at least 6 characters.');
+      return;
+    }
+
+    if (cleanPassword.length > MAX_PASSWORD_LENGTH) {
+      setCreateError(`Password must not exceed ${MAX_PASSWORD_LENGTH} characters.`);
       return;
     }
 
@@ -1172,7 +1318,7 @@ export default function AdminUsers() {
           lastName: cleanLastName,
           email: cleanEmail,
           phone: cleanPhone,
-          password: newAccount.password,
+          password: cleanPassword,
           role: cleanRole,
         },
       });
@@ -1423,7 +1569,7 @@ export default function AdminUsers() {
                   <button
                     key={role}
                     type="button"
-                    onClick={() => setRoleFilter(role)}
+                    onClick={() => setRoleFilter(sanitizeRoleFilter(role))}
                     className={`rounded-full px-4 py-2 text-xs font-black capitalize transition ${
                       active
                         ? 'bg-primary-600 text-white shadow-lg shadow-primary-600/20'
@@ -1447,6 +1593,7 @@ export default function AdminUsers() {
                 <input
                   type="text"
                   value={search}
+                  maxLength={80}
                   onChange={(event) => setSearch(sanitizeSearch(event.target.value))}
                   placeholder="Search name, email, phone, role, specialization, motorcycle, or ID..."
                   className="w-full rounded-2xl border border-gray-200 bg-gray-50 py-3 pl-10 pr-10 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
@@ -1464,7 +1611,7 @@ export default function AdminUsers() {
 
               <select
                 value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value)}
+                onChange={(event) => setStatusFilter(sanitizeStatusFilter(event.target.value))}
                 className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
               >
                 {STATUS_FILTERS.map((item) => (
@@ -1476,7 +1623,7 @@ export default function AdminUsers() {
 
               <select
                 value={sortBy}
-                onChange={(event) => setSortBy(event.target.value)}
+                onChange={(event) => setSortBy(sanitizeSortOption(event.target.value))}
                 className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
               >
                 {SORT_OPTIONS.map((item) => (
@@ -1767,9 +1914,10 @@ export default function AdminUsers() {
                                           type="date"
                                           defaultValue={booking.booking_date}
                                           onBlur={(event) => {
-                                            if (event.target.value !== booking.booking_date) {
+                                            const cleanDate = sanitizeDate(event.target.value);
+                                            if (cleanDate && cleanDate !== booking.booking_date) {
                                               updateSchedule(booking.id, {
-                                                booking_date: event.target.value,
+                                                booking_date: cleanDate,
                                               });
                                             }
                                           }}
@@ -1920,6 +2068,7 @@ export default function AdminUsers() {
                               label="Certificate Name"
                               type="text"
                               value={certName}
+                              maxLength={80}
                               onChange={(event) => setCertName(sanitizeCertName(event.target.value))}
                               placeholder="e.g. TESDA NC II"
                             />
@@ -2019,10 +2168,11 @@ export default function AdminUsers() {
                   <TextInput
                     label="First Name"
                     value={editForm.first_name || ''}
+                    maxLength={50}
                     onChange={(event) =>
                       setEditForm((current) => ({
                         ...current,
-                        first_name: event.target.value,
+                        first_name: sanitizeName(event.target.value),
                       }))
                     }
                     required
@@ -2031,10 +2181,11 @@ export default function AdminUsers() {
                   <TextInput
                     label="Last Name"
                     value={editForm.last_name || ''}
+                    maxLength={50}
                     onChange={(event) =>
                       setEditForm((current) => ({
                         ...current,
-                        last_name: event.target.value,
+                        last_name: sanitizeName(event.target.value),
                       }))
                     }
                     required
@@ -2051,10 +2202,12 @@ export default function AdminUsers() {
                 <TextInput
                   label="Phone"
                   value={editForm.phone || ''}
+                  inputMode="numeric"
+                  maxLength={11}
                   onChange={(event) =>
                     setEditForm((current) => ({
                       ...current,
-                      phone: event.target.value,
+                      phone: sanitizePhone(event.target.value),
                     }))
                   }
                   placeholder="09XX XXX XXXX"
@@ -2069,7 +2222,7 @@ export default function AdminUsers() {
                     onChange={(event) =>
                       setEditForm((current) => ({
                         ...current,
-                        role: event.target.value,
+                        role: sanitizeRole(event.target.value),
                       }))
                     }
                     disabled={!isCurrentUserSuperAdmin || editingUser.id === user?.id}
@@ -2092,10 +2245,11 @@ export default function AdminUsers() {
                   <TextInput
                     label="Specialization"
                     value={editForm.specialization || ''}
+                    maxLength={80}
                     onChange={(event) =>
                       setEditForm((current) => ({
                         ...current,
-                        specialization: event.target.value,
+                        specialization: sanitizeSpecialization(event.target.value),
                       }))
                     }
                     placeholder="e.g. Engine Repair, Electrical"
@@ -2113,10 +2267,11 @@ export default function AdminUsers() {
                         <TextInput
                           label="Make"
                           value={editForm.moto_make || ''}
+                          maxLength={60}
                           onChange={(event) =>
                             setEditForm((current) => ({
                               ...current,
-                              moto_make: event.target.value,
+                              moto_make: sanitizeMotorcycleText(event.target.value),
                             }))
                           }
                           placeholder="Honda, Yamaha..."
@@ -2126,24 +2281,27 @@ export default function AdminUsers() {
                       <TextInput
                         label="Year"
                         value={editForm.moto_year || ''}
+                        inputMode="numeric"
+                        maxLength={4}
                         onChange={(event) =>
                           setEditForm((current) => ({
                             ...current,
-                            moto_year: event.target.value,
+                            moto_year: sanitizeYear(event.target.value),
                           }))
                         }
                         placeholder="2022"
-                        type="number"
+                        type="text"
                       />
                     </div>
 
                     <TextInput
                       label="Model"
                       value={editForm.moto_model || ''}
+                      maxLength={60}
                       onChange={(event) =>
                         setEditForm((current) => ({
                           ...current,
-                          moto_model: event.target.value,
+                          moto_model: sanitizeMotorcycleText(event.target.value),
                         }))
                       }
                       placeholder="Click 125i, NMAX..."
@@ -2196,8 +2354,9 @@ export default function AdminUsers() {
                     label="New Password"
                     type="password"
                     value={newPassword}
+                    maxLength={MAX_PASSWORD_LENGTH}
                     onChange={(event) => {
-                      setNewPassword(event.target.value);
+                      setNewPassword(sanitizePasswordInput(event.target.value));
                       setPasswordError('');
                       setPasswordSuccess('');
                     }}
@@ -2209,8 +2368,9 @@ export default function AdminUsers() {
                     label="Confirm New Password"
                     type="password"
                     value={confirmNewPassword}
+                    maxLength={MAX_PASSWORD_LENGTH}
                     onChange={(event) => {
-                      setConfirmNewPassword(event.target.value);
+                      setConfirmNewPassword(sanitizePasswordInput(event.target.value));
                       setPasswordError('');
                       setPasswordSuccess('');
                     }}
@@ -2276,10 +2436,11 @@ export default function AdminUsers() {
                 <TextInput
                   label="First Name"
                   value={newAccount.firstName}
+                  maxLength={50}
                   onChange={(event) =>
                     setNewAccount((current) => ({
                       ...current,
-                      firstName: event.target.value,
+                      firstName: sanitizeName(event.target.value),
                     }))
                   }
                   required
@@ -2288,10 +2449,11 @@ export default function AdminUsers() {
                 <TextInput
                   label="Last Name"
                   value={newAccount.lastName}
+                  maxLength={50}
                   onChange={(event) =>
                     setNewAccount((current) => ({
                       ...current,
-                      lastName: event.target.value,
+                      lastName: sanitizeName(event.target.value),
                     }))
                   }
                   required
@@ -2302,10 +2464,11 @@ export default function AdminUsers() {
                 label="Email Address"
                 type="email"
                 value={newAccount.email}
+                maxLength={120}
                 onChange={(event) =>
                   setNewAccount((current) => ({
                     ...current,
-                    email: event.target.value,
+                    email: sanitizeEmail(event.target.value),
                   }))
                 }
                 required
@@ -2314,10 +2477,12 @@ export default function AdminUsers() {
               <TextInput
                 label="Phone Number"
                 value={newAccount.phone}
+                inputMode="numeric"
+                maxLength={11}
                 onChange={(event) =>
                   setNewAccount((current) => ({
                     ...current,
-                    phone: event.target.value,
+                    phone: sanitizePhone(event.target.value),
                   }))
                 }
                 placeholder="09XXXXXXXXX"
@@ -2332,7 +2497,7 @@ export default function AdminUsers() {
                   onChange={(event) =>
                     setNewAccount((current) => ({
                       ...current,
-                      role: event.target.value,
+                      role: sanitizeCreateRole(event.target.value),
                     }))
                   }
                   className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
@@ -2349,10 +2514,11 @@ export default function AdminUsers() {
                   label="Password"
                   type="password"
                   value={newAccount.password}
+                  maxLength={MAX_PASSWORD_LENGTH}
                   onChange={(event) =>
                     setNewAccount((current) => ({
                       ...current,
-                      password: event.target.value,
+                      password: sanitizePasswordInput(event.target.value),
                     }))
                   }
                   required
@@ -2362,10 +2528,11 @@ export default function AdminUsers() {
                   label="Confirm"
                   type="password"
                   value={newAccount.confirmPassword}
+                  maxLength={MAX_PASSWORD_LENGTH}
                   onChange={(event) =>
                     setNewAccount((current) => ({
                       ...current,
-                      confirmPassword: event.target.value,
+                      confirmPassword: sanitizePasswordInput(event.target.value),
                     }))
                   }
                   required

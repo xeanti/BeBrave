@@ -424,7 +424,7 @@ export default function AdminInventoryMovements() {
           <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto]">
             <input
               type="text"
-              placeholder="Search part, reason, user, order ID, or booking ID..."
+              placeholder="Search product, reason, user, order ID, or booking ID..."
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
@@ -483,7 +483,7 @@ export default function AdminInventoryMovements() {
             </h2>
             <p className="mx-auto mb-6 max-w-md text-sm leading-6 text-gray-600 dark:text-gray-400">
               {movements.length === 0
-                ? 'No stock history has been recorded yet. Try adding stock, selling parts, or using parts in service.'
+                ? 'No stock history has been recorded yet. Try adding stock, selling products, or using products in service.'
                 : 'No movement records match your current filters.'}
             </p>
             {hasFilters && (
@@ -499,7 +499,7 @@ export default function AdminInventoryMovements() {
         ) : (
           <div className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
             <div className="hidden border-b border-gray-200 bg-gray-50 px-5 py-3 text-xs font-black uppercase tracking-wider text-gray-500 dark:border-dark-700 dark:bg-dark-900/60 dark:text-gray-400 lg:grid lg:grid-cols-[1.4fr_1fr_0.8fr_1fr_1fr_1fr] lg:gap-4">
-              <div>Part</div>
+              <div>Product</div>
               <div>Movement</div>
               <div>Quantity</div>
               <div>Stock</div>
@@ -523,7 +523,7 @@ export default function AdminInventoryMovements() {
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
                         {part?.image_url ? (
-                          <img src={part.image_url} alt={part.name || 'Part'} className="h-full w-full object-cover" />
+                          <img src={part.image_url} alt={part.name || 'Product'} className="h-full w-full object-cover" />
                         ) : (
                           <div className="grid h-full w-full place-items-center text-2xl text-gray-400">⚙️</div>
                         )}

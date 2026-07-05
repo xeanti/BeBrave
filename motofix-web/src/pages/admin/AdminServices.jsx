@@ -21,6 +21,12 @@ const DEFAULT_PAGE_SIZE = 6;
 const PAGE_SIZE_OPTIONS = [6, 12, 24];
 const MAX_SERVICE_PRICE = 999999;
 const MAX_SERVICE_DURATION_MINUTES = 1440;
+const MIN_MOTORCYCLE_YEAR = 1980;
+const MAX_MOTORCYCLE_YEAR = new Date().getFullYear() + 1;
+const MAX_MODEL_IMAGE_SIZE_MB = 5;
+const MODEL_REFERENCE_BUCKET = 'motorcycle-photos';
+const ALLOWED_MODEL_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const ALLOWED_MODEL_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
 
 function cleanInlineText(value, maxLength = 120) {
   return String(value ?? '')
@@ -39,6 +45,102 @@ function cleanMultilineText(value, maxLength = 500) {
     .replace(/\n{3,}/g, '\n\n')
     .trim()
     .slice(0, maxLength);
+}
+
+function sanitizeServiceNameInput(value) {
+  return String(value ?? '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&#]/g, '')
+    .replace(/\s+/g, ' ')
+    .trimStart()
+    .slice(0, 80);
+}
+
+function sanitizeServiceDescriptionInput(value) {
+  return String(value ?? '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
+    .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&#:\n]/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trimStart()
+    .slice(0, 500);
+}
+
+function sanitizeMotorcycleTextInput(value) {
+  return String(value ?? '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/[^a-zA-Z0-9ñÑ .,'’()\-/+&]/g, '')
+    .replace(/\s+/g, ' ')
+    .trimStart()
+    .slice(0, 80);
+}
+
+function sanitizeYearRangeInput(value) {
+  const normalized = String(value ?? '')
+    .replace(/[–—]/g, '-')
+    .replace(/[^0-9-]/g, '');
+
+  const firstHyphen = normalized.indexOf('-');
+
+  if (firstHyphen === -1) {
+    return normalized.slice(0, 4);
+  }
+
+  const start = normalized.slice(0, firstHyphen).replace(/\D/g, '').slice(0, 4);
+  const end = normalized.slice(firstHyphen + 1).replace(/\D/g, '').slice(0, 4);
+
+  return `${start}-${end}`.slice(0, 9);
+}
+
+function validateYearRange(value) {
+  const raw = sanitizeYearRangeInput(value).trim();
+
+  if (!raw) return { value: '' };
+
+  if (!/^\d{4}(-\d{4})?$/.test(raw)) {
+    return {
+      error: 'Year range must be a valid year or range, e.g. 2021 or 2021-2024.',
+    };
+  }
+
+  const [startText, endText] = raw.split('-');
+  const startYear = Number(startText);
+  const endYear = endText ? Number(endText) : null;
+
+  if (
+    !Number.isInteger(startYear) ||
+    startYear < MIN_MOTORCYCLE_YEAR ||
+    startYear > MAX_MOTORCYCLE_YEAR
+  ) {
+    return {
+      error: `Motorcycle year must be between ${MIN_MOTORCYCLE_YEAR} and ${MAX_MOTORCYCLE_YEAR}.`,
+    };
+  }
+
+  if (endText) {
+    if (
+      !Number.isInteger(endYear) ||
+      endYear < MIN_MOTORCYCLE_YEAR ||
+      endYear > MAX_MOTORCYCLE_YEAR
+    ) {
+      return {
+        error: `Motorcycle year range must end between ${MIN_MOTORCYCLE_YEAR} and ${MAX_MOTORCYCLE_YEAR}.`,
+      };
+    }
+
+    if (endYear < startYear) {
+      return {
+        error: 'Motorcycle year range end year cannot be earlier than the start year.',
+      };
+    }
+  }
+
+  return {
+    value: endText ? `${startYear}-${endYear}` : `${startYear}`,
+  };
 }
 
 function cleanMoney(value) {
@@ -87,6 +189,95 @@ function cleanUrl(value) {
   } catch {
     return null;
   }
+}
+
+function sanitizeFileStem(name) {
+  return String(name || 'motorcycle-model')
+    .toLowerCase()
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60) || 'motorcycle-model';
+}
+
+function getSafeImageExtension(file) {
+  const ext = String(file?.name || '')
+    .split('.')
+    .pop()
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+  return ALLOWED_MODEL_IMAGE_EXTENSIONS.includes(ext) ? ext : '';
+}
+
+function cleanUploadedModelImageUrl(value) {
+  const raw = cleanInlineText(value, 500);
+
+  if (!raw) return null;
+
+  try {
+    const url = new URL(raw);
+
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+
+    const expectedPath = `/storage/v1/object/public/${MODEL_REFERENCE_BUCKET}/motorcycle-models/`;
+
+    if (!url.pathname.includes(expectedPath)) return null;
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function uploadMotorcycleModelImageFile({
+  file,
+  bucket = MODEL_REFERENCE_BUCKET,
+  folder = 'motorcycle-models',
+}) {
+  if (!file) return '';
+
+  if (!ALLOWED_MODEL_IMAGE_TYPES.includes(file.type)) {
+    throw new Error('Please upload JPG, PNG, WEBP, or GIF only.');
+  }
+
+  const fileExt = getSafeImageExtension(file);
+
+  if (!fileExt) {
+    throw new Error('Invalid image file extension. Upload JPG, PNG, WEBP, or GIF only.');
+  }
+
+  const maxBytes = MAX_MODEL_IMAGE_SIZE_MB * 1024 * 1024;
+
+  if (file.size > maxBytes) {
+    throw new Error(`Image is too large. Maximum size is ${MAX_MODEL_IMAGE_SIZE_MB}MB.`);
+  }
+
+  const safeStem = sanitizeFileStem(file.name);
+  const filePath = `${folder}/${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}-${safeStem}.${fileExt}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from(bucket)
+    .upload(filePath, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type,
+    });
+
+  if (uploadError) {
+    throw uploadError;
+  }
+
+  const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
+
+  if (!data?.publicUrl) {
+    throw new Error('Image uploaded, but public URL could not be generated.');
+  }
+
+  return data.publicUrl;
 }
 
 function limitMoneyInput(value) {
@@ -323,6 +514,8 @@ function PaginationControls({
 }
 
 export default function AdminServices() {
+  // Motorcycle model reference photo now uses sanitized file upload.
+  // Strong input sanitation is applied before every save.
   const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState('services');
@@ -342,6 +535,7 @@ export default function AdminServices() {
   const [modelForm, setModelForm] = useState(EMPTY_MODEL_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const [uploadingModelImage, setUploadingModelImage] = useState(false);
 
   const [fetchError, setFetchError] = useState('');
   const [toast, setToast] = useState('');
@@ -480,6 +674,7 @@ export default function AdminServices() {
   function openAddPanel() {
     setEditingId(null);
     setFormError('');
+    setUploadingModelImage(false);
 
     if (activeTab === 'services') {
       setServiceForm(EMPTY_SERVICE_FORM);
@@ -493,6 +688,7 @@ export default function AdminServices() {
   function openEditPanel(item) {
     setEditingId(item.id);
     setFormError('');
+    setUploadingModelImage(false);
 
     if (activeTab === 'services') {
       setServiceForm({
@@ -518,6 +714,7 @@ export default function AdminServices() {
     setPanelOpen(false);
     setEditingId(null);
     setFormError('');
+    setUploadingModelImage(false);
     setServiceForm(EMPTY_SERVICE_FORM);
     setModelForm(EMPTY_MODEL_FORM);
   }
@@ -531,9 +728,9 @@ export default function AdminServices() {
     } else if (name === 'estimated_duration_minutes') {
       nextValue = String(value ?? '').replace(/[^0-9]/g, '').slice(0, 4);
     } else if (name === 'name') {
-      nextValue = String(value ?? '').replace(/[<>]/g, '').slice(0, 80);
+      nextValue = sanitizeServiceNameInput(value);
     } else if (name === 'description') {
-      nextValue = String(value ?? '').replace(/[<>]/g, '').slice(0, 500);
+      nextValue = sanitizeServiceDescriptionInput(value);
     }
 
     setServiceForm({
@@ -547,11 +744,9 @@ export default function AdminServices() {
     let nextValue = value;
 
     if (name === 'make' || name === 'model') {
-      nextValue = String(value ?? '').replace(/[<>]/g, '').slice(0, 80);
+      nextValue = sanitizeMotorcycleTextInput(value);
     } else if (name === 'year_range') {
-      nextValue = String(value ?? '').replace(/[<>]/g, '').slice(0, 40);
-    } else if (name === 'reference_photo_url') {
-      nextValue = String(value ?? '').replace(/[<>]/g, '').slice(0, 500);
+      nextValue = sanitizeYearRangeInput(value);
     }
 
     setModelForm({
@@ -560,9 +755,49 @@ export default function AdminServices() {
     });
   }
 
+  async function handleModelReferenceUpload(event) {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    setUploadingModelImage(true);
+    setFormError('');
+
+    try {
+      const publicUrl = await uploadMotorcycleModelImageFile({
+        file,
+        bucket: MODEL_REFERENCE_BUCKET,
+        folder: 'motorcycle-models',
+      });
+
+      setModelForm((current) => ({
+        ...current,
+        reference_photo_url: publicUrl,
+      }));
+
+      setToast('✓ Motorcycle reference image uploaded');
+    } catch (err) {
+      setFormError(err.message || 'Failed to upload motorcycle reference image.');
+    } finally {
+      setUploadingModelImage(false);
+      event.target.value = '';
+    }
+  }
+
+  function removeModelReferencePhoto() {
+    const confirmed = window.confirm('Remove the uploaded motorcycle reference photo?');
+
+    if (!confirmed) return;
+
+    setModelForm((current) => ({
+      ...current,
+      reference_photo_url: '',
+    }));
+  }
+
   function getCleanServicePayload() {
-    const name = cleanInlineText(serviceForm.name, 80);
-    const description = cleanMultilineText(serviceForm.description, 500);
+    const name = sanitizeServiceNameInput(serviceForm.name).trim();
+    const description = sanitizeServiceDescriptionInput(serviceForm.description).trim();
     const basePrice = cleanMoney(serviceForm.base_price);
     const laborCost = cleanMoney(serviceForm.labor_cost || '0');
     const duration = cleanDuration(serviceForm.estimated_duration_minutes || '60');
@@ -586,15 +821,19 @@ export default function AdminServices() {
   }
 
   function getCleanModelPayload() {
-    const make = cleanInlineText(modelForm.make, 80);
-    const model = cleanInlineText(modelForm.model, 80);
-    const yearRange = cleanInlineText(modelForm.year_range, 40);
-    const referencePhotoUrl = cleanUrl(modelForm.reference_photo_url);
+    const make = sanitizeMotorcycleTextInput(modelForm.make).trim();
+    const model = sanitizeMotorcycleTextInput(modelForm.model).trim();
+    const { value: yearRange, error: yearError } = validateYearRange(modelForm.year_range);
+    const referencePhotoUrl = cleanUploadedModelImageUrl(modelForm.reference_photo_url);
 
     if (!make) return { error: 'Motorcycle make is required.' };
     if (!model) return { error: 'Motorcycle model is required.' };
-    if (modelForm.reference_photo_url.trim() && !referencePhotoUrl) {
-      return { error: 'Reference photo URL must be a valid http or https link.' };
+    if (yearError) return { error: yearError };
+
+    if (modelForm.reference_photo_url && !referencePhotoUrl) {
+      return {
+        error: 'Invalid motorcycle reference image. Please upload the image again.',
+      };
     }
 
     return {
@@ -619,6 +858,17 @@ export default function AdminServices() {
 
         if (validationError) {
           setFormError(validationError);
+          setSaving(false);
+          return;
+        }
+
+        const confirmed = window.confirm(
+          editingId
+            ? `Save changes to service "${payload.name}"?`
+            : `Add new service "${payload.name}"?`
+        );
+
+        if (!confirmed) {
           setSaving(false);
           return;
         }
@@ -660,6 +910,17 @@ export default function AdminServices() {
 
         if (validationError) {
           setFormError(validationError);
+          setSaving(false);
+          return;
+        }
+
+        const confirmed = window.confirm(
+          editingId
+            ? `Save changes to motorcycle model "${payload.make} ${payload.model}"?`
+            : `Add new motorcycle model "${payload.make} ${payload.model}"?`
+        );
+
+        if (!confirmed) {
           setSaving(false);
           return;
         }
@@ -710,29 +971,37 @@ export default function AdminServices() {
   }
 
   async function toggleActive(service) {
-    setTogglingId(service.id);
+  const serviceName = cleanInlineText(service.name, 80) || 'this service';
+  const nextActive = !service.is_active;
+  const actionText = nextActive ? 'activate' : 'set inactive';
 
-    try {
-      const nextActive = !service.is_active;
+  const confirmed = window.confirm(
+    `Are you sure you want to ${actionText} "${serviceName}"?`
+  );
 
-      const { error } = await supabase
-        .from('services')
-        .update({ is_active: nextActive })
-        .eq('id', service.id);
+  if (!confirmed) return;
 
-      if (error) throw error;
+  setTogglingId(service.id);
 
-      await insertAuditLog('TOGGLE_SERVICE_ACTIVE', 'services', service.id, {
-        is_active: nextActive,
-      });
+  try {
+    const { error } = await supabase
+      .from('services')
+      .update({ is_active: nextActive })
+      .eq('id', service.id);
 
-      setToast(nextActive ? `✓ ${service.name} activated` : `${service.name} set inactive`);
-      await fetchServices(false);
-    } catch (err) {
-      setFetchError(err.message || 'Failed to update service status.');
-    } finally {
-      setTogglingId(null);
-    }
+    if (error) throw error;
+
+    await insertAuditLog('TOGGLE_SERVICE_ACTIVE', 'services', service.id, {
+      is_active: nextActive,
+    });
+
+    setToast(nextActive ? `✓ ${serviceName} activated` : `${serviceName} set inactive`);
+    await fetchServices(false);
+  } catch (err) {
+    setFetchError(err.message || 'Failed to update service status.');
+  } finally {
+    setTogglingId(null);
+  }
   }
 
   async function deleteService(service) {
@@ -1282,6 +1551,7 @@ This action cannot be undone. If this model is already used by records, the data
                     required
                     maxLength={80}
                     placeholder="e.g. Oil Change"
+                    helper="Letters, numbers, spaces, and basic symbols only."
                   />
 
                   <div className="grid grid-cols-2 gap-4">
@@ -1293,6 +1563,7 @@ This action cannot be undone. If this model is already used by records, the data
                       value={serviceForm.base_price}
                       onChange={handleServiceChange}
                       required
+                      helper="Numbers only, up to 2 decimal places."
                     />
 
                     <TextInput
@@ -1302,6 +1573,7 @@ This action cannot be undone. If this model is already used by records, the data
                       inputMode="decimal"
                       value={serviceForm.labor_cost}
                       onChange={handleServiceChange}
+                      helper="Numbers only, up to 2 decimal places."
                     />
                   </div>
 
@@ -1312,7 +1584,7 @@ This action cannot be undone. If this model is already used by records, the data
                     inputMode="numeric"
                     value={serviceForm.estimated_duration_minutes}
                     onChange={handleServiceChange}
-                    helper="Estimated duration in minutes."
+                    helper="Estimated duration in minutes. Numbers only, 1-1440."
                   />
 
                   <div>
@@ -1334,35 +1606,56 @@ This action cannot be undone. If this model is already used by records, the data
                 <>
                   <div>
                     <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                      Reference Photo URL
+                      Reference Photo Upload
                     </label>
 
-                    <div className="flex items-center gap-3">
-                      <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
+                    <div className="flex items-start gap-3">
+                      <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
                         {modelForm.reference_photo_url ? (
                           <img
                             src={modelForm.reference_photo_url}
-                            alt=""
+                            alt="Motorcycle reference"
                             className="h-full w-full object-cover"
                             onError={(event) => {
                               event.currentTarget.style.display = 'none';
                             }}
                           />
                         ) : (
-                          <div className="grid h-full w-full place-items-center text-2xl text-gray-400">
+                          <div className="grid h-full w-full place-items-center text-3xl text-gray-400">
                             🏍️
                           </div>
                         )}
                       </div>
 
-                      <input
-                        name="reference_photo_url"
-                        value={modelForm.reference_photo_url}
-                        onChange={handleModelChange}
-                        maxLength={500}
-                        placeholder="https://..."
-                        className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
-                      />
+                      <div className="flex-1">
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif"
+                          onChange={handleModelReferenceUpload}
+                          disabled={uploadingModelImage}
+                          className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition file:mr-4 file:rounded-xl file:border-0 file:bg-primary-600 file:px-4 file:py-2 file:text-xs file:font-black file:text-white hover:file:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                        />
+
+                        <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                          Upload a motorcycle reference image instead of pasting a URL. JPG, PNG, WEBP, or GIF up to {MAX_MODEL_IMAGE_SIZE_MB}MB.
+                        </p>
+
+                        {uploadingModelImage && (
+                          <p className="mt-2 text-xs font-black text-primary-600 dark:text-primary-400">
+                            Uploading image...
+                          </p>
+                        )}
+
+                        {modelForm.reference_photo_url && (
+                          <button
+                            type="button"
+                            onClick={removeModelReferencePhoto}
+                            className="mt-3 rounded-2xl bg-red-50 px-4 py-2 text-xs font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25 dark:hover:bg-red-500/20"
+                          >
+                            Remove Photo
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -1375,6 +1668,7 @@ This action cannot be undone. If this model is already used by records, the data
                       required
                       maxLength={80}
                       placeholder="e.g. Yamaha"
+                      helper="Letters, numbers, spaces, and basic symbols only."
                     />
 
                     <TextInput
@@ -1385,6 +1679,7 @@ This action cannot be undone. If this model is already used by records, the data
                       required
                       maxLength={80}
                       placeholder="e.g. Aerox 155"
+                      helper="Letters, numbers, spaces, and basic symbols only."
                     />
                   </div>
 
@@ -1393,8 +1688,9 @@ This action cannot be undone. If this model is already used by records, the data
                     name="year_range"
                     value={modelForm.year_range}
                     onChange={handleModelChange}
-                    maxLength={40}
-                    placeholder="e.g. 2021–2024"
+                    maxLength={9}
+                    placeholder="e.g. 2021 or 2021-2024"
+                    helper={`Use a 4-digit year or range only. Allowed years: ${MIN_MOTORCYCLE_YEAR}-${MAX_MOTORCYCLE_YEAR}.`}
                   />
                 </>
               )}

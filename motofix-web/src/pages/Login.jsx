@@ -15,6 +15,8 @@ const inputBase =
 
 const labelBase = 'block text-sm text-gray-600 dark:text-gray-300 mb-1';
 
+const PERSONNEL_ROLES = ['admin', 'super_admin', 'staff', 'mechanic'];
+
 function FieldIcon({ children }) {
   return (
     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-base leading-none opacity-70 pointer-events-none">
@@ -72,7 +74,7 @@ function getFriendlyLoginError(err) {
 }
 
 export default function Login() {
-  const { signIn, user } = useAuth();
+  const { signIn, user, profile } = useAuth();
   const navigate = useNavigate();
 
   const [email, setEmail] = useState('');
@@ -84,8 +86,17 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
-    if (user) navigate('/dashboard');
-  }, [user, navigate]);
+    if (!user || !profile) return;
+
+    if (profile.role === 'customer') {
+      navigate('/dashboard', { replace: true });
+      return;
+    }
+
+    if (PERSONNEL_ROLES.includes(profile.role)) {
+      navigate('/admin/login', { replace: true });
+    }
+  }, [user, profile, navigate]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -101,7 +112,39 @@ export default function Login() {
         password,
       });
 
-      navigate('/dashboard');
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+
+      if (authError) throw authError;
+
+      const userId = authData?.user?.id;
+
+      if (!userId) {
+        throw new Error('No authenticated user was found.');
+      }
+
+      const { data: profileRow, error: profileError } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', userId)
+        .single();
+
+      if (profileError) throw profileError;
+
+      if (profileRow?.role !== 'customer') {
+        await supabase.auth.signOut();
+
+        setError({
+          title: 'Use the MotoFix Admin Portal',
+          message:
+            'Staff, mechanics, admins, and super admins must sign in through the admin login page.',
+          tips: ['Go to /admin/login to access the personnel portal.'],
+          canResend: false,
+        });
+
+        return;
+      }
+
+      navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(getFriendlyLoginError(err));
     } finally {
@@ -296,6 +339,16 @@ export default function Login() {
                 {loading ? 'Logging in...' : 'Log In'}
               </button>
             </form>
+
+            <div className="mt-5 rounded-xl bg-gray-50 dark:bg-dark-900 border border-gray-200 dark:border-white/10 p-3 text-xs text-gray-500 dark:text-gray-400">
+              Staff, mechanic, admin, or super admin?{' '}
+              <Link
+                to="/admin/login"
+                className="font-semibold text-primary-600 dark:text-primary-500 hover:underline"
+              >
+                Use the Admin Portal
+              </Link>
+            </div>
 
             <p className="text-gray-500 dark:text-gray-400 text-sm text-center mt-6">
               Don't have an account?{' '}

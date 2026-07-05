@@ -384,7 +384,7 @@ export default function AdminParts() {
       .order('name', { ascending: true });
 
     if (error) {
-      const message = error.message || 'Failed to load parts.';
+      const message = error.message || 'Failed to load products.';
       setFetchError(message);
       if (showLoader) setErrorPopup(message);
       setParts([]);

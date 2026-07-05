@@ -433,10 +433,9 @@ export default function Navbar() {
   }
 
   const publicLinks = [
-    { to: '/', label: 'Home', icon: '🏠' },
-    { to: '/mechanics', label: 'Mechanics', icon: '🔧' },
-    { to: '/login', label: 'Log In', icon: '🔐' },
-    { to: '/register', label: 'Sign Up', icon: '📝' },
+  { to: '/', label: 'Home', icon: '🏠' },
+  { to: '/login', label: 'Log In', icon: '🔐' },
+  { to: '/register', label: 'Sign Up', icon: '📝' },
   ];
 
   const customerLinks = [
@@ -477,7 +476,6 @@ export default function Navbar() {
     { to: '/admin/orders', label: 'Orders', icon: '📦' },
     { to: '/admin/assessments', label: 'Assessments', icon: '📋' },
     { to: '/admin/parts', label: 'Products', icon: '🛍️' },
-    { to: '/admin/services', label: 'Services', icon: '🛠️' },
     { to: '/admin/chat', label: 'Messages', icon: '💬' },
     { to: '/admin/chatbot-templates', label: 'Chatbot Templates', icon: '🤖' },
     { to: '/notifications', label: 'Notifications', icon: '🔔' },
@@ -487,7 +485,9 @@ export default function Navbar() {
   const superAdminLinks = [
     { to: '/admin', label: 'Super Admin Dashboard', icon: '📊' },
     { to: '/admin/users', label: 'Users', icon: '👥' },
+    { to: '/admin/inventory-movements', label: 'Stock History', icon: '📜' },
     { to: '/admin/reports', label: 'Reports', icon: '📈' },
+    { to: '/admin/services', label: 'Services', icon: '🛠️' },
     { to: '/admin/settings', label: 'Settings', icon: '⚙️' },
     { to: '/notifications', label: 'Notifications', icon: '🔔' },
     { to: '/profile', label: 'My Profile', icon: '👤' },

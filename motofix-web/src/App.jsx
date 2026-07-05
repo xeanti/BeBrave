@@ -9,6 +9,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 
 import Landing from './pages/Landing';
 import Login from './pages/Login';
+import AdminLogin from './pages/AdminLogin';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Booking from './pages/Booking';
@@ -84,6 +85,16 @@ function AdminHome() {
   return <AdminDashboard />;
 }
 
+function RootPage() {
+  const hostname = window.location.hostname.toLowerCase();
+
+  if (hostname.startsWith('admin.')) {
+    return <Navigate to="/admin/login" replace />;
+  }
+
+  return <Landing />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -93,11 +104,19 @@ export default function App() {
 
           <Routes>
             {/* Public */}
-            <Route path="/" element={<Landing />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/mechanics" element={<Mechanics />} />
-            <Route path="/auth/callback" element={<AuthCallback />} />
+              <Route path="/" element={<RootPage />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/admin/login" element={<AdminLogin />} />
+              <Route path="/register" element={<Register />} />
+              <Route
+  path="/mechanics"
+  element={
+    <ProtectedRoute>
+      <Mechanics />
+    </ProtectedRoute>
+  }
+/>
+              <Route path="/auth/callback" element={<AuthCallback />} />
 
             {/* Shared Protected */}
             <Route
@@ -351,7 +370,7 @@ export default function App() {
             <Route
               path="/admin/inventory-movements"
               element={
-                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
+                <ProtectedRoute allowedRoles={SUPER_ADMIN_ONLY}>
                   <AdminInventoryMovements />
                 </ProtectedRoute>
               }
@@ -369,7 +388,7 @@ export default function App() {
             <Route
               path="/admin/services"
               element={
-                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
+                <ProtectedRoute allowedRoles={SUPER_ADMIN_ONLY}>
                   <AdminServices />
                 </ProtectedRoute>
               }

@@ -187,6 +187,24 @@ export default function CheckoutScreen({ navigation }) {
     return data;
   }
 
+  function confirmRemoveFromCart(item) {
+    Alert.alert(
+      'Remove Product',
+      `Remove "${item.name}" from your cart?`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => removeFromCart(item.id),
+        },
+      ]
+    );
+  }
+
   async function placeOrder() {
     if (cart.length === 0 || submitting) return;
 
@@ -493,7 +511,7 @@ export default function CheckoutScreen({ navigation }) {
 
               <TouchableOpacity
                 style={s.removeButton}
-                onPress={() => removeFromCart(item.id)}
+                onPress={() => confirmRemoveFromCart(item)}
               >
                 <Text style={s.removeText}>Remove</Text>
               </TouchableOpacity>

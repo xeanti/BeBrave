@@ -117,7 +117,7 @@ export default function Shop() {
       .order('name', { ascending: true });
 
     if (error) {
-      setPartsError(error.message || 'Failed to load parts.');
+      setPartsError(error.message || 'Failed to load products.');
       setParts([]);
     } else {
       setParts(data || []);

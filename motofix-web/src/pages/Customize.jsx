@@ -408,7 +408,7 @@ export default function Customize() {
 
       if (previousWithoutSameCategory.length >= MAX_PREVIEW_PARTS) {
         setPartMessage(
-          `You can only preview up to ${MAX_PREVIEW_PARTS} parts at a time.`
+          `You can only preview up to ${MAX_PREVIEW_PARTS} products at a time.`
         );
         setTimeout(() => setPartMessage(''), 2500);
         return previous;
@@ -416,7 +416,7 @@ export default function Customize() {
 
       if (existingInCategory) {
         setPartMessage(
-          `Swapped "${existingInCategory.name}" for "${part.name}" — only 1 part per category.`
+          `Swapped "${existingInCategory.name}" for "${part.name}" — only 1 product per category.`
         );
         setTimeout(() => setPartMessage(''), 2500);
       }
@@ -570,12 +570,12 @@ export default function Customize() {
     }
 
     if (selectedParts.length === 0) {
-      setError('Please select at least one part to preview.');
+      setError('Please select at least one product to preview.');
       return;
     }
 
     if (selectedParts.length > MAX_PREVIEW_PARTS) {
-      setError(`Please select a maximum of ${MAX_PREVIEW_PARTS} parts.`);
+      setError(`Please select a maximum of ${MAX_PREVIEW_PARTS} products.`);
       return;
     }
 
