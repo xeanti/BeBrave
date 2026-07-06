@@ -132,12 +132,11 @@ export function AuthProvider({ children }) {
     const { data, error } = await supabase
       .from('profiles')
       .insert(newProfile)
-      .select('*')
-      .single();
+      .select('*');
 
     if (error) throw error;
 
-    return normalizeProfile(data);
+    return normalizeProfile(data?.[0]);
   }
 
   async function fetchProfile(userId) {
@@ -158,15 +157,33 @@ export function AuthProvider({ children }) {
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single();
+        .limit(1);
 
-      let profileData = data ? normalizeProfile(data) : null;
+      if (error) throw error;
 
-      if (error) {
-        if (error.code === 'PGRST116') {
-          profileData = await createMissingCustomerProfile(userId);
+      let profileData = data?.[0] ? normalizeProfile(data[0]) : null;
+
+      if (!profileData) {
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+
+        if (userError) throw userError;
+
+        const authUser = userData?.user;
+        const metadataRole = String(authUser?.user_metadata?.role || '')
+          .toLowerCase()
+          .trim();
+
+        // If a non-customer auth account somehow has no profile row,
+        // do not auto-create it as a customer.
+        if (metadataRole && !['customer', 'user'].includes(metadataRole)) {
+          profileData = {
+            id: userId,
+            email: authUser?.email || '',
+            role: metadataRole,
+            is_active: true,
+          };
         } else {
-          throw error;
+          profileData = await createMissingCustomerProfile(userId);
         }
       }
 

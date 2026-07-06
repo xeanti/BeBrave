@@ -71,6 +71,15 @@ function getFriendlyLoginError(err) {
     };
   }
 
+  if (message.toLowerCase().includes('auth session missing')) {
+    return {
+      title: 'Login failed',
+      message: 'Your login session could not be read. Please try logging in again.',
+      tips: [],
+      canResend: false,
+    };
+  }
+
   return {
     title: 'Login failed',
     message: message || 'Something went wrong while logging in. Please try again.',
@@ -107,8 +116,9 @@ function getRoleAccessError(role) {
     canResend: false,
   };
 }
+
 export default function Login() {
-  const { signIn, user, profile } = useAuth();
+  const { signIn, signOut, user, profile } = useAuth();
   const navigate = useNavigate();
 
   const [email, setEmail] = useState('');
@@ -135,12 +145,12 @@ export default function Login() {
       // Important:
       // Do not silently redirect non-customer accounts.
       // Sign them out and show a clear message on this login page.
-      await supabase.auth.signOut();
+      await signOut();
       setError(getRoleAccessError(role));
     }
 
     handleExistingSession();
-  }, [user, profile, navigate]);
+  }, [user, profile, navigate, signOut]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -162,17 +172,10 @@ export default function Login() {
     setLoading(true);
 
     try {
-      // Clear old/stuck session first so the wrong account does not auto-redirect.
-      await supabase.auth.signOut();
-
-      await signIn({
+      const authData = await signIn({
         email: cleanEmail,
         password,
       });
-
-      const { data: authData, error: authError } = await supabase.auth.getUser();
-
-      if (authError) throw authError;
 
       const userId = authData?.user?.id;
 
@@ -180,18 +183,20 @@ export default function Login() {
         throw new Error('No authenticated user was found.');
       }
 
-      const { data: profileRow, error: profileError } = await supabase
+      const { data: profileRows, error: profileError } = await supabase
         .from('profiles')
         .select('role')
         .eq('id', userId)
-        .single();
+        .limit(1);
 
       if (profileError) throw profileError;
 
-      const role = normalizeRole(profileRow?.role);
+      const profileRow = profileRows?.[0];
+      const metadataRole = authData?.user?.user_metadata?.role;
+      const role = normalizeRole(profileRow?.role || metadataRole);
 
       if (!CUSTOMER_ROLES.includes(role)) {
-        await supabase.auth.signOut();
+        await signOut();
         setError(getRoleAccessError(role));
         return;
       }
