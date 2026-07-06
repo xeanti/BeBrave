@@ -392,7 +392,7 @@ export default function Dashboard() {
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
                     {upcomingCount > 0
                       ? `${upcomingCount} upcoming booking${upcomingCount > 1 ? 's' : ''} on your schedule.`
-                      : "No upcoming bookings yet — let's get your bike serviced."}
+                      : "No upcoming bookings yet. You can view appointments or request a cost assessment."}
                   </p>
                   {lastUpdated && (
                     <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
@@ -412,10 +412,10 @@ export default function Dashboard() {
                 </button>
 
                 <Link
-                  to="/booking"
+                  to="/appointments"
                   className="rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 active:scale-[0.99]"
                 >
-                  Book Service
+                  View Appointments
                 </Link>
               </div>
             </div>
@@ -480,29 +480,29 @@ export default function Dashboard() {
         {/* Quick actions */}
         <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <QuickAction
-            to="/booking"
-            title="Book a Service"
-            description="Schedule your next repair or maintenance appointment."
+            to="/appointments"
+            title="My Appointments"
+            description="View your service appointments and booking details."
             icon="📅"
-          />
-          <QuickAction
-            to="/shop"
-            title="Parts Shop"
-            description="Browse compatible parts and add items to your cart."
-            icon="🛒"
           />
           <QuickAction
             to="/pre-assessment"
             title="Cost Assessment"
-            description="Get a pre-assessment estimate before booking."
+            description="Get a pre-assessment estimate before visiting the shop."
             icon="📋"
             accent
           />
           <QuickAction
-            to="/customize"
-            title="AI Preview"
-            description="Visualize your motorcycle with selected parts."
-            icon="✨"
+            to="/my-assessments"
+            title="My Assessments"
+            description="Review your submitted cost estimate requests."
+            icon="🔍"
+          />
+          <QuickAction
+            to="/my-orders"
+            title="My Orders"
+            description="Track your product orders and payment status."
+            icon="📦"
           />
         </div>
 
@@ -533,9 +533,9 @@ export default function Dashboard() {
               <EmptyState
                 icon="📅"
                 title="No upcoming bookings"
-                text="Book your first service appointment and it will appear here."
-                actionLabel="Book your first service"
-                actionTo="/booking"
+                text="Your scheduled service appointments will appear here once created."
+                actionLabel="View appointments"
+                actionTo="/appointments"
               />
             ) : (
               <div className="space-y-3">
@@ -580,7 +580,7 @@ export default function Dashboard() {
                   </p>
                 </div>
                 <Link
-                  to="/orders"
+                  to="/my-orders"
                   className="text-xs font-black text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
                 >
                   View all

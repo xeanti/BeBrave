@@ -152,6 +152,7 @@ export default function Navbar() {
   const [lowStockParts, setLowStockParts] = useState(0);
 
   const role = profile?.role;
+  const isCustomerRole = role === 'customer' || role === 'user';
   const isAdminRole = role === 'admin' || role === 'super_admin';
   const isSuperAdmin = role === 'super_admin';
   const canSeeOperationAlerts =
@@ -161,7 +162,7 @@ export default function Navbar() {
     ? `${profile.first_name?.[0] || ''}${profile.last_name?.[0] || ''}`.toUpperCase()
     : '';
 
-  const chatPath = role === 'customer' || role === 'user' ? '/chat' : '/admin/chat';
+  const chatPath = isCustomerRole ? '/chat' : '/admin/chat';
 
   const operationAlerts = canSeeOperationAlerts
     ? pendingBookings +

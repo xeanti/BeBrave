@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDownPaymentPercent } from '../lib/settings';
 import { notifyRole, notifyUser } from '../lib/notifications';
-import { adjustPartStock } from '../lib/inventory';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../lib/supabaseClient';
@@ -28,8 +27,39 @@ function normalizeRate(value) {
   return rate > 1 ? rate / 100 : rate;
 }
 
-function cleanText(value) {
-  return String(value || '').trim();
+function cleanText(value, max = 500) {
+  return String(value || '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
+function cleanPhone(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 11);
+}
+
+function isValidPhilippineMobile(value) {
+  return /^09\d{9}$/.test(value);
+}
+
+function cleanGcashReference(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 20);
+}
+
+function getCashPaymentMethod(fulfillmentMethod) {
+  return fulfillmentMethod === 'delivery' ? 'cash_on_delivery' : 'cash_on_pickup';
+}
+
+function getCashPaymentTitle(fulfillmentMethod) {
+  return fulfillmentMethod === 'delivery' ? 'Cash on Delivery (COD)' : 'Pay at Counter';
+}
+
+function getCashPaymentSubtitle(fulfillmentMethod) {
+  return fulfillmentMethod === 'delivery'
+    ? 'Customer pays in cash when the order is delivered.'
+    : 'Customer pays at the shop counter when the order is picked up or released.';
 }
 
 function OptionCard({ active, title, subtitle, icon, onClick }) {
@@ -82,6 +112,12 @@ export default function Checkout() {
   useEffect(() => {
     setContactPhone(profile?.phone || '');
   }, [profile?.phone]);
+
+  useEffect(() => {
+    if (paymentMethod === 'cash_on_pickup' || paymentMethod === 'cash_on_delivery') {
+      setPaymentMethod(getCashPaymentMethod(fulfillmentMethod));
+    }
+  }, [fulfillmentMethod]);
 
   useEffect(() => {
     let mounted = true;
@@ -232,18 +268,29 @@ export default function Checkout() {
       return;
     }
 
-    if (!cleanText(contactPhone)) {
+    const safeContactPhone = cleanPhone(contactPhone);
+    const safeDeliveryAddress = cleanText(deliveryAddress, 300);
+    const safePickupNotes = cleanText(pickupNotes, 200);
+    const safeNotes = cleanText(notes, 500);
+    const safePaymentReference = cleanGcashReference(paymentReference);
+
+    if (!safeContactPhone) {
       setError('Please enter a contact number for this order.');
       return;
     }
 
-    if (fulfillmentMethod === 'delivery' && !cleanText(deliveryAddress)) {
+    if (!isValidPhilippineMobile(safeContactPhone)) {
+      setError('Contact number must start with 09 and contain exactly 11 digits.');
+      return;
+    }
+
+    if (fulfillmentMethod === 'delivery' && !safeDeliveryAddress) {
       setError('Please enter your delivery address.');
       return;
     }
 
-    if (paymentMethod === 'gcash_manual' && !cleanText(paymentReference)) {
-      setError('Please enter the GCash reference number before submitting.');
+    if (paymentMethod === 'gcash_manual' && safePaymentReference.length < 4) {
+      setError('Please enter a valid GCash reference number before submitting.');
       return;
     }
 
@@ -272,8 +319,8 @@ export default function Checkout() {
           remaining_balance: remainingBalance,
           fulfillment_method: fulfillmentMethod,
           payment_method: paymentMethod,
-          payment_reference_provided: Boolean(cleanText(paymentReference)),
-          notes_provided: Boolean(cleanText(notes)),
+          payment_reference_provided: Boolean(safePaymentReference),
+          notes_provided: Boolean(safeNotes),
         },
       });
 
@@ -297,7 +344,8 @@ export default function Checkout() {
 
           payment_status: paymentStatus,
           payment_method: paymentMethod,
-          payment_reference: cleanText(paymentReference) || null,
+          payment_reference:
+            paymentMethod === 'gcash_manual' ? safePaymentReference || null : null,
           // Do not count the amount as paid yet.
           // PayMongo becomes paid only after webhook; GCash manual becomes paid only after staff/admin verification.
           down_payment_amount: 0,
@@ -306,12 +354,12 @@ export default function Checkout() {
           fulfillment_method: fulfillmentMethod,
           fulfillment_status: fulfillmentStatus,
           delivery_address:
-            fulfillmentMethod === 'delivery' ? cleanText(deliveryAddress) : null,
+            fulfillmentMethod === 'delivery' ? safeDeliveryAddress : null,
           pickup_notes:
-            fulfillmentMethod === 'pickup' ? cleanText(pickupNotes) || null : null,
-          customer_contact_phone: cleanText(contactPhone),
+            fulfillmentMethod === 'pickup' ? safePickupNotes || null : null,
+          customer_contact_phone: safeContactPhone,
 
-          notes: cleanText(notes) || null,
+          notes: safeNotes || null,
         })
         .select()
         .single();
@@ -334,15 +382,11 @@ export default function Checkout() {
 
       if (itemsError) throw itemsError;
 
-      for (const item of cart) {
-        await adjustPartStock({
-          partId: item.id,
-          movementType: 'sold_order',
-          quantity: item.quantity,
-          reason: 'Product sold through customer checkout',
-          relatedOrderId: order.id,
-        });
-      }
+      const { error: reserveStockError } = await supabase.rpc('reserve_order_stock', {
+  p_order_id: order.id,
+});
+
+if (reserveStockError) throw reserveStockError;
 
       if (paymentMethod === 'paymongo_qrph') {
         checkoutData = await createOrderQrphCheckout(order.id);
@@ -358,7 +402,9 @@ export default function Checkout() {
               ? 'Your order was submitted. Please complete your PayMongo QR Ph / GCash payment.'
               : paymentMethod === 'gcash_manual'
                 ? 'Your order was submitted and is waiting for GCash payment verification.'
-                : 'Your order was submitted. Please pay at the shop during pickup or release.',
+                : paymentMethod === 'cash_on_delivery'
+                  ? 'Your order was submitted. Please pay cash upon delivery.'
+                  : 'Your order was submitted. Please pay at the shop counter during pickup or release.',
           type: 'order',
           relatedTable: 'orders',
           relatedId: order.id,
@@ -372,7 +418,9 @@ export default function Checkout() {
               ? 'A customer submitted a product order and PayMongo checkout was created.'
               : paymentMethod === 'gcash_manual'
                 ? 'A customer submitted a product order with GCash payment reference for verification.'
-                : 'A customer submitted a product order for counter payment.',
+                : paymentMethod === 'cash_on_delivery'
+                  ? 'A customer submitted a product order for Cash on Delivery.'
+                  : 'A customer submitted a product order for counter payment.',
           type: 'order',
           relatedTable: 'orders',
           relatedId: order.id,
@@ -505,8 +553,9 @@ export default function Checkout() {
                   </p>
                   <input
                     value={contactPhone}
-                    onChange={(event) => setContactPhone(event.target.value)}
+                    onChange={(event) => setContactPhone(cleanPhone(event.target.value))}
                     placeholder="09XXXXXXXXX"
+                    maxLength={11}
                     className="w-full bg-transparent text-sm font-semibold text-gray-900 outline-none placeholder:text-gray-400 dark:text-white"
                   />
                 </label>
@@ -592,7 +641,12 @@ export default function Checkout() {
                   icon="🏪"
                   title="Pickup at Shop"
                   subtitle="Customer will pick up the products at the MotoFix shop."
-                  onClick={() => setFulfillmentMethod('pickup')}
+                  onClick={() => {
+                    setFulfillmentMethod('pickup');
+                    if (paymentMethod === 'cash_on_delivery') {
+                      setPaymentMethod('cash_on_pickup');
+                    }
+                  }}
                 />
 
                 <OptionCard
@@ -600,7 +654,12 @@ export default function Checkout() {
                   icon="🛵"
                   title="Delivery"
                   subtitle="Staff will process the order for delivery or release."
-                  onClick={() => setFulfillmentMethod('delivery')}
+                  onClick={() => {
+                    setFulfillmentMethod('delivery');
+                    if (paymentMethod === 'cash_on_pickup') {
+                      setPaymentMethod('cash_on_delivery');
+                    }
+                  }}
                 />
               </div>
 
@@ -611,8 +670,9 @@ export default function Checkout() {
                   </span>
                   <textarea
                     value={deliveryAddress}
-                    onChange={(event) => setDeliveryAddress(event.target.value)}
+                    onChange={(event) => setDeliveryAddress(cleanText(event.target.value, 300))}
                     rows={3}
+                    maxLength={300}
                     placeholder="Enter complete delivery address..."
                     className="w-full resize-none rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500 dark:focus:border-primary-500"
                   />
@@ -624,8 +684,9 @@ export default function Checkout() {
                   </span>
                   <input
                     value={pickupNotes}
-                    onChange={(event) => setPickupNotes(event.target.value)}
+                    onChange={(event) => setPickupNotes(cleanText(event.target.value, 200))}
                     placeholder="Example: I will pick this up tomorrow afternoon"
+                    maxLength={200}
                     className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500 dark:focus:border-primary-500"
                   />
                 </label>
@@ -639,11 +700,11 @@ export default function Checkout() {
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <OptionCard
-                  active={paymentMethod === 'cash_on_pickup'}
+                  active={paymentMethod === getCashPaymentMethod(fulfillmentMethod)}
                   icon="💵"
-                  title="Pay at Counter"
-                  subtitle="Customer pays at the shop when the order is picked up or released."
-                  onClick={() => setPaymentMethod('cash_on_pickup')}
+                  title={getCashPaymentTitle(fulfillmentMethod)}
+                  subtitle={getCashPaymentSubtitle(fulfillmentMethod)}
+                  onClick={() => setPaymentMethod(getCashPaymentMethod(fulfillmentMethod))}
                 />
 
                 <OptionCard
@@ -671,8 +732,9 @@ export default function Checkout() {
                     </span>
                     <input
                       value={paymentReference}
-                      onChange={(event) => setPaymentReference(event.target.value)}
+                      onChange={(event) => setPaymentReference(cleanGcashReference(event.target.value))}
                       placeholder="Example: 1234567890123"
+                      maxLength={20}
                       className="w-full rounded-2xl border border-primary-200 bg-white px-4 py-3 text-sm font-bold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-primary-500/30 dark:bg-dark-900 dark:text-white"
                     />
                   </label>
@@ -690,8 +752,9 @@ export default function Checkout() {
               </h2>
               <textarea
                 value={notes}
-                onChange={(event) => setNotes(event.target.value)}
+                onChange={(event) => setNotes(cleanText(event.target.value, 500))}
                 rows={4}
+                maxLength={500}
                 placeholder="Special instructions..."
                 className="w-full resize-none rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500 dark:focus:border-primary-500"
               />
@@ -734,6 +797,8 @@ export default function Checkout() {
                     Payment Due Now
                     {paymentMethod === 'gcash_manual' ? ` (${downPaymentPercent}% manual)` : ''}
                     {paymentMethod === 'paymongo_qrph' ? ' (full online payment)' : ''}
+                    {paymentMethod === 'cash_on_delivery' ? ' (COD)' : ''}
+                    {paymentMethod === 'cash_on_pickup' ? ' (counter)' : ''}
                   </span>
                   <span className="font-black text-accent-600 dark:text-accent-400">
                     {formatPeso(requiredDownPayment)}

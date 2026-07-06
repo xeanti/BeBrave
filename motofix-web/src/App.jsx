@@ -122,7 +122,7 @@ export default function App() {
               }
             />
 
-            {/* Customer Web - Limited Access */}
+            {/* Customer Web - Limited Dashboard, Appointments, Orders, and Support Access */}
             <Route
               path="/dashboard"
               element={
@@ -176,6 +176,13 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
+
+
+
+
+
+
 
             <Route
               path="/my-orders"
@@ -387,10 +394,11 @@ export default function App() {
             <Route path="/booking" element={<Navigate to="/appointments" replace />} />
             <Route path="/customize" element={<Navigate to="/dashboard" replace />} />
             <Route path="/mechanics" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/shop" element={<Navigate to="/my-orders" replace />} />
-            <Route path="/checkout" element={<Navigate to="/my-orders" replace />} />
-            <Route path="/order-confirmation" element={<Navigate to="/my-orders" replace />} />
             <Route path="/booking-confirmation" element={<Navigate to="/appointments" replace />} />
+            <Route path="/shop" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/checkout" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/order-confirmation" element={<Navigate to="/my-orders" replace />} />
+            <Route path="/orders" element={<Navigate to="/my-orders" replace />} />
 
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />

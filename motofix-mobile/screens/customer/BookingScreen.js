@@ -44,8 +44,8 @@ const PAYMENT_METHODS = [
   },
   {
     key: 'gcash_manual',
-    title: 'Personal GCash / Manual',
-    subtitle: `Send payment to ${PERSONAL_GCASH_NUMBER} - ${PERSONAL_GCASH_NAME}, then enter your reference number.`,
+    title: 'Personal GCash / Manual Verification',
+    subtitle: `Send the 20% reservation fee to ${PERSONAL_GCASH_NUMBER} - ${PERSONAL_GCASH_NAME}, then enter your GCash reference number.`,
     icon: '💸',
   },
   {
@@ -58,7 +58,7 @@ const PAYMENT_METHODS = [
 
 function getPaymentMethodLabel(method) {
   if (method === 'paymongo_qrph') return 'PayMongo QR / GCash';
-  if (method === 'gcash_manual') return 'Personal GCash / Manual';
+  if (method === 'gcash_manual') return 'Personal GCash / Manual Verification';
   if (method === 'cash_at_shop') return 'Cash at Shop';
 
   return 'PayMongo QR / GCash';
@@ -595,7 +595,10 @@ if (!isValidMotorcycleYear(safeMotorcycleYear)) {
 
 if (paymentMethod === 'gcash_manual' && safeManualReference.length < 4) {
   setSubmitting(false);
-  Alert.alert('GCash Reference Required', 'Please enter a valid GCash reference number.');
+  Alert.alert(
+    'GCash Reference Required',
+    `Please send the 20% reservation fee to ${PERSONAL_GCASH_NUMBER} - ${PERSONAL_GCASH_NAME}, then enter a valid GCash reference number.`
+  );
   setStep(5);
   return;
 }
@@ -765,7 +768,7 @@ if (paymentMethod === 'paymongo_qrph') {
 } else if (paymentMethod === 'gcash_manual') {
   Alert.alert(
     'Booking Submitted',
-    `Your manual GCash reference was submitted. Please wait for staff verification.\n\nGCash Account: ${PERSONAL_GCASH_NUMBER}\nAccount Name: ${PERSONAL_GCASH_NAME}`
+    `Your manual GCash reference was submitted. Please wait for staff verification.\n\nAmount to Send: ₱${reservationFeePreview.toFixed(2)}\nGCash Number: ${PERSONAL_GCASH_NUMBER}\nAccount Name: ${PERSONAL_GCASH_NAME}\nReference No.: ${safeManualReference}`
   );
 } else if (paymentMethod === 'cash_at_shop') {
   Alert.alert(
@@ -780,7 +783,7 @@ const customerBookingMessage =
       ? 'Your booking request has been submitted. Please complete your PayMongo QR / GCash reservation payment.'
       : 'Your booking request has been submitted, but payment is still unpaid. You can pay later from your booking details.'
     : paymentMethod === 'gcash_manual'
-      ? `Your booking request has been submitted with manual GCash payment pending staff verification. Send payment to ${PERSONAL_GCASH_NUMBER} - ${PERSONAL_GCASH_NAME}.`
+      ? `Your booking request has been submitted with manual GCash payment pending staff verification. Send the 20% reservation fee of ₱${reservationFeePreview.toFixed(2)} to ${PERSONAL_GCASH_NUMBER} - ${PERSONAL_GCASH_NAME}.`
       : 'Your booking request has been submitted. Please pay the reservation fee at the shop counter.';
 
 const adminBookingMessage =
@@ -789,7 +792,7 @@ const adminBookingMessage =
       ? 'A customer submitted a new service booking request and PayMongo QR payment was created.'
       : 'A customer submitted a new service booking request, but PayMongo payment checkout was not created.'
     : paymentMethod === 'gcash_manual'
-      ? `A customer submitted a new booking with manual GCash reference for verification. Personal GCash: ${PERSONAL_GCASH_NUMBER} - ${PERSONAL_GCASH_NAME}.`
+      ? `A customer submitted a new booking with manual GCash reference for verification. Amount: ₱${reservationFeePreview.toFixed(2)}. Personal GCash: ${PERSONAL_GCASH_NUMBER} - ${PERSONAL_GCASH_NAME}.`
       : 'A customer submitted a new booking and selected Cash at Shop.';
 
     await notifyUser({
@@ -827,7 +830,7 @@ const adminBookingMessage =
           paymentMethod === 'paymongo_qrph' && checkoutData
             ? 'A customer selected you for a new pending booking and reservation payment was started.'
             : paymentMethod === 'gcash_manual'
-              ? `A customer selected you for a new pending booking with manual GCash pending verification. Personal GCash: ${PERSONAL_GCASH_NUMBER} - ${PERSONAL_GCASH_NAME}.`
+              ? `A customer selected you for a new pending booking with manual GCash pending verification. Amount: ₱${reservationFeePreview.toFixed(2)}. Personal GCash: ${PERSONAL_GCASH_NUMBER} - ${PERSONAL_GCASH_NAME}.`
               : paymentMethod === 'cash_at_shop'
                 ? 'A customer selected you for a new pending booking with cash payment at shop.'
                 : 'A customer selected you for a new pending booking.',
@@ -1454,6 +1457,9 @@ const adminBookingMessage =
                   <Text style={s.summaryTitle}>Personal GCash Payment Details</Text>
 
                   <View style={s.gcashAccountBox}>
+                    <Text style={s.gcashAccountLabel}>Amount to Send</Text>
+                    <Text style={s.gcashAccountValue}>₱{reservationFeePreview.toFixed(2)}</Text>
+
                     <Text style={s.gcashAccountLabel}>GCash Number</Text>
                     <Text style={s.gcashAccountValue}>{PERSONAL_GCASH_NUMBER}</Text>
 
@@ -1462,7 +1468,7 @@ const adminBookingMessage =
                   </View>
 
                   <Text style={s.manualReferenceHelp}>
-                    Send the reservation fee to this GCash account, then enter the reference number below for staff verification.
+                    Send the 20% reservation fee to this GCash account first. After sending, copy the GCash reference number from your receipt and enter it below for staff verification.
                   </Text>
 
                   <Text style={s.summaryTitle}>GCash Reference Number</Text>
@@ -1687,7 +1693,13 @@ const adminBookingMessage =
             {submitting ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={s.nextBtnText}>{paymentMethod === 'paymongo_qrph' ? 'Confirm Booking & Pay QR ✓' : 'Confirm Booking ✓'}</Text>
+              <Text style={s.nextBtnText}>
+                {paymentMethod === 'paymongo_qrph'
+                  ? 'Confirm Booking & Pay QR ✓'
+                  : paymentMethod === 'gcash_manual'
+                    ? 'Submit Manual GCash Reference ✓'
+                    : 'Confirm Booking ✓'}
+              </Text>
             )}
           </TouchableOpacity>
         )}

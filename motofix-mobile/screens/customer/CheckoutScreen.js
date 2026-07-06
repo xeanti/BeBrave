@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -104,6 +104,9 @@ export default function CheckoutScreen({ navigation }) {
 
   const [notes, setNotes] = useState('');
   const [contactPhone, setContactPhone] = useState(PHONE_PREFIX);
+  const [savedProfilePhone, setSavedProfilePhone] = useState('');
+  const [phoneLoading, setPhoneLoading] = useState(true);
+  const [editPhone, setEditPhone] = useState(false);
   const [fulfillmentMethod, setFulfillmentMethod] = useState('pickup');
   const [paymentMethod, setPaymentMethod] = useState('cash_on_pickup');
   const [paymentReference, setPaymentReference] = useState('');
@@ -116,6 +119,55 @@ export default function CheckoutScreen({ navigation }) {
 
   const s = styles(theme);
   // UI payment options are mapped to DB-safe payment_method values before inserting orders.
+
+  useEffect(() => {
+    loadSavedProfilePhone();
+  }, []);
+
+  async function loadSavedProfilePhone() {
+    setPhoneLoading(true);
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user?.id) {
+        setSavedProfilePhone('');
+        setPhoneLoading(false);
+        return '';
+      }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('phone')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      const savedPhone = formatPhoneInput(data?.phone || '');
+
+      if (isValidPhilippineMobile(savedPhone)) {
+        setSavedProfilePhone(savedPhone);
+        setContactPhone(savedPhone);
+        setEditPhone(false);
+        return savedPhone;
+      }
+
+      setSavedProfilePhone('');
+      setEditPhone(true);
+      return '';
+    } catch (error) {
+      console.log('LOAD PROFILE PHONE ERROR:', error);
+      setSavedProfilePhone('');
+      setEditPhone(true);
+      return '';
+    } finally {
+      setPhoneLoading(false);
+    }
+  }
+
 
   const downPaymentRate = 0.15;
   const onlinePaymentAmount =
@@ -287,31 +339,6 @@ export default function CheckoutScreen({ navigation }) {
   async function submitOrder() {
     if (cart.length === 0 || submitting) return;
 
-    const cleanPhone = formatPhoneInput(contactPhone);
-
-    if (!isValidPhilippineMobile(cleanPhone)) {
-      Alert.alert(
-        'Invalid Contact Number',
-        'Contact number must start with 09 and contain exactly 11 digits.'
-      );
-      return;
-    }
-
-    if (fulfillmentMethod === 'delivery' && !cleanMultilineText(deliveryAddress, 300)) {
-      Alert.alert('Missing Delivery Address', 'Please enter your delivery address.');
-      return;
-    }
-
-    const cleanReference = cleanNumericText(paymentReference, 30);
-
-    if (paymentMethod === 'gcash_manual' && cleanReference.length < 6) {
-      Alert.alert(
-        'Invalid GCash Reference',
-        'Please enter a valid GCash reference number before submitting.'
-      );
-      return;
-    }
-
     setSubmitting(true);
 
     try {
@@ -323,6 +350,42 @@ export default function CheckoutScreen({ navigation }) {
         setSubmitting(false);
         Alert.alert('Login Required', 'Please login before placing an order.');
         navigation.navigate('Login');
+        return;
+      }
+
+      let cleanPhone = formatPhoneInput(contactPhone);
+
+      if (!isValidPhilippineMobile(cleanPhone)) {
+        const latestSavedPhone = await loadSavedProfilePhone();
+        cleanPhone = formatPhoneInput(latestSavedPhone || savedProfilePhone || contactPhone);
+      }
+
+      if (!isValidPhilippineMobile(cleanPhone)) {
+        setSubmitting(false);
+        Alert.alert(
+          'Missing Contact Number',
+          'Please add a valid phone number in your profile or enter one for this order. It must start with 09 and contain exactly 11 digits.'
+        );
+        setEditPhone(true);
+        return;
+      }
+
+      setContactPhone(cleanPhone);
+
+      if (fulfillmentMethod === 'delivery' && !cleanMultilineText(deliveryAddress, 300)) {
+        setSubmitting(false);
+        Alert.alert('Missing Delivery Address', 'Please enter your delivery address.');
+        return;
+      }
+
+      const cleanReference = cleanNumericText(paymentReference, 30);
+
+      if (paymentMethod === 'gcash_manual' && cleanReference.length < 6) {
+        setSubmitting(false);
+        Alert.alert(
+          'Invalid GCash Reference',
+          'Please enter a valid GCash reference number before submitting.'
+        );
         return;
       }
 
@@ -616,15 +679,60 @@ export default function CheckoutScreen({ navigation }) {
 
       <View style={s.sectionCard}>
         <Text style={s.sectionTitle}>Contact Number</Text>
-        <TextInput
-          value={contactPhone}
-          onChangeText={(value) => setContactPhone(formatPhoneInput(value))}
-          placeholder="09XXXXXXXXX"
-          placeholderTextColor={theme.textMuted}
-          keyboardType="phone-pad"
-          maxLength={11}
-          style={s.input}
-        />
+
+        {phoneLoading ? (
+          <View style={s.savedPhoneBox}>
+            <ActivityIndicator size="small" color={theme.primaryLight} />
+            <Text style={s.savedPhoneHelp}>Checking saved profile number...</Text>
+          </View>
+        ) : savedProfilePhone && !editPhone ? (
+          <View style={s.savedPhoneBox}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.savedPhoneLabel}>Using saved profile number</Text>
+              <Text style={s.savedPhoneValue}>{savedProfilePhone}</Text>
+              <Text style={s.savedPhoneHelp}>
+                This number will be used for order updates and delivery/pickup contact.
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={s.textButton}
+              onPress={() => setEditPhone(true)}
+            >
+              <Text style={s.textButtonText}>Change</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <>
+            {!savedProfilePhone && (
+              <Text style={s.savedPhoneHelp}>
+                No saved phone number was found in your profile. Enter one for this order.
+              </Text>
+            )}
+
+            <TextInput
+              value={contactPhone}
+              onChangeText={(value) => setContactPhone(formatPhoneInput(value))}
+              placeholder="09XXXXXXXXX"
+              placeholderTextColor={theme.textMuted}
+              keyboardType="phone-pad"
+              maxLength={11}
+              style={s.input}
+            />
+
+            {savedProfilePhone ? (
+              <TouchableOpacity
+                style={s.useSavedButton}
+                onPress={() => {
+                  setContactPhone(savedProfilePhone);
+                  setEditPhone(false);
+                }}
+              >
+                <Text style={s.useSavedButtonText}>Use saved number instead</Text>
+              </TouchableOpacity>
+            ) : null}
+          </>
+        )}
       </View>
 
       <View style={s.sectionCard}>
@@ -896,6 +1004,56 @@ const styles = (theme) =>
       color: theme.text,
       fontWeight: '900',
       marginBottom: 10,
+    },
+    savedPhoneBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      backgroundColor: theme.bg2,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 14,
+      padding: 12,
+    },
+    savedPhoneLabel: {
+      color: theme.textMuted,
+      fontSize: 11,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+      letterSpacing: 0.3,
+    },
+    savedPhoneValue: {
+      color: theme.text,
+      fontSize: 16,
+      fontWeight: '900',
+      marginTop: 3,
+    },
+    savedPhoneHelp: {
+      color: theme.textSub || theme.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+      marginTop: 4,
+    },
+    textButton: {
+      borderWidth: 1,
+      borderColor: theme.primary,
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+    },
+    textButtonText: {
+      color: theme.primaryLight || theme.primary,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    useSavedButton: {
+      alignSelf: 'flex-start',
+      marginTop: 10,
+    },
+    useSavedButtonText: {
+      color: theme.primaryLight || theme.primary,
+      fontSize: 12,
+      fontWeight: '900',
     },
     input: {
       color: theme.text,
