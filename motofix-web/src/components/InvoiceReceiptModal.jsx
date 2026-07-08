@@ -148,9 +148,83 @@ export default function InvoiceReceiptModal({
     documentNumber;
 
   function handlePrint() {
-    window.requestAnimationFrame(() => {
-      window.print();
-    });
+  const printContent = document.querySelector('.invoice-receipt-print-area');
+
+  if (!printContent) {
+    alert('Receipt content not found.');
+    return;
+  }
+
+  const printWindow = window.open('', '_blank', 'width=800,height=900');
+
+  if (!printWindow) {
+    alert('Please allow pop-ups to print the receipt.');
+    return;
+  }
+
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>${documentType === 'receipt' ? 'MotoFix Receipt' : 'MotoFix Invoice'}</title>
+        <style>
+          @page {
+            size: A4;
+            margin: 12mm;
+          }
+
+          * {
+            box-sizing: border-box;
+          }
+
+          body {
+            margin: 0;
+            padding: 0;
+            background: white;
+            font-family: Arial, sans-serif;
+            color: #111827;
+          }
+
+          .print-wrapper {
+            width: 100%;
+            max-width: 760px;
+            margin: 0 auto;
+          }
+
+          button,
+          .invoice-receipt-actions {
+            display: none !important;
+          }
+
+          .invoice-receipt-print-area {
+            width: 100% !important;
+            max-width: none !important;
+            margin: 0 !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+          }
+        </style>
+      </head>
+
+      <body>
+        <div class="print-wrapper">
+          ${printContent.innerHTML}
+        </div>
+
+        <script>
+          window.onload = function () {
+            window.focus();
+            window.print();
+            window.onafterprint = function () {
+              window.close();
+            };
+          };
+        </script>
+      </body>
+    </html>
+  `);
+
+  printWindow.document.close();
   }
 
   return (

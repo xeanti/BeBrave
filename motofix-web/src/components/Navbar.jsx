@@ -544,6 +544,7 @@ export default function Navbar() {
 
   const staffLinks = [
     { to: '/staff', label: 'Staff Dashboard', icon: '🖥️' },
+    { to: '/admin/receipts', label: 'Receipts', icon: '🧾' },
     { to: '/admin/chat', label: 'Messages', icon: '💬' },
     { to: '/notifications', label: 'Notifications', icon: '🔔' },
     { to: '/profile', label: 'My Profile', icon: '👤' },
@@ -554,6 +555,7 @@ export default function Navbar() {
     { to: '/admin/bookings', label: 'Bookings', icon: '📅' },
     { to: '/admin/walk-in-queue', label: 'Walk-ins', icon: '🎫' },
     { to: '/admin/orders', label: 'Orders', icon: '📦' },
+    { to: '/admin/receipts', label: 'Receipts', icon: '🧾' },
     { to: '/admin/assessments', label: 'Assessments', icon: '📋' },
     { to: '/admin/parts', label: 'Products', icon: '🛍️' },
     { to: '/admin/chat', label: 'Messages', icon: '💬' },
@@ -567,6 +569,7 @@ export default function Navbar() {
     { to: '/admin/users', label: 'Users', icon: '👥' },
     { to: '/admin/inventory-movements', label: 'Stock History', icon: '📜' },
     { to: '/admin/reports', label: 'Reports', icon: '📈' },
+    { to: '/admin/receipts', label: 'Receipts', icon: '🧾' },
     { to: '/admin/services', label: 'Services', icon: '🛠️' },
     { to: '/admin/settings', label: 'Settings', icon: '⚙️' },
     { to: '/notifications', label: 'Notifications', icon: '🔔' },

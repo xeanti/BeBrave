@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
 import CustomerPicker from '../../../components/CustomerPicker';
 import { adjustPartStock } from '../../../lib/inventory';
+import { createReceiptHistory } from '../../../lib/receiptHistory';
 
 import {
   Banner,
@@ -674,6 +675,63 @@ export default function WalkInPOS({ staffId, onReceipt }) {
       });
 
       const receiptNumber = payment?.receipt_number || createReceiptNumberFallback(order.id);
+
+      await createReceiptHistory({
+        receiptNumber,
+        sourceType: 'product_counter_sale',
+        sourceId: order.id,
+        paymentTable: 'payments',
+        paymentId: payment?.id || null,
+
+        customerId: cleanCustomerMode === 'registered' ? customer.id : null,
+        customerName: saleCustomerName,
+        customerPhone:
+          cleanCustomerMode === 'guest'
+            ? cleanGuestPhone || null
+            : customer?.phone || customer?.contact_number || customer?.mobile_number || null,
+        customerEmail: cleanCustomerMode === 'registered' ? customer?.email || null : null,
+
+        paymentMethod: cleanPaymentMethod === 'gcash' ? 'GCash Manual' : 'Cash',
+        paymentReference: cleanPaymentReference || payment?.receipt_number || receiptNumber,
+
+        subtotal: checkoutTotal,
+        discountAmount: 0,
+        taxAmount: 0,
+        totalAmount: checkoutTotal,
+        amountPaid: checkoutTotal,
+        balanceAmount: 0,
+
+        status: 'issued',
+        notes: cleanSaleNote || 'Product counter sale',
+        issuedBy: staffId || null,
+        issuedAt: payment?.receipt_issued_at || payment?.created_at || now,
+
+        items: checkoutCart.map((item) => ({
+          item_type: 'product',
+          item_name: item.name,
+          description: 'Product counter sale',
+          quantity: item.quantity,
+          unit_price: Number(item.price) || 0,
+          line_total: (Number(item.price) || 0) * item.quantity,
+          related_part_id: item.id,
+        })),
+
+        metadata: {
+          transaction_type: 'product_counter_sale',
+          order_id: order.id,
+          payment_id: payment?.id || null,
+          customer_type: cleanCustomerMode,
+          payment_method: cleanPaymentMethod,
+          payment_reference: cleanPaymentReference || null,
+          cart: checkoutCart.map((item) => ({
+            product_id: item.id,
+            name: item.name,
+            quantity: item.quantity,
+            unit_price: Number(item.price) || 0,
+            subtotal: (Number(item.price) || 0) * item.quantity,
+          })),
+        },
+      });
 
       onReceipt({
         customerName: saleCustomerName,

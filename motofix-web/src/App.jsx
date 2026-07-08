@@ -38,6 +38,8 @@ import AdminSettings from './pages/admin/AdminSettings';
 import AdminUsers from './pages/admin/AdminUsers';
 import AdminInventoryMovements from './pages/admin/AdminInventoryMovements';
 import AdminChatbotTemplates from './pages/admin/AdminChatbotTemplates';
+import AdminReceipts from './pages/admin/AdminReceipts';
+
 
 import StaffDashboard from './pages/staff/StaffDashboard';
 
@@ -345,6 +347,15 @@ export default function App() {
               element={
                 <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
                   <AdminOrderDetails />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/admin/receipts"
+              element={
+                <ProtectedRoute allowedRoles={STAFF_PORTAL_ROLES}>
+                  <AdminReceipts />
                 </ProtectedRoute>
               }
             />

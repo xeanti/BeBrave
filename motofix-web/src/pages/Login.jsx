@@ -406,7 +406,7 @@ export default function Login() {
                 to="/admin/login"
                 className="font-semibold text-primary-600 dark:text-primary-500 hover:underline"
               >
-                Use the Admin Login
+                Use the Personnel Login
               </Link>
               <br />
               <span className="mt-1 inline-block">

@@ -272,7 +272,7 @@ export default function AdminLogin() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className={inputBase}
-                    placeholder="admin@example.com"
+                    placeholder="personnel@example.com"
                     autoComplete="email"
                     disabled={loading}
                   />
