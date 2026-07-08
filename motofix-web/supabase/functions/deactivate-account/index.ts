@@ -18,6 +18,13 @@ function json(body: unknown, status = 200) {
   });
 }
 
+function isUuid(value: unknown) {
+  return (
+    typeof value === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+  );
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -30,10 +37,18 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
-    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const serviceRoleKey =
+      Deno.env.get('MOTOFIX_SERVICE_ROLE_KEY') ||
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
     if (!supabaseUrl || !anonKey || !serviceRoleKey) {
-      return json({ error: 'Missing Supabase environment variables.' }, 500);
+      return json(
+        {
+          error:
+            'Missing Supabase environment variables. Set MOTOFIX_SERVICE_ROLE_KEY in Edge Function secrets.',
+        },
+        500
+      );
     }
 
     const authHeader = req.headers.get('Authorization') || '';
@@ -49,9 +64,18 @@ serve(async (req) => {
           Authorization: authHeader,
         },
       },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
     });
 
-    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
+    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
 
     const {
       data: { user: caller },
@@ -62,11 +86,11 @@ serve(async (req) => {
       return json({ error: 'Unauthorized. Please login again.' }, 401);
     }
 
-    const body = await req.json();
-    const targetUserId = body?.target_user_id;
+    const body = await req.json().catch(() => ({}));
+    const targetUserId = body?.target_user_id || body?.userId;
 
-    if (!targetUserId) {
-      return json({ error: 'target_user_id is required.' }, 400);
+    if (!isUuid(targetUserId)) {
+      return json({ error: 'Valid target_user_id is required.' }, 400);
     }
 
     if (targetUserId === caller.id) {
@@ -75,7 +99,7 @@ serve(async (req) => {
 
     const { data: callerProfile, error: callerProfileError } = await supabaseAdmin
       .from('profiles')
-      .select('id, role')
+      .select('id, role, is_active')
       .eq('id', caller.id)
       .single();
 
@@ -83,8 +107,8 @@ serve(async (req) => {
       return json({ error: 'Caller profile not found.' }, 403);
     }
 
-    if (callerProfile.role !== 'super_admin') {
-      return json({ error: 'Only super admins can deactivate users.' }, 403);
+    if (callerProfile.role !== 'super_admin' || callerProfile.is_active === false) {
+      return json({ error: 'Only active super admins can deactivate users.' }, 403);
     }
 
     const { data: targetProfile, error: targetError } = await supabaseAdmin

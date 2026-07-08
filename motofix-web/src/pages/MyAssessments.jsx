@@ -208,7 +208,7 @@ export default function MyAssessments() {
                   My Assessments
                 </h1>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-400">
-                  View your pre-assessment cost estimates, down payment amounts, and booking options.
+                  View your pre-assessment cost estimates, down payment amounts, and review status.
                 </p>
               </div>
 
@@ -316,7 +316,6 @@ export default function MyAssessments() {
         ) : (
           <div className="space-y-4">
             {filteredAssessments.map((assessment) => {
-              const canBook = assessment.status !== 'converted';
 
               return (
                 <article
@@ -348,19 +347,6 @@ export default function MyAssessments() {
                         )}
                       </div>
 
-                      {canBook ? (
-                        <Link
-                          to="/booking"
-                          state={{ service_id: assessment.service_id }}
-                          className="inline-flex flex-shrink-0 items-center justify-center rounded-2xl bg-primary-600 px-4 py-3 text-xs font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 active:scale-[0.99]"
-                        >
-                          Book this service →
-                        </Link>
-                      ) : (
-                        <span className="inline-flex flex-shrink-0 items-center justify-center rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-xs font-black text-green-700 dark:border-green-500/25 dark:bg-green-500/10 dark:text-green-300">
-                          Already booked
-                        </span>
-                      )}
                     </div>
 
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -392,7 +378,7 @@ export default function MyAssessments() {
 
                     {assessment.status === 'reviewed' && (
                       <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-700 dark:border-blue-500/25 dark:bg-blue-500/10 dark:text-blue-300">
-                        ✓ This estimate has been reviewed. You may proceed to booking.
+                        ✓ This estimate has been reviewed by the shop.
                       </div>
                     )}
                   </div>

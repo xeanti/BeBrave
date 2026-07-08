@@ -26,6 +26,7 @@ export const FALLBACK_CONSENT_DEFINITIONS = {
   [CONSENT_TYPES.ACCOUNT_REGISTRATION]: {
     consent_type: CONSENT_TYPES.ACCOUNT_REGISTRATION,
     consent_version: 'v1',
+    version: '1.0',
     title: 'Account Registration Privacy Consent',
     consent_text:
       'I agree to MotoFix collecting and using my personal information for account creation, login, customer support, booking, orders, payments, notifications, invoices, and e-receipts.',
@@ -34,6 +35,7 @@ export const FALLBACK_CONSENT_DEFINITIONS = {
   [CONSENT_TYPES.BOOKING_PROCESSING]: {
     consent_type: CONSENT_TYPES.BOOKING_PROCESSING,
     consent_version: 'v1',
+    version: '1.0',
     title: 'Booking Processing Consent',
     consent_text:
       'I agree that MotoFix may use my booking details, motorcycle/service information, contact details, preferred schedule, notes, and assigned mechanic information to process my service request.',
@@ -42,6 +44,7 @@ export const FALLBACK_CONSENT_DEFINITIONS = {
   [CONSENT_TYPES.ORDER_PAYMENT_PROCESSING]: {
     consent_type: CONSENT_TYPES.ORDER_PAYMENT_PROCESSING,
     consent_version: 'v1',
+    version: '1.0',
     title: 'Order and Payment Processing Consent',
     consent_text:
       'I agree that MotoFix may use my order, cart, payment, contact, and transaction information to process parts orders, payment records, invoices, and e-receipts.',
@@ -50,6 +53,7 @@ export const FALLBACK_CONSENT_DEFINITIONS = {
   [CONSENT_TYPES.AI_PHOTO_PROCESSING]: {
     consent_type: CONSENT_TYPES.AI_PHOTO_PROCESSING,
     consent_version: 'v1',
+    version: '1.0',
     title: 'AI Photo Processing Consent',
     consent_text:
       'I agree that MotoFix may process my uploaded motorcycle photo only for generating the customization preview. I understand uploaded photos may contain sensitive details such as plate numbers, background objects, or location clues.',
@@ -58,6 +62,7 @@ export const FALLBACK_CONSENT_DEFINITIONS = {
   [CONSENT_TYPES.CHAT_SUPPORT]: {
     consent_type: CONSENT_TYPES.CHAT_SUPPORT,
     consent_version: 'v1',
+    version: '1.0',
     title: 'Chat Support Consent',
     consent_text:
       'I agree that my MotoFix chat messages may be stored and reviewed by admin, staff, or mechanics for customer support and service assistance.',
@@ -66,6 +71,7 @@ export const FALLBACK_CONSENT_DEFINITIONS = {
   [CONSENT_TYPES.NOTIFICATIONS]: {
     consent_type: CONSENT_TYPES.NOTIFICATIONS,
     consent_version: 'v1',
+    version: '1.0',
     title: 'Notification Consent',
     consent_text:
       'I agree to receive MotoFix notifications about bookings, orders, payments, invoices, e-receipts, service updates, and support messages.',
@@ -74,6 +80,7 @@ export const FALLBACK_CONSENT_DEFINITIONS = {
   [CONSENT_TYPES.INVOICE_RECEIPT]: {
     consent_type: CONSENT_TYPES.INVOICE_RECEIPT,
     consent_version: 'v1',
+    version: '1.0',
     title: 'Invoice and E-Receipt Consent',
     consent_text:
       'I agree that MotoFix may generate and store invoices, official receipt numbers, e-receipts, and payment history for my orders and bookings.',
@@ -93,6 +100,51 @@ function normalizeMetadata(metadata) {
   return metadata;
 }
 
+function normalizeConsentVersion(value) {
+  const raw = String(value || '').trim();
+
+  if (!raw) return '1.0';
+
+  return raw.startsWith('v') ? raw.slice(1) || '1.0' : raw;
+}
+
+function normalizeDisplayConsentVersion(value) {
+  const raw = String(value || '').trim();
+
+  if (!raw) return 'v1';
+  if (raw.startsWith('v')) return raw;
+
+  return `v${raw.split('.')[0] || raw}`;
+}
+
+function normalizeConsentDefinition(definition) {
+  if (!definition) return null;
+
+  const version = normalizeConsentVersion(
+    definition.version || definition.consent_version || '1.0'
+  );
+
+  return {
+    ...definition,
+    version,
+    consent_version: definition.consent_version || normalizeDisplayConsentVersion(version),
+  };
+}
+
+function normalizeConsentRecord(consent) {
+  if (!consent) return null;
+
+  const version = normalizeConsentVersion(
+    consent.version || consent.consent_version || '1.0'
+  );
+
+  return {
+    ...consent,
+    version,
+    consent_version: consent.consent_version || normalizeDisplayConsentVersion(version),
+  };
+}
+
 function getFallbackConsentDefinition(consentType) {
   const normalizedType = normalizeConsentType(consentType);
 
@@ -100,6 +152,7 @@ function getFallbackConsentDefinition(consentType) {
     FALLBACK_CONSENT_DEFINITIONS[normalizedType] || {
       consent_type: normalizedType,
       consent_version: 'v1',
+    version: '1.0',
       title: 'Privacy Consent',
       consent_text:
         'I agree that MotoFix may process my information for the selected system feature.',
@@ -128,7 +181,7 @@ export async function getConsentDefinitions({ activeOnly = true } = {}) {
 
   if (error) throw error;
 
-  return data || [];
+  return (data || []).map(normalizeConsentDefinition);
 }
 
 export async function getConsentDefinition(consentType) {
@@ -147,7 +200,7 @@ export async function getConsentDefinition(consentType) {
 
   if (error) throw error;
 
-  return data || getFallbackConsentDefinition(normalizedType);
+  return normalizeConsentDefinition(data) || getFallbackConsentDefinition(normalizedType);
 }
 
 export async function getConsentDefinitionSafe(consentType) {
@@ -176,7 +229,7 @@ export async function getCustomerConsents(customerId = null) {
 
   if (error) throw error;
 
-  return data || [];
+  return (data || []).map(normalizeConsentRecord);
 }
 
 export async function getMyConsents() {
@@ -203,6 +256,8 @@ export async function getLatestCustomerConsent({
     .from('customer_consents')
     .select('*')
     .eq('consent_type', normalizedType)
+    .order('accepted_at', { ascending: false, nullsFirst: false })
+    .order('updated_at', { ascending: false })
     .order('created_at', { ascending: false })
     .limit(1);
 
@@ -212,7 +267,7 @@ export async function getLatestCustomerConsent({
 
   if (error) throw error;
 
-  return data?.[0] || null;
+  return normalizeConsentRecord(data?.[0]) || null;
 }
 
 export async function hasCustomerConsent({ customerId, consentType } = {}) {
@@ -226,9 +281,16 @@ export async function hasCustomerConsent({ customerId, consentType } = {}) {
     p_consent_type: normalizedType,
   });
 
-  if (error) throw error;
+  if (!error && Boolean(data)) return true;
 
-  return Boolean(data);
+  // Fallback for schemas where accepted consent is stored using `version`
+  // while older UI code expects `consent_version`.
+  const latest = await getLatestCustomerConsent({
+    customerId,
+    consentType: normalizedType,
+  });
+
+  return isConsentAccepted(latest);
 }
 
 export async function hasMyConsent(consentType) {
@@ -263,7 +325,11 @@ export async function acceptCustomerConsent({
 
   if (error) throw error;
 
-  return data;
+  const latest = await getLatestCustomerConsent({
+    consentType: normalizedType,
+  });
+
+  return latest || data;
 }
 
 export async function acceptMultipleCustomerConsents({

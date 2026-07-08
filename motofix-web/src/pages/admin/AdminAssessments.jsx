@@ -3,6 +3,12 @@ import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 
 const STATUS_OPTIONS = ['pending', 'reviewed', 'converted'];
+const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
+
+function sanitizePageSize(value) {
+  const parsed = Number(value);
+  return PAGE_SIZE_OPTIONS.includes(parsed) ? parsed : 10;
+}
 
 function formatPeso(value) {
   const amount = Number(value) || 0;
@@ -24,6 +30,34 @@ function formatDateTime(value) {
     minute: '2-digit',
   });
 }
+
+function getTodayString() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+const TIME_SLOTS = [
+  '08:00',
+  '08:30',
+  '09:00',
+  '09:30',
+  '10:00',
+  '10:30',
+  '11:00',
+  '11:30',
+  '13:00',
+  '13:30',
+  '14:00',
+  '14:30',
+  '15:00',
+  '15:30',
+  '16:00',
+  '16:30',
+];
 
 function getCustomerName(assessment) {
   const name = `${assessment.profiles?.first_name || ''} ${assessment.profiles?.last_name || ''}`.trim();
@@ -132,8 +166,18 @@ export default function AdminAssessments() {
   const [fetchError, setFetchError] = useState('');
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [updating, setUpdating] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [mechanics, setMechanics] = useState([]);
+  const [convertTarget, setConvertTarget] = useState(null);
+  const [convertForm, setConvertForm] = useState({
+    booking_date: getTodayString(),
+    booking_time: '',
+    mechanic_id: '',
+  });
+  const [converting, setConverting] = useState(false);
 
   useEffect(() => {
     fetchAssessments();
@@ -199,24 +243,52 @@ export default function AdminAssessments() {
     };
   }, []);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter, search, pageSize]);
+
   async function fetchAssessments(showLoader = true) {
     if (showLoader) setLoading(true);
 
     setFetchError('');
 
-    const { data, error } = await supabase
-      .from('pre_assessments')
-      .select('*, services(name), profiles(first_name, last_name, email)')
-      .order('created_at', { ascending: false });
+    const [assessmentsResult, mechanicsResult] = await Promise.all([
+      supabase
+        .from('pre_assessments')
+        .select(`
+          *,
+          services(
+            id,
+            name,
+            description,
+            base_price,
+            labor_cost,
+            estimated_duration_minutes
+          ),
+          profiles(first_name, last_name, email)
+        `)
+        .order('created_at', { ascending: false }),
 
-    if (error) {
-      setFetchError(error.message || 'Failed to load pre-assessments.');
+      supabase
+        .from('profiles')
+        .select('id, first_name, last_name, email, role, is_active')
+        .eq('role', 'mechanic')
+        .order('first_name', { ascending: true }),
+    ]);
+
+    if (assessmentsResult.error) {
+      setFetchError(assessmentsResult.error.message || 'Failed to load pre-assessments.');
       setAssessments([]);
       setLoading(false);
       return;
     }
 
-    setAssessments(data || []);
+    if (mechanicsResult.error) {
+      console.warn('Failed to load mechanics:', mechanicsResult.error.message);
+    }
+
+    setAssessments(assessmentsResult.data || []);
+    setMechanics((mechanicsResult.data || []).filter((mechanic) => mechanic.is_active !== false));
     setLastUpdated(new Date());
     setLoading(false);
   }
@@ -273,6 +345,230 @@ export default function AdminAssessments() {
       setFetchError(err.message || 'Failed to update assessment status.');
     } finally {
       setUpdating(null);
+    }
+  }
+
+  function getMechanicName(mechanic) {
+    const name = `${mechanic?.first_name || ''} ${mechanic?.last_name || ''}`.trim();
+    return name || mechanic?.email || 'Mechanic';
+  }
+
+  function openConvertModal(assessment) {
+    setFetchError('');
+
+    if (!assessment?.customer_id) {
+      setFetchError('Cannot convert this assessment because the customer is missing.');
+      return;
+    }
+
+    if (assessment.status === 'converted') {
+      setFetchError('This assessment is already converted.');
+      return;
+    }
+
+    setConvertTarget(assessment);
+    setConvertForm({
+      booking_date: getTodayString(),
+      booking_time: '',
+      mechanic_id: '',
+    });
+  }
+
+  function closeConvertModal() {
+    if (converting) return;
+
+    setConvertTarget(null);
+    setConvertForm({
+      booking_date: getTodayString(),
+      booking_time: '',
+      mechanic_id: '',
+    });
+  }
+
+  async function tryInsertBookingFromAssessment(payload) {
+    const { data, error } = await supabase
+      .from('bookings')
+      .insert(payload)
+      .select('id, booking_date, booking_time')
+      .single();
+
+    if (!error) return data;
+
+    const message = String(error.message || '').toLowerCase();
+
+    if (
+      message.includes('schema cache') ||
+      message.includes('column') ||
+      message.includes('service_total') ||
+      message.includes('services_summary') ||
+      message.includes('total_amount') ||
+      message.includes('reservation_fee') ||
+      message.includes('payment_status') ||
+      message.includes('estimated_duration_minutes') ||
+      message.includes('payment_method')
+    ) {
+      const fallback = {
+        customer_id: payload.customer_id,
+        service_id: payload.service_id,
+        mechanic_id: payload.mechanic_id,
+        booking_date: payload.booking_date,
+        booking_time: payload.booking_time,
+        status: payload.status,
+        notes: payload.notes,
+      };
+
+      const retry = await supabase
+        .from('bookings')
+        .insert(fallback)
+        .select('id, booking_date, booking_time')
+        .single();
+
+      if (retry.error) throw retry.error;
+      return retry.data;
+    }
+
+    throw error;
+  }
+
+  async function insertBookingServiceFromAssessment(bookingId, assessment) {
+    const service = assessment.services;
+    const serviceName = service?.name || 'Pre-assessment service';
+
+    const row = {
+      booking_id: bookingId,
+      service_id: assessment.service_id || service?.id || null,
+      service_name: serviceName,
+      base_price:
+        Number(service?.base_price) ||
+        Number(assessment.estimated_parts_cost) ||
+        0,
+      labor_cost:
+        Number(service?.labor_cost) ||
+        Number(assessment.estimated_labor_cost) ||
+        0,
+      estimated_duration_minutes:
+        Number(service?.estimated_duration_minutes) ||
+        30,
+      quantity: 1,
+    };
+
+    const { error } = await supabase.from('booking_services').insert(row);
+
+    if (error) {
+      console.warn('Converted booking service insert skipped:', error.message);
+    }
+  }
+
+  async function convertAssessmentToBooking() {
+    if (!convertTarget) return;
+
+    if (!convertForm.booking_date) {
+      setFetchError('Select a booking date before converting.');
+      return;
+    }
+
+    if (convertForm.booking_date < getTodayString()) {
+      setFetchError('Booking date cannot be in the past.');
+      return;
+    }
+
+    if (!convertForm.booking_time) {
+      setFetchError('Select a booking time before converting.');
+      return;
+    }
+
+    const customerName = getCustomerName(convertTarget);
+    const motorcycle = getMotorcycleLabel(convertTarget);
+    const serviceName = convertTarget.services?.name || 'Pre-assessment service';
+    const totalAmount = Number(convertTarget.estimated_total) || 0;
+    const reservationFee = Number(convertTarget.down_payment_required) || 0;
+
+    const confirmed = window.confirm(
+      `Convert ${customerName}'s pre-assessment for ${motorcycle} into a booking on ${convertForm.booking_date} at ${convertForm.booking_time}?`
+    );
+
+    if (!confirmed) return;
+
+    setConverting(true);
+    setFetchError('');
+
+    try {
+      const notes = [
+        'CONVERTED FROM PRE-ASSESSMENT',
+        `Pre-assessment ID: ${convertTarget.id}`,
+        `Customer concern: ${convertTarget.issue_description || 'No issue description.'}`,
+        convertTarget.notes ? `Assessment notes:\n${convertTarget.notes}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+
+      const bookingPayload = {
+        customer_id: convertTarget.customer_id,
+        service_id: convertTarget.service_id || convertTarget.services?.id || null,
+        mechanic_id: convertForm.mechanic_id || null,
+        booking_date: convertForm.booking_date,
+        booking_time: convertForm.booking_time,
+        status: 'pending',
+        payment_status: 'unpaid',
+        payment_method: 'pending',
+        service_total: totalAmount,
+        services_summary: serviceName,
+        total_amount: totalAmount,
+        reservation_fee: reservationFee,
+        estimated_duration_minutes:
+          Number(convertTarget.services?.estimated_duration_minutes) || 30,
+        notes,
+      };
+
+      const booking = await tryInsertBookingFromAssessment(bookingPayload);
+
+      await insertBookingServiceFromAssessment(booking.id, convertTarget);
+
+      const { error: assessmentError } = await supabase
+        .from('pre_assessments')
+        .update({ status: 'converted' })
+        .eq('id', convertTarget.id);
+
+      if (assessmentError) throw assessmentError;
+
+      if (user?.id) {
+        await supabase.from('audit_logs').insert({
+          action: 'CONVERT_PRE_ASSESSMENT_TO_BOOKING',
+          entity: 'pre_assessments',
+          entity_id: convertTarget.id,
+          performed_by: user.id,
+          details: {
+            booking_id: booking.id,
+            customer_id: convertTarget.customer_id,
+            service_id: bookingPayload.service_id,
+            mechanic_id: bookingPayload.mechanic_id,
+            booking_date: bookingPayload.booking_date,
+            booking_time: bookingPayload.booking_time,
+            total_amount: totalAmount,
+          },
+        });
+      }
+
+      setAssessments((previous) =>
+        previous.map((assessment) =>
+          assessment.id === convertTarget.id
+            ? { ...assessment, status: 'converted' }
+            : assessment
+        )
+      );
+
+      setConvertTarget(null);
+      setConvertForm({
+        booking_date: getTodayString(),
+        booking_time: '',
+        mechanic_id: '',
+      });
+
+      await fetchAssessments(false);
+    } catch (err) {
+      setFetchError(err.message || 'Failed to convert assessment to booking.');
+    } finally {
+      setConverting(false);
     }
   }
 
@@ -336,6 +632,12 @@ export default function AdminAssessments() {
       }
     );
   }, [filtered]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedAssessments = filtered.slice(startIndex, endIndex);
 
   return (
     <div className="min-h-[calc(100vh-65px)] bg-gray-50 px-4 py-8 text-gray-900 dark:bg-dark-900 dark:text-white sm:px-6 lg:py-10">
@@ -427,6 +729,34 @@ export default function AdminAssessments() {
           </div>
         </div>
 
+        {!loading && filtered.length > 0 && (
+          <div className="mb-6 flex flex-col gap-3 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
+                Showing {startIndex + 1}–{Math.min(endIndex, filtered.length)} of {filtered.length} assessments
+              </p>
+              <p className="mt-1 text-xs font-semibold text-gray-400 dark:text-gray-500">
+                Page {safeCurrentPage} of {totalPages}
+              </p>
+            </div>
+
+            <label className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              Per page
+              <select
+                value={pageSize}
+                onChange={(event) => setPageSize(sanitizePageSize(event.target.value))}
+                className="rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm font-black text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+              >
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
+
         {loading ? (
           <AssessmentSkeleton />
         ) : filtered.length === 0 ? (
@@ -443,7 +773,7 @@ export default function AdminAssessments() {
           </div>
         ) : (
           <div className="space-y-4">
-            {filtered.map((assessment) => (
+            {paginatedAssessments.map((assessment) => (
               <article
                 key={assessment.id}
                 className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800"
@@ -513,12 +843,18 @@ export default function AdminAssessments() {
                         <button
                           key={status}
                           type="button"
-                          onClick={() => updateStatus(assessment.id, status)}
-                          disabled={updating === `${assessment.id}-${status}`}
+                          onClick={() =>
+                            status === 'converted'
+                              ? openConvertModal(assessment)
+                              : updateStatus(assessment.id, status)
+                          }
+                          disabled={updating === `${assessment.id}-${status}` || converting}
                           className={`rounded-2xl px-4 py-2 text-xs font-black capitalize ring-1 transition disabled:cursor-not-allowed disabled:opacity-50 ${ACTION_STYLES[status]}`}
                         >
                           {updating === `${assessment.id}-${status}`
                             ? 'Updating...'
+                            : status === 'converted'
+                            ? 'Convert to Booking'
                             : status === 'pending'
                             ? 'Reset to Pending'
                             : `Mark as ${status}`}
@@ -529,8 +865,175 @@ export default function AdminAssessments() {
                 </div>
               </article>
             ))}
+
+            {totalPages > 1 && (
+              <div className="flex flex-col gap-3 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm font-bold text-gray-500 dark:text-gray-400">
+                  Page {safeCurrentPage} of {totalPages}
+                </p>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(1)}
+                    disabled={safeCurrentPage <= 1}
+                    className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+                  >
+                    First
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((page) => Math.max(page - 1, 1))}
+                    disabled={safeCurrentPage <= 1}
+                    className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+                  >
+                    Prev
+                  </button>
+
+                  <span className="rounded-2xl bg-gray-100 px-4 py-2 text-sm font-black text-gray-700 dark:bg-dark-900 dark:text-gray-300">
+                    {safeCurrentPage} / {totalPages}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((page) => Math.min(page + 1, totalPages))}
+                    disabled={safeCurrentPage >= totalPages}
+                    className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+                  >
+                    Next
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={safeCurrentPage >= totalPages}
+                    className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+                  >
+                    Last
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
+      {convertTarget && (
+        <div className="fixed inset-0 z-[80] grid place-items-center bg-gray-950/60 px-4 py-6 backdrop-blur-sm">
+          <div className="w-full max-w-xl overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800">
+            <div className="border-b border-gray-100 p-5 dark:border-dark-700">
+              <p className="text-xs font-black uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
+                Convert Assessment
+              </p>
+              <h2 className="mt-1 text-2xl font-black text-gray-950 dark:text-white">
+                Create Booking
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-400">
+                This will create a real booking record from the reviewed pre-assessment.
+              </p>
+            </div>
+
+            <div className="space-y-4 p-5">
+              <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-100 dark:bg-dark-900/60 dark:ring-dark-700">
+                <p className="text-sm font-black text-gray-950 dark:text-white">
+                  {getCustomerName(convertTarget)}
+                </p>
+                <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                  {getMotorcycleLabel(convertTarget)}
+                </p>
+                <p className="mt-1 text-sm font-black text-primary-600 dark:text-primary-400">
+                  {convertTarget.services?.name || 'No service selected'} · {formatPeso(convertTarget.estimated_total)}
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Booking Date
+                  </span>
+                  <input
+                    type="date"
+                    value={convertForm.booking_date}
+                    min={getTodayString()}
+                    onChange={(event) =>
+                      setConvertForm((current) => ({
+                        ...current,
+                        booking_date: event.target.value,
+                      }))
+                    }
+                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-1 block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Booking Time
+                  </span>
+                  <select
+                    value={convertForm.booking_time}
+                    onChange={(event) =>
+                      setConvertForm((current) => ({
+                        ...current,
+                        booking_time: event.target.value,
+                      }))
+                    }
+                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                  >
+                    <option value="">Select time</option>
+                    {TIME_SLOTS.map((time) => (
+                      <option key={time} value={time}>
+                        {time}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <label className="block">
+                <span className="mb-1 block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  Assign Mechanic Optional
+                </span>
+                <select
+                  value={convertForm.mechanic_id}
+                  onChange={(event) =>
+                    setConvertForm((current) => ({
+                      ...current,
+                      mechanic_id: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                >
+                  <option value="">Unassigned</option>
+                  {mechanics.map((mechanic) => (
+                    <option key={mechanic.id} value={mechanic.id}>
+                      {getMechanicName(mechanic)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 border-t border-gray-100 p-5 dark:border-dark-700 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={closeConvertModal}
+                disabled={converting}
+                className="rounded-2xl border border-gray-200 px-5 py-3 text-sm font-black text-gray-700 transition hover:border-gray-300 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-700 dark:text-gray-300 dark:hover:bg-dark-900"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={convertAssessmentToBooking}
+                disabled={converting}
+                className="rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {converting ? 'Creating Booking...' : 'Create Booking'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );

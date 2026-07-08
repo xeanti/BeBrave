@@ -1068,10 +1068,16 @@ export default function AdminUsers() {
     };
 
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update(payload)
-        .eq('id', editingUser.id);
+      const { data: updatedProfile, error } = await supabase.rpc('admin_update_user_profile', {
+        p_target_user_id: editingUser.id,
+        p_first_name: payload.first_name,
+        p_last_name: payload.last_name,
+        p_phone: payload.phone,
+        p_specialization: payload.specialization,
+        p_moto_make: payload.moto_make,
+        p_moto_model: payload.moto_model,
+        p_moto_year: payload.moto_year,
+      });
 
       if (error) throw error;
 
@@ -1097,8 +1103,8 @@ export default function AdminUsers() {
 
       setEditingUser((previous) => ({
         ...previous,
-        ...payload,
-        role: roleChanged ? cleanRole : previous.role,
+        ...(updatedProfile || payload),
+        role: roleChanged ? cleanRole : updatedProfile?.role || previous.role,
       }));
     } catch (err) {
       setEditError(err.message || 'Failed to save user.');
@@ -1171,7 +1177,20 @@ export default function AdminUsers() {
       setNewPassword('');
       setConfirmNewPassword('');
     } catch (err) {
-      setPasswordError(err.message || 'Failed to change password.');
+      const message = err.message || 'Failed to change password.';
+
+      if (
+        message.toLowerCase().includes('function') ||
+        message.toLowerCase().includes('not found') ||
+        message.toLowerCase().includes('service_role') ||
+        message.toLowerCase().includes('unauthorized')
+      ) {
+        setPasswordError(
+          `${message} Make sure the admin-change-password Edge Function is deployed and SUPABASE_SERVICE_ROLE_KEY is added to Edge Function secrets.`
+        );
+      } else {
+        setPasswordError(message);
+      }
     } finally {
       setChangingPassword(false);
     }

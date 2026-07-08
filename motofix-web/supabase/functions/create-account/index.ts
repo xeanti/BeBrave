@@ -9,6 +9,7 @@ const corsHeaders = {
 };
 
 const ALLOWED_ROLES = ['customer', 'mechanic', 'staff', 'admin', 'super_admin'];
+const MAX_PASSWORD_LENGTH = 72;
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -24,16 +25,34 @@ function generateTempPassword() {
   return Math.random().toString(36).slice(-10) + 'Aa1!';
 }
 
-function cleanText(value: unknown) {
-  return String(value || '').trim();
+function cleanText(value: unknown, max = 80) {
+  return String(value || '')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
+function cleanName(value: unknown) {
+  return cleanText(value, 50).replace(/[^a-zA-ZñÑ .'-]/g, '');
 }
 
 function cleanEmail(value: unknown) {
-  return String(value || '').trim().toLowerCase();
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9@._+\-]/g, '')
+    .slice(0, 120);
 }
 
 function cleanPhone(value: unknown) {
-  return String(value || '').replace(/\D/g, '');
+  return String(value || '').replace(/\D/g, '').slice(0, 11);
+}
+
+function cleanPassword(value: unknown) {
+  return String(value || '')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .slice(0, MAX_PASSWORD_LENGTH);
 }
 
 function isValidEmail(email: string) {
@@ -57,10 +76,29 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
-    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+    /*
+      Do not manually set SUPABASE_SERVICE_ROLE_KEY with:
+        supabase secrets set SUPABASE_SERVICE_ROLE_KEY=...
+
+      SUPABASE_ is reserved by Supabase CLI. Use MOTOFIX_SERVICE_ROLE_KEY
+      if you need to add your own secret manually.
+
+      This fallback keeps the function working in hosted Supabase Edge Functions
+      where SUPABASE_SERVICE_ROLE_KEY may already exist as a default legacy secret.
+    */
+    const serviceRoleKey =
+      Deno.env.get('MOTOFIX_SERVICE_ROLE_KEY') ||
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
     if (!supabaseUrl || !anonKey || !serviceRoleKey) {
-      return json({ error: 'Missing Supabase environment variables.' }, 500);
+      return json(
+        {
+          error:
+            'Missing Supabase environment variables. Set MOTOFIX_SERVICE_ROLE_KEY in Edge Function secrets if SUPABASE_SERVICE_ROLE_KEY is not available.',
+        },
+        500
+      );
     }
 
     const authHeader = req.headers.get('Authorization') || '';
@@ -76,9 +114,18 @@ serve(async (req) => {
           Authorization: authHeader,
         },
       },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
     });
 
-    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
+    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
 
     const {
       data: { user: caller },
@@ -91,7 +138,7 @@ serve(async (req) => {
 
     const { data: callerProfile, error: profileError } = await supabaseAdmin
       .from('profiles')
-      .select('id, email, role')
+      .select('id, email, role, is_active')
       .eq('id', caller.id)
       .single();
 
@@ -99,11 +146,11 @@ serve(async (req) => {
       return json({ error: 'Caller profile not found.' }, 403);
     }
 
-    if (callerProfile.role !== 'super_admin') {
+    if (callerProfile.role !== 'super_admin' || callerProfile.is_active === false) {
       return json(
         {
           error:
-            'Only super admins can create customer, mechanic, staff, admin, or super admin accounts.',
+            'Only active super admins can create customer, mechanic, staff, admin, or super admin accounts.',
         },
         403
       );
@@ -111,12 +158,12 @@ serve(async (req) => {
 
     const body = await req.json();
 
-    const firstName = cleanText(body.firstName);
-    const lastName = cleanText(body.lastName);
+    const firstName = cleanName(body.firstName);
+    const lastName = cleanName(body.lastName);
     const email = cleanEmail(body.email);
     const phone = cleanPhone(body.phone);
-    const password = cleanText(body.password);
-    const role = cleanText(body.role || 'customer');
+    const password = cleanPassword(body.password);
+    const role = cleanText(body.role || 'customer', 30);
 
     if (!firstName || !lastName || !email || !role) {
       return json(
@@ -153,6 +200,13 @@ serve(async (req) => {
 
     if (password && password.length < 6) {
       return json({ error: 'Password must be at least 6 characters.' }, 400);
+    }
+
+    if (password && password.length > MAX_PASSWORD_LENGTH) {
+      return json(
+        { error: `Password must not exceed ${MAX_PASSWORD_LENGTH} characters.` },
+        400
+      );
     }
 
     const finalPassword = password || generateTempPassword();
@@ -198,6 +252,7 @@ serve(async (req) => {
         email,
         phone: phone || null,
         role,
+        is_active: true,
         updated_at: new Date().toISOString(),
       });
 

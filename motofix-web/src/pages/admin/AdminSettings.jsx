@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 
@@ -177,12 +177,20 @@ export default function AdminSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  const hasChangesRef = useRef(false);
+  const savingRef = useRef(false);
+
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
 
   useEffect(() => {
     fetchSettings();
+
+    function safeRefreshSettings() {
+      if (savingRef.current || hasChangesRef.current) return;
+      fetchSettings(false);
+    }
 
     const settingsChannel = supabase
       .channel('admin-settings-settings')
@@ -193,14 +201,14 @@ export default function AdminSettings() {
           schema: 'public',
           table: 'settings',
         },
-        () => fetchSettings(false)
+        safeRefreshSettings
       )
       .subscribe();
 
-    const handleFocus = () => fetchSettings(false);
+    const handleFocus = safeRefreshSettings;
 
     const handleVisibilityChange = () => {
-      if (!document.hidden) fetchSettings(false);
+      if (!document.hidden) safeRefreshSettings();
     };
 
     window.addEventListener('focus', handleFocus);
@@ -334,26 +342,36 @@ export default function AdminSettings() {
     setMessageType('');
 
     try {
-      const { error } = await supabase.from('settings').upsert(rows, {
-        onConflict: 'key',
+      const settingsPayload = changedRows.reduce((result, row) => {
+        result[row.key] = row.value;
+        return result;
+      }, {});
+
+      const { data, error } = await supabase.rpc('admin_upsert_settings', {
+        p_settings: settingsPayload,
       });
 
       if (error) throw error;
 
-      await insertAuditLogs(changedRows);
+      const savedValues = createDefaultValues();
 
-      const savedValues = rows.reduce((result, row) => {
-        result[row.key] = row.value;
-        return result;
-      }, {});
+      (data || rows).forEach((row) => {
+        if (SETTING_KEYS.includes(row.key)) {
+          savedValues[row.key] = String(row.value ?? SETTINGS[row.key].defaultValue);
+        }
+      });
 
       setValues(savedValues);
       setOriginalValues(savedValues);
       setLastUpdated(new Date());
       setMessage('Settings updated successfully!');
       setMessageType('success');
+
+      await fetchSettings(false);
     } catch (err) {
-      setMessage(err.message || 'Failed to save settings.');
+      setMessage(
+        `${err.message || 'Failed to save settings.'} If this says the RPC is missing, run the Admin Settings SQL fix first.`
+      );
       setMessageType('error');
     } finally {
       setSaving(false);
@@ -375,6 +393,14 @@ export default function AdminSettings() {
   const hasChanges = SETTING_KEYS.some(
     (key) => String(values[key]) !== String(originalValues[key])
   );
+
+  useEffect(() => {
+    hasChangesRef.current = hasChanges;
+  }, [hasChanges]);
+
+  useEffect(() => {
+    savingRef.current = saving;
+  }, [saving]);
 
   const previewRows = useMemo(() => {
     const samples = [500, 1000, 2500, 5000];

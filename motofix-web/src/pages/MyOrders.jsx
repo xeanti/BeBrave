@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
-import { summarizePayments } from '../lib/payments';
 
 function formatPeso(value) {
   const amount = Number(value) || 0;
@@ -34,6 +33,8 @@ function formatDateTime(value) {
     minute: '2-digit',
   });
 }
+
+const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
 
 const STATUS_CONFIG = {
   processing: {
@@ -226,6 +227,8 @@ export default function MyOrders() {
   const [fetchError, setFetchError] = useState('');
   const [filter, setFilter] = useState('all');
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -309,6 +312,10 @@ export default function MyOrders() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [user?.id]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter, pageSize, orders.length]);
 
   async function fetchOrders(showLoader = true) {
     if (!user?.id) return;
@@ -442,6 +449,12 @@ export default function MyOrders() {
     );
   }, [filteredOrders, payments]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedOrders = filteredOrders.slice(startIndex, endIndex);
+
   return (
     <div className="min-h-[calc(100vh-65px)] bg-gray-50 px-4 py-8 text-gray-900 dark:bg-dark-900 dark:text-white sm:px-6 lg:py-10">
       <div className="mx-auto max-w-5xl">
@@ -477,13 +490,6 @@ export default function MyOrders() {
                 >
                   Refresh
                 </button>
-
-                <Link
-                  to="/shop"
-                  className="inline-flex items-center justify-center rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 active:scale-[0.99]"
-                >
-                  Browse Parts
-                </Link>
               </div>
             </div>
           </div>
@@ -524,6 +530,34 @@ export default function MyOrders() {
           </div>
         </div>
 
+        {!loading && filteredOrders.length > 0 && (
+          <div className="mb-6 flex flex-col gap-3 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
+                Showing {startIndex + 1}–{Math.min(endIndex, filteredOrders.length)} of {filteredOrders.length} orders
+              </p>
+              <p className="mt-1 text-xs font-semibold text-gray-400 dark:text-gray-500">
+                Page {safeCurrentPage} of {totalPages}
+              </p>
+            </div>
+
+            <label className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              Per page
+              <select
+                value={pageSize}
+                onChange={(event) => setPageSize(Number(event.target.value))}
+                className="rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm font-black text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+              >
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
+
         {fetchError && (
           <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
             {fetchError}
@@ -547,19 +581,12 @@ export default function MyOrders() {
             </h2>
             <p className="mx-auto mb-6 max-w-md text-sm leading-6 text-gray-600 dark:text-gray-400">
               {filter === 'all'
-                ? 'You have not submitted any parts orders yet.'
+                ? 'You have no parts orders yet.'
                 : `You do not have ${filter} orders yet.`}
-            </p>
-            <Link
-              to="/shop"
-              className="inline-flex rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700"
-            >
-              Browse Parts →
-            </Link>
-          </div>
+            </p>          </div>
         ) : (
           <div className="space-y-4">
-            {filteredOrders.map((order) => {
+            {paginatedOrders.map((order) => {
               const orderPayments = payments[order.id] || [];
               const { total, totalPaid, balance, isFullyPaid, paymentPercent } = getOrderPaymentSummary(order, orderPayments);
 
@@ -787,6 +814,56 @@ export default function MyOrders() {
                 </article>
               );
             })}
+
+            {totalPages > 1 && (
+              <div className="flex flex-col gap-3 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm font-bold text-gray-500 dark:text-gray-400">
+                  Page {safeCurrentPage} of {totalPages}
+                </p>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(1)}
+                    disabled={safeCurrentPage <= 1}
+                    className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+                  >
+                    First
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((page) => Math.max(page - 1, 1))}
+                    disabled={safeCurrentPage <= 1}
+                    className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+                  >
+                    Prev
+                  </button>
+
+                  <span className="rounded-2xl bg-gray-100 px-4 py-2 text-sm font-black text-gray-700 dark:bg-dark-900 dark:text-gray-300">
+                    {safeCurrentPage} / {totalPages}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((page) => Math.min(page + 1, totalPages))}
+                    disabled={safeCurrentPage >= totalPages}
+                    className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+                  >
+                    Next
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={safeCurrentPage >= totalPages}
+                    className="rounded-2xl border border-gray-200 px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:text-gray-300"
+                  >
+                    Last
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -26,6 +26,7 @@ import StaffChatScreen from './screens/shared/StaffChatScreen';
 import HomeScreen from './screens/customer/HomeScreen';
 import BookingScreen from './screens/customer/BookingScreen';
 import PreAssessmentScreen from './screens/customer/PreAssessmentScreen';
+import MyPreAssessmentsScreen from './screens/customer/MyPreAssessmentsScreen';
 import AppointmentsScreen from './screens/customer/AppointmentsScreen';
 import ChatScreen from './screens/customer/ChatScreen';
 import CustomizeScreen from './screens/customer/CustomizeScreen';
@@ -455,6 +456,16 @@ export function RootNav() {
         options={{
           headerShown: true,
           title: 'Pre-Assessment',
+          ...sharedHeader,
+        }}
+      />
+
+      <Stack.Screen
+        name="MyPreAssessments"
+        component={MyPreAssessmentsScreen}
+        options={{
+          headerShown: true,
+          title: 'My Assessment Requests',
           ...sharedHeader,
         }}
       />

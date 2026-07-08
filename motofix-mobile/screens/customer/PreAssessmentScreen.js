@@ -28,46 +28,207 @@ function cleanNumber(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function getDateLabel(value) {
-  if (!value) return '—';
-  return new Date(value).toLocaleDateString('en-PH', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
+const CONCERN_TYPES = [
+  { key: 'diagnostic', label: 'Diagnostic', icon: 'search' },
+  { key: 'maintenance', label: 'Maintenance', icon: 'construct' },
+  { key: 'repair', label: 'Repair', icon: 'hammer' },
+  { key: 'electrical', label: 'Electrical', icon: 'flash' },
+  { key: 'brake_tire', label: 'Brake / Tire', icon: 'disc' },
+  { key: 'customization', label: 'Customization', icon: 'color-palette' },
+];
+
+const URGENCY_LEVELS = [
+  { key: 'normal', label: 'Normal', helper: 'Can wait for review' },
+  { key: 'urgent', label: 'Urgent', helper: 'Needs faster checking' },
+];
+
+const CONCERN_SERVICE_KEYWORDS = {
+  diagnostic: [
+    'diagnostic',
+    'diagnosis',
+    'inspect',
+    'inspection',
+    'check',
+    'troubleshoot',
+    'assessment',
+    'general',
+  ],
+  maintenance: [
+    'maintenance',
+    'pms',
+    'preventive',
+    'oil',
+    'change oil',
+    'tune',
+    'tune up',
+    'cleaning',
+    'filter',
+  ],
+  repair: [
+    'repair',
+    'replace',
+    'fix',
+    'engine',
+    'overhaul',
+    'leak',
+    'noise',
+    'broken',
+    'damage',
+  ],
+  electrical: [
+    'electrical',
+    'battery',
+    'wiring',
+    'light',
+    'headlight',
+    'signal',
+    'starter',
+    'horn',
+    'charging',
+  ],
+  brake_tire: [
+    'brake',
+    'preno',
+    'tire',
+    'tyre',
+    'gulong',
+    'wheel',
+    'mags',
+    'disc',
+    'pad',
+    'rotor',
+    'caliper',
+  ],
+  customization: [
+    'custom',
+    'customization',
+    'modify',
+    'upgrade',
+    'accessory',
+    'accessories',
+    'mags',
+    'exhaust',
+    'seat',
+    'mirror',
+    'handle',
+    'body',
+  ],
+};
+
+const ISSUE_DETECTION_RULES = [
+  {
+    reason: 'Brake or tire concern detected',
+    issueKeywords: ['brake', 'preno', 'pad', 'disc', 'rotor', 'caliper', 'tire', 'tyre', 'gulong', 'flat', 'wheel', 'mags'],
+    serviceKeywords: ['brake', 'preno', 'tire', 'tyre', 'wheel', 'mags', 'disc', 'pad', 'rotor', 'caliper'],
+  },
+  {
+    reason: 'Electrical concern detected',
+    issueKeywords: ['battery', 'baterya', 'wiring', 'wire', 'ilaw', 'light', 'headlight', 'signal', 'horn', 'starter', 'charging', 'kuryente'],
+    serviceKeywords: ['electrical', 'battery', 'wiring', 'light', 'headlight', 'signal', 'horn', 'starter', 'charging'],
+  },
+  {
+    reason: 'Maintenance concern detected',
+    issueKeywords: ['change oil', 'oil', 'tune up', 'tune-up', 'maintenance', 'pms', 'filter', 'cleaning', 'linis'],
+    serviceKeywords: ['maintenance', 'pms', 'oil', 'tune', 'filter', 'cleaning'],
+  },
+  {
+    reason: 'Engine or repair concern detected',
+    issueKeywords: ['engine', 'makina', 'overheat', 'leak', 'tagas', 'noise', 'ingay', 'vibration', 'stall', 'ayaw', 'broken', 'sira', 'repair'],
+    serviceKeywords: ['repair', 'engine', 'overhaul', 'diagnostic', 'inspection', 'troubleshoot'],
+  },
+  {
+    reason: 'Customization concern detected',
+    issueKeywords: ['custom', 'customize', 'modify', 'upgrade', 'accessory', 'mags', 'exhaust', 'seat', 'mirror', 'color', 'body kit'],
+    serviceKeywords: ['custom', 'customization', 'upgrade', 'accessory', 'mags', 'exhaust', 'seat', 'mirror'],
+  },
+];
+
+function normalizeSearchText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function textHasAny(text, keywords = []) {
+  return keywords.some((keyword) => {
+    const normalizedKeyword = normalizeSearchText(keyword);
+    return normalizedKeyword && text.includes(normalizedKeyword);
   });
 }
 
-function getStatusConfig(theme, status) {
-  switch (status) {
-    case 'reviewed':
+function getServiceSearchText(service) {
+  return normalizeSearchText([
+    service?.name,
+    service?.description,
+    service?.category,
+  ].filter(Boolean).join(' '));
+}
+
+function getPredictionConfidence(score) {
+  if (score >= 10) return 'High';
+  if (score >= 5) return 'Medium';
+  return 'Low';
+}
+
+function predictPreferredService({ services, concernType, issueDescription }) {
+  if (!Array.isArray(services) || services.length === 0) return null;
+
+  const issueText = normalizeSearchText(issueDescription);
+  const concernKeywords = CONCERN_SERVICE_KEYWORDS[concernType] || [];
+  const concernLabel =
+    CONCERN_TYPES.find((item) => item.key === concernType)?.label || 'Diagnostic';
+
+  const scored = services
+    .map((service) => {
+      const serviceText = getServiceSearchText(service);
+      let score = 0;
+      const reasons = [];
+
+      if (textHasAny(serviceText, concernKeywords)) {
+        score += 4;
+        reasons.push(`${concernLabel} category match`);
+      }
+
+      ISSUE_DETECTION_RULES.forEach((rule) => {
+        const issueMatches = textHasAny(issueText, rule.issueKeywords);
+        const serviceMatches = textHasAny(serviceText, rule.serviceKeywords);
+
+        if (issueMatches && serviceMatches) {
+          score += 7;
+          reasons.push(rule.reason);
+        }
+      });
+
+      const directIssueWords = issueText
+        .split(' ')
+        .filter((word) => word.length >= 4);
+
+      const directMatches = directIssueWords.filter((word) => serviceText.includes(word));
+
+      if (directMatches.length > 0) {
+        score += Math.min(directMatches.length * 2, 6);
+        reasons.push('Matches words from your issue description');
+      }
+
       return {
-        label: 'Reviewed',
-        icon: 'checkmark-circle',
-        color: '#3b82f6',
-        bg: 'rgba(59, 130, 246, 0.12)',
+        service,
+        score,
+        reason: reasons[0] || 'Best available match based on your diagnostic details',
       };
-    case 'converted':
-      return {
-        label: 'Booked',
-        icon: 'calendar',
-        color: theme.success,
-        bg: 'rgba(34, 197, 94, 0.12)',
-      };
-    case 'cancelled':
-      return {
-        label: 'Cancelled',
-        icon: 'close-circle',
-        color: theme.danger,
-        bg: 'rgba(239, 68, 68, 0.12)',
-      };
-    default:
-      return {
-        label: 'Pending',
-        icon: 'time',
-        color: theme.warning,
-        bg: 'rgba(234, 179, 8, 0.12)',
-      };
-  }
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  if (scored.length === 0) return null;
+
+  const top = scored[0];
+
+  return {
+    ...top,
+    confidence: getPredictionConfidence(top.score),
+  };
 }
 
 export default function PreAssessmentScreen({ navigation }) {
@@ -76,8 +237,9 @@ export default function PreAssessmentScreen({ navigation }) {
 
   const [user, setUser] = useState(null);
   const [services, setServices] = useState([]);
-  const [assessments, setAssessments] = useState([]);
 
+  const [concernType, setConcernType] = useState('diagnostic');
+  const [urgencyLevel, setUrgencyLevel] = useState('normal');
   const [motorcycleMake, setMotorcycleMake] = useState('');
   const [motorcycleModel, setMotorcycleModel] = useState('');
   const [motorcycleYear, setMotorcycleYear] = useState('');
@@ -106,6 +268,20 @@ export default function PreAssessmentScreen({ navigation }) {
     };
   }, [selectedService, downPaymentRate]);
 
+  const preferredServicePrediction = useMemo(
+    () =>
+      predictPreferredService({
+        services,
+        concernType,
+        issueDescription,
+      }),
+    [services, concernType, issueDescription]
+  );
+
+  const predictionIsSelected =
+    preferredServicePrediction?.service?.id &&
+    selectedService?.id === preferredServicePrediction.service.id;
+
   const fetchData = useCallback(async (showLoader = true) => {
     if (showLoader) setLoading(true);
 
@@ -117,18 +293,12 @@ export default function PreAssessmentScreen({ navigation }) {
 
     if (!currentUser?.id) {
       setServices([]);
-      setAssessments([]);
       setLoading(false);
       setRefreshing(false);
       return;
     }
 
-    const [
-      profileResult,
-      servicesResult,
-      assessmentsResult,
-      settingResult,
-    ] = await Promise.all([
+    const [profileResult, servicesResult, settingResult] = await Promise.all([
       supabase
         .from('profiles')
         .select('moto_make, moto_model, moto_year')
@@ -140,22 +310,6 @@ export default function PreAssessmentScreen({ navigation }) {
         .select('id, name, description, base_price, labor_cost, estimated_duration_minutes')
         .eq('is_active', true)
         .order('name', { ascending: true }),
-
-      supabase
-        .from('pre_assessments')
-        .select(`
-          *,
-          services (
-            id,
-            name,
-            description,
-            base_price,
-            labor_cost,
-            estimated_duration_minutes
-          )
-        `)
-        .eq('customer_id', currentUser.id)
-        .order('created_at', { ascending: false }),
 
       supabase
         .from('settings')
@@ -178,12 +332,6 @@ export default function PreAssessmentScreen({ navigation }) {
       setServices(servicesResult.data || []);
     }
 
-    if (assessmentsResult.error) {
-      Alert.alert('Assessments Error', assessmentsResult.error.message);
-    } else {
-      setAssessments(assessmentsResult.data || []);
-    }
-
     if (settingResult.data?.value) {
       const rate = Number(settingResult.data.value);
       if (Number.isFinite(rate) && rate > 0) {
@@ -197,38 +345,6 @@ export default function PreAssessmentScreen({ navigation }) {
 
   useEffect(() => {
     fetchData();
-
-    let channel = null;
-
-    async function setupRealtime() {
-      const {
-        data: { user: currentUser },
-      } = await supabase.auth.getUser();
-
-      if (!currentUser?.id) return;
-
-      channel = supabase
-        .channel(`mobile-pre-assessments-${currentUser.id}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'pre_assessments',
-            filter: `customer_id=eq.${currentUser.id}`,
-          },
-          () => fetchData(false)
-        )
-        .subscribe();
-    }
-
-    setupRealtime();
-
-    return () => {
-      if (channel) {
-        supabase.removeChannel(channel);
-      }
-    };
   }, [fetchData]);
 
   function onRefresh() {
@@ -282,6 +398,17 @@ export default function PreAssessmentScreen({ navigation }) {
       estimated_total: estimate.total,
       down_payment_required: estimate.downPayment,
       status: 'pending',
+      notes: [
+        `Concern Type: ${CONCERN_TYPES.find((item) => item.key === concernType)?.label || concernType}`,
+        `Urgency: ${URGENCY_LEVELS.find((item) => item.key === urgencyLevel)?.label || urgencyLevel}`,
+        preferredServicePrediction?.service?.name
+          ? `System Suggested Service: ${preferredServicePrediction.service.name}`
+          : 'System Suggested Service: No clear prediction',
+        preferredServicePrediction?.confidence
+          ? `Prediction Confidence: ${preferredServicePrediction.confidence}`
+          : null,
+        'Submitted as diagnostic pre-assessment only. Admin must review before conversion to booking.',
+      ].filter(Boolean).join('\n'),
     };
 
     const { data, error } = await supabase
@@ -307,42 +434,13 @@ export default function PreAssessmentScreen({ navigation }) {
       return;
     }
 
-    setAssessments((prev) => [data, ...prev]);
     setIssueDescription('');
     setSelectedService(null);
 
     Alert.alert(
       'Assessment Submitted',
-      'Your estimated cost was saved. You can now proceed to booking.',
-      [
-        {
-          text: 'Book Now',
-          onPress: () => {
-            navigation.navigate('Booking', {
-              preselectedService: data.services || selectedService,
-              preAssessmentId: data.id,
-              estimatedTotal: data.estimated_total,
-              downPayment: data.down_payment_required,
-            });
-          },
-        },
-        { text: 'OK' },
-      ]
+      'Your diagnostic estimate request was sent to the shop for review. It is not a booking yet. Please wait for admin approval or conversion.'
     );
-  }
-
-  function bookAssessment(assessment) {
-    if (!assessment?.services) {
-      Alert.alert('Service Missing', 'The selected service is no longer available.');
-      return;
-    }
-
-    navigation.navigate('Booking', {
-      preselectedService: assessment.services,
-      preAssessmentId: assessment.id,
-      estimatedTotal: assessment.estimated_total,
-      downPayment: assessment.down_payment_required,
-    });
   }
 
   if (loading) {
@@ -374,13 +472,84 @@ export default function PreAssessmentScreen({ navigation }) {
         <View style={{ flex: 1 }}>
           <Text style={s.heroTitle}>Pre-Assessment</Text>
           <Text style={s.heroText}>
-            Get an estimated service cost before booking your appointment.
+            Describe your motorcycle concern and MotoFix will suggest the preferred service before admin review.
           </Text>
         </View>
       </View>
 
+      <TouchableOpacity
+        style={s.historyButton}
+        onPress={() => navigation.navigate('MyPreAssessments')}
+        activeOpacity={0.85}
+      >
+        <View style={s.historyButtonIcon}>
+          <Ionicons name="documents" size={20} color={theme.primary} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={s.historyButtonTitle}>My Assessment Requests</Text>
+          <Text style={s.historyButtonText}>
+            View submitted requests, review status, and booking conversion updates.
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color={theme.textMuted} />
+      </TouchableOpacity>
+
       <View style={s.section}>
-        <Text style={s.sectionTitle}>1. Motorcycle Info</Text>
+        <Text style={s.sectionTitle}>1. Assessment Details</Text>
+        <Text style={s.fieldHint}>
+          Choose the type of concern so the shop can triage your request before creating a booking.
+        </Text>
+
+        <View style={s.chipGrid}>
+          {CONCERN_TYPES.map((item) => {
+            const active = concernType === item.key;
+
+            return (
+              <TouchableOpacity
+                key={item.key}
+                style={[s.choiceChip, active && s.choiceChipActive]}
+                onPress={() => setConcernType(item.key)}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name={item.icon}
+                  size={16}
+                  color={active ? '#fff' : theme.textSub}
+                />
+                <Text style={[s.choiceChipText, active && s.choiceChipTextActive]}>
+                  {item.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <Text style={[s.fieldHint, { marginTop: 12 }]}>Urgency level</Text>
+        <View style={s.urgencyGrid}>
+          {URGENCY_LEVELS.map((item) => {
+            const active = urgencyLevel === item.key;
+
+            return (
+              <TouchableOpacity
+                key={item.key}
+                style={[s.urgencyCard, active && s.urgencyCardActive]}
+                onPress={() => setUrgencyLevel(item.key)}
+                activeOpacity={0.8}
+              >
+                <Text style={[s.urgencyLabel, active && s.urgencyLabelActive]}>
+                  {item.label}
+                </Text>
+                <Text style={[s.urgencyHelper, active && s.urgencyHelperActive]}>
+                  {item.helper}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>2. Motorcycle Info</Text>
 
         <TextInput
           style={s.input}
@@ -410,13 +579,13 @@ export default function PreAssessmentScreen({ navigation }) {
       </View>
 
       <View style={s.section}>
-        <Text style={s.sectionTitle}>2. Issue / Concern</Text>
+        <Text style={s.sectionTitle}>3. Issue / Concern</Text>
 
         <TextInput
           style={[s.input, s.textArea]}
           value={issueDescription}
           onChangeText={setIssueDescription}
-          placeholder="Describe the issue, service need, or customization concern..."
+          placeholder="Describe symptoms, sounds, visible damage, or what you want the shop to inspect..."
           placeholderTextColor={theme.textMuted}
           multiline
           textAlignVertical="top"
@@ -424,7 +593,57 @@ export default function PreAssessmentScreen({ navigation }) {
       </View>
 
       <View style={s.section}>
-        <Text style={s.sectionTitle}>3. Select Service</Text>
+        <Text style={s.sectionTitle}>4. Preferred Service Category</Text>
+        <Text style={s.fieldHint}>
+          MotoFix will suggest a preferred service based on your concern type and issue description. You can still choose manually.
+        </Text>
+
+        {preferredServicePrediction && (
+          <View style={s.predictionCard}>
+            <View style={s.predictionHeader}>
+              <View style={s.predictionIcon}>
+                <Ionicons name="sparkles" size={18} color="#fff" />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text style={s.predictionTitle}>Suggested Preferred Service</Text>
+                <Text style={s.predictionName}>
+                  {preferredServicePrediction.service.name}
+                </Text>
+                <Text style={s.predictionMeta}>
+                  {preferredServicePrediction.reason} · {preferredServicePrediction.confidence} confidence
+                </Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={[
+                s.predictionButton,
+                predictionIsSelected && s.predictionButtonSelected,
+              ]}
+              onPress={() => setSelectedService(preferredServicePrediction.service)}
+              activeOpacity={0.85}
+            >
+              <Text
+                style={[
+                  s.predictionButtonText,
+                  predictionIsSelected && s.predictionButtonTextSelected,
+                ]}
+              >
+                {predictionIsSelected ? 'Suggestion Applied ✓' : 'Use Suggested Service'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {!preferredServicePrediction && issueDescription.trim().length > 0 && (
+          <View style={s.predictionEmptyCard}>
+            <Ionicons name="help-circle" size={18} color={theme.textMuted} />
+            <Text style={s.predictionEmptyText}>
+              No clear suggested service yet. Add more symptoms or choose a service manually.
+            </Text>
+          </View>
+        )}
 
         {services.length === 0 ? (
           <View style={s.emptyCard}>
@@ -452,6 +671,13 @@ export default function PreAssessmentScreen({ navigation }) {
                   <Text style={s.serviceMeta}>
                     {service.estimated_duration_minutes || 0} mins
                   </Text>
+
+                  {preferredServicePrediction?.service?.id === service.id && (
+                    <View style={s.recommendedPill}>
+                      <Ionicons name="sparkles" size={11} color={theme.primary} />
+                      <Text style={s.recommendedPillText}>Recommended</Text>
+                    </View>
+                  )}
                 </View>
 
                 <View style={s.serviceRight}>
@@ -513,82 +739,11 @@ export default function PreAssessmentScreen({ navigation }) {
         ) : (
           <>
             <Ionicons name="send" size={18} color="#fff" />
-            <Text style={s.submitText}>Submit Pre-Assessment</Text>
+            <Text style={s.submitText}>Submit Diagnostic Request</Text>
           </>
         )}
       </TouchableOpacity>
 
-      <View style={s.historyHeader}>
-        <Text style={s.historyTitle}>My Assessments</Text>
-        <Text style={s.historyCount}>{assessments.length}</Text>
-      </View>
-
-      {assessments.length === 0 ? (
-        <View style={s.emptyCard}>
-          <Ionicons name="document-text-outline" size={28} color={theme.textMuted} />
-          <Text style={s.emptyText}>No pre-assessments yet.</Text>
-        </View>
-      ) : (
-        assessments.map((assessment) => {
-          const config = getStatusConfig(theme, assessment.status);
-
-          return (
-            <View key={assessment.id} style={s.assessmentCard}>
-              <View style={s.assessmentTop}>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.assessmentService}>
-                    {assessment.services?.name || 'Service'}
-                  </Text>
-                  <Text style={s.assessmentMotor}>
-                    {assessment.motorcycle_make} {assessment.motorcycle_model}
-                    {assessment.motorcycle_year ? ` (${assessment.motorcycle_year})` : ''}
-                  </Text>
-                </View>
-
-                <View style={[s.statusBadge, { backgroundColor: config.bg }]}>
-                  <Ionicons name={config.icon} size={13} color={config.color} />
-                  <Text style={[s.statusText, { color: config.color }]}>
-                    {config.label}
-                  </Text>
-                </View>
-              </View>
-
-              {!!assessment.issue_description && (
-                <Text style={s.assessmentIssue} numberOfLines={2}>
-                  “{assessment.issue_description}”
-                </Text>
-              )}
-
-              <View style={s.assessmentPrices}>
-                <View>
-                  <Text style={s.miniLabel}>Estimated Total</Text>
-                  <Text style={s.miniValue}>{peso(assessment.estimated_total)}</Text>
-                </View>
-
-                <View>
-                  <Text style={s.miniLabel}>Down Payment</Text>
-                  <Text style={s.miniValue}>{peso(assessment.down_payment_required)}</Text>
-                </View>
-              </View>
-
-              <View style={s.assessmentFooter}>
-                <Text style={s.dateText}>{getDateLabel(assessment.created_at)}</Text>
-
-                {assessment.status !== 'converted' && (
-                  <TouchableOpacity
-                    style={s.bookButton}
-                    onPress={() => bookAssessment(assessment)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={s.bookButtonText}>Book</Text>
-                    <Ionicons name="arrow-forward" size={14} color="#fff" />
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-          );
-        })
-      )}
     </ScrollView>
   );
 }
@@ -643,6 +798,103 @@ const styles = (theme) =>
       lineHeight: 19,
       marginTop: 4,
     },
+    fieldHint: {
+      color: theme.textSub,
+      fontSize: 12,
+      lineHeight: 18,
+      marginBottom: 10,
+    },
+    chipGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    choiceChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: theme.bg2,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+    },
+    choiceChipActive: {
+      backgroundColor: theme.primary,
+      borderColor: theme.primary,
+    },
+    choiceChipText: {
+      color: theme.textSub,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    choiceChipTextActive: {
+      color: '#fff',
+    },
+    urgencyGrid: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    urgencyCard: {
+      flex: 1,
+      backgroundColor: theme.bg2,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 14,
+      padding: 12,
+    },
+    urgencyCardActive: {
+      borderColor: theme.primary,
+      backgroundColor: theme.bg3,
+    },
+    urgencyLabel: {
+      color: theme.text,
+      fontSize: 13,
+      fontWeight: '900',
+    },
+    urgencyLabelActive: {
+      color: theme.primaryLight,
+    },
+    urgencyHelper: {
+      color: theme.textMuted,
+      fontSize: 11,
+      marginTop: 3,
+      lineHeight: 15,
+    },
+    urgencyHelperActive: {
+      color: theme.textSub,
+    },
+    historyButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      backgroundColor: theme.card,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 16,
+      padding: 14,
+      marginBottom: 14,
+    },
+    historyButtonIcon: {
+      width: 42,
+      height: 42,
+      borderRadius: 14,
+      backgroundColor: theme.bg2,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    historyButtonTitle: {
+      color: theme.text,
+      fontSize: 14,
+      fontWeight: '900',
+    },
+    historyButtonText: {
+      color: theme.textSub,
+      fontSize: 12,
+      lineHeight: 17,
+      marginTop: 3,
+    },
     section: {
       backgroundColor: theme.card,
       borderWidth: 1,
@@ -671,6 +923,102 @@ const styles = (theme) =>
     textArea: {
       minHeight: 110,
       lineHeight: 20,
+    },
+    predictionCard: {
+      backgroundColor: theme.bg2,
+      borderWidth: 1,
+      borderColor: theme.primary,
+      borderRadius: 16,
+      padding: 14,
+      marginBottom: 12,
+    },
+    predictionHeader: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+    },
+    predictionIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 13,
+      backgroundColor: theme.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    predictionTitle: {
+      color: theme.textSub,
+      fontSize: 11,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    predictionName: {
+      color: theme.text,
+      fontSize: 15,
+      fontWeight: '900',
+      marginTop: 2,
+    },
+    predictionMeta: {
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
+      marginTop: 3,
+    },
+    predictionButton: {
+      marginTop: 12,
+      height: 42,
+      borderRadius: 12,
+      backgroundColor: theme.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    predictionButtonSelected: {
+      backgroundColor: theme.bg3,
+      borderWidth: 1,
+      borderColor: theme.primary,
+    },
+    predictionButtonText: {
+      color: '#fff',
+      fontSize: 13,
+      fontWeight: '900',
+    },
+    predictionButtonTextSelected: {
+      color: theme.primaryLight,
+    },
+    predictionEmptyCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: theme.bg2,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: 14,
+      padding: 12,
+      marginBottom: 12,
+    },
+    predictionEmptyText: {
+      color: theme.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+      flex: 1,
+    },
+    recommendedPill: {
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      backgroundColor: theme.primary + '14',
+      borderWidth: 1,
+      borderColor: theme.primary,
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      marginTop: 7,
+    },
+    recommendedPillText: {
+      color: theme.primaryLight,
+      fontSize: 10,
+      fontWeight: '900',
     },
     serviceCard: {
       flexDirection: 'row',
@@ -790,111 +1138,6 @@ const styles = (theme) =>
       color: '#fff',
       fontSize: 15,
       fontWeight: '900',
-    },
-    historyHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 12,
-    },
-    historyTitle: {
-      color: theme.text,
-      fontSize: 18,
-      fontWeight: '900',
-    },
-    historyCount: {
-      color: '#fff',
-      backgroundColor: theme.primary,
-      overflow: 'hidden',
-      borderRadius: 10,
-      paddingHorizontal: 10,
-      paddingVertical: 4,
-      fontWeight: '900',
-    },
-    assessmentCard: {
-      backgroundColor: theme.card,
-      borderWidth: 1,
-      borderColor: theme.border,
-      borderRadius: 16,
-      padding: 16,
-      marginBottom: 12,
-    },
-    assessmentTop: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      justifyContent: 'space-between',
-      gap: 10,
-    },
-    assessmentService: {
-      color: theme.text,
-      fontSize: 15,
-      fontWeight: '900',
-    },
-    assessmentMotor: {
-      color: theme.textSub,
-      fontSize: 12,
-      marginTop: 3,
-    },
-    statusBadge: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      borderRadius: 999,
-      paddingHorizontal: 8,
-      paddingVertical: 5,
-    },
-    statusText: {
-      fontSize: 11,
-      fontWeight: '900',
-    },
-    assessmentIssue: {
-      color: theme.textSub,
-      backgroundColor: theme.bg2,
-      borderRadius: 12,
-      padding: 10,
-      marginTop: 12,
-      fontSize: 12,
-      lineHeight: 18,
-    },
-    assessmentPrices: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      gap: 12,
-      marginTop: 14,
-    },
-    miniLabel: {
-      color: theme.textMuted,
-      fontSize: 11,
-      marginBottom: 3,
-    },
-    miniValue: {
-      color: theme.text,
-      fontSize: 14,
-      fontWeight: '900',
-    },
-    assessmentFooter: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginTop: 14,
-    },
-    dateText: {
-      color: theme.textMuted,
-      fontSize: 11,
-    },
-    bookButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 5,
-      backgroundColor: theme.primary,
-      paddingHorizontal: 14,
-      paddingVertical: 8,
-      borderRadius: 10,
-    },
-    bookButtonText: {
-      color: '#fff',
-      fontWeight: '900',
-      fontSize: 12,
     },
     emptyCard: {
       backgroundColor: theme.bg2,

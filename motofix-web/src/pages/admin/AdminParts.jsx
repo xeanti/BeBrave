@@ -17,7 +17,7 @@ const EMPTY_FORM = {
   color: '',
   finish: '',
   material: '',
-  is_previewable: true,
+  is_previewable: false,
 };
 
 const PRODUCT_IMAGE_BUCKET = 'product-images';
@@ -56,6 +56,57 @@ const INSTALL_AREA_OPTIONS = [
   'License plate holder/rear fender area',
   'Top box/rear carrier mounting area',
 ];
+
+function getCategoryRecord(category, categoryRecords = []) {
+  const cleanCategory = sanitizeCategory(category).toLowerCase().trim();
+
+  if (!cleanCategory) return null;
+
+  return (
+    categoryRecords.find(
+      (item) => sanitizeCategory(item?.name).toLowerCase().trim() === cleanCategory
+    ) || null
+  );
+}
+
+function getCategoryPreviewInfo(category, categoryRecords = []) {
+  const cleanCategory = sanitizeCategory(category).trim();
+
+  if (!cleanCategory) {
+    return {
+      isPreviewable: false,
+      label: 'Select category first',
+      helper: 'Choose a category before uploading photos.',
+    };
+  }
+
+  const categoryRecord = getCategoryRecord(cleanCategory, categoryRecords);
+
+  if (!categoryRecord) {
+    return {
+      isPreviewable: false,
+      label: 'Shop Only',
+      helper:
+        'This category is not saved in Manage Categories yet. Add it there and enable AI Preview if it should be previewable.',
+    };
+  }
+
+  if (categoryRecord.is_previewable === true) {
+    return {
+      isPreviewable: true,
+      label: 'Previewable',
+      helper:
+        'This category is marked as AI-previewable in Manage Categories, so AI Preview fields are enabled.',
+    };
+  }
+
+  return {
+    isPreviewable: false,
+    label: 'Shop Only',
+    helper:
+      'This category is marked as Shop Only in Manage Categories, so it will not appear in AI Preview.',
+  };
+}
 
 function formatPeso(value, decimals = 2) {
   const amount = Number(value) || 0;
@@ -269,8 +320,9 @@ export default function AdminParts() {
   const [updatingStockId, setUpdatingStockId] = useState(null);
 
   const [catPanelOpen, setCatPanelOpen] = useState(false);
-  const [customCategories, setCustomCategories] = useState([]);
+  const [categoryRecords, setCategoryRecords] = useState([]);
   const [newCatName, setNewCatName] = useState('');
+  const [newCatPreviewable, setNewCatPreviewable] = useState(false);
   const [renamingCat, setRenamingCat] = useState(null);
   const [catSaving, setCatSaving] = useState(false);
   const [showCategoryInput, setShowCategoryInput] = useState(false);
@@ -280,9 +332,17 @@ export default function AdminParts() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(9);
 
+  const categoryPreviewInfo = useMemo(
+    () => getCategoryPreviewInfo(form.category, categoryRecords),
+    [form.category, categoryRecords]
+  );
+
+  const hasSelectedCategory = Boolean(sanitizeCategory(form.category).trim());
+
   useEffect(() => {
     fetchParts();
     fetchMotorcycleModels();
+    fetchPartCategories();
 
     /*
       Realtime refresh for inventory management.
@@ -314,15 +374,30 @@ export default function AdminParts() {
       )
       .subscribe();
 
+    const partCategoriesChannel = supabase
+      .channel('admin-parts-categories')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'part_categories',
+        },
+        () => fetchPartCategories(false)
+      )
+      .subscribe();
+
     const handleFocus = () => {
       fetchParts(false);
       fetchMotorcycleModels();
+      fetchPartCategories(false);
     };
 
     const handleVisibilityChange = () => {
       if (!document.hidden) {
         fetchParts(false);
         fetchMotorcycleModels();
+        fetchPartCategories(false);
       }
     };
 
@@ -332,6 +407,7 @@ export default function AdminParts() {
     return () => {
       supabase.removeChannel(partsChannel);
       supabase.removeChannel(motorcycleModelsChannel);
+      supabase.removeChannel(partCategoriesChannel);
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
@@ -428,6 +504,28 @@ export default function AdminParts() {
     setMotorcycleModels(uniqueModels);
   }
 
+  async function fetchPartCategories(showPopup = false) {
+    const { data, error } = await supabase
+      .from('part_categories')
+      .select('id, name, is_previewable, is_active, created_at, updated_at')
+      .order('name', { ascending: true });
+
+    if (error) {
+      console.log('Fetch product categories error:', error.message);
+      setCategoryRecords([]);
+
+      if (showPopup) {
+        showErrorPopup(
+          'Failed to load product categories. Please run the part_categories SQL setup first.'
+        );
+      }
+
+      return;
+    }
+
+    setCategoryRecords(data || []);
+  }
+
   async function insertAuditLog(action, entityId, details = {}) {
     if (!user?.id) return;
 
@@ -493,6 +591,12 @@ export default function AdminParts() {
 
     if (!file) return;
 
+    if (!hasSelectedCategory) {
+      event.target.value = '';
+      showFormError('Please select the product category first before uploading a photo.');
+      return;
+    }
+
     setUploadingImage(true);
     setFormError('');
 
@@ -521,6 +625,14 @@ export default function AdminParts() {
     const file = event.target.files?.[0];
 
     if (!file) return;
+
+    const previewInfo = getCategoryPreviewInfo(form.category, categoryRecords);
+
+    if (!previewInfo.isPreviewable) {
+      event.target.value = '';
+      showFormError('This category is Shop Only and cannot use AI Preview.');
+      return;
+    }
 
     setUploadingAiReference(true);
     setFormError('');
@@ -569,6 +681,46 @@ export default function AdminParts() {
     }));
   }
 
+  function applyCategoryToForm(value) {
+    const cleanCategory = sanitizeCategory(value);
+    const previewInfo = getCategoryPreviewInfo(cleanCategory, categoryRecords);
+
+    setForm((current) => {
+      const next = {
+        ...current,
+        category: cleanCategory,
+        is_previewable: previewInfo.isPreviewable,
+      };
+
+      if (!previewInfo.isPreviewable) {
+        next.ai_reference_url = '';
+        next.prompt_description = '';
+        next.install_area = '';
+        next.color = '';
+        next.finish = '';
+        next.material = '';
+      }
+
+      return next;
+    });
+  }
+
+  function handleCategorySelect(event) {
+    const value = event.target.value;
+
+    if (value === '__other__') {
+      setShowCategoryInput(true);
+      applyCategoryToForm('');
+      return;
+    }
+
+    applyCategoryToForm(value);
+  }
+
+  function handleCategoryInputChange(event) {
+    applyCategoryToForm(event.target.value);
+  }
+
   function openAddPanel() {
     setEditingId(null);
     setForm(EMPTY_FORM);
@@ -578,6 +730,8 @@ export default function AdminParts() {
   }
 
   function openEditPanel(part) {
+    const previewInfo = getCategoryPreviewInfo(part.category || '', categoryRecords);
+
     setEditingId(part.id);
     setForm({
       name: part.name || '',
@@ -587,13 +741,13 @@ export default function AdminParts() {
       reorder_threshold: String(part.reorder_threshold ?? '5'),
       compatible_models: (part.compatible_models || []).join(', '),
       image_url: part.image_url || '',
-      ai_reference_url: part.ai_reference_url || '',
-      prompt_description: part.prompt_description || '',
-      install_area: part.install_area || '',
-      color: part.color || '',
-      finish: part.finish || '',
-      material: part.material || '',
-      is_previewable: part.is_previewable !== false,
+      ai_reference_url: previewInfo.isPreviewable ? part.ai_reference_url || '' : '',
+      prompt_description: previewInfo.isPreviewable ? part.prompt_description || '' : '',
+      install_area: previewInfo.isPreviewable ? part.install_area || '' : '',
+      color: previewInfo.isPreviewable ? part.color || '' : '',
+      finish: previewInfo.isPreviewable ? part.finish || '' : '',
+      material: previewInfo.isPreviewable ? part.material || '' : '',
+      is_previewable: previewInfo.isPreviewable,
     });
     setFormError('');
     setShowCategoryInput(false);
@@ -614,13 +768,13 @@ export default function AdminParts() {
     const price = parseFloat(form.price);
     const stock = parseInt(form.stock_quantity, 10);
     const threshold = parseInt(form.reorder_threshold || '5', 10);
+    const previewInfo = getCategoryPreviewInfo(category, categoryRecords);
+
+    if (!category) return 'Category is required before saving the product.';
+    if (category.length < 2) return 'Category must be at least 2 characters.';
 
     if (!name) return 'Product name is required.';
     if (name.length < 2) return 'Product name must be at least 2 characters.';
-
-    if (category && category.length < 2) {
-      return 'Category must be at least 2 characters or left blank.';
-    }
 
     if (Number.isNaN(price) || price < 0) return 'Please enter a valid price.';
     if (price > 99999999) return 'Price is too high. Please check the amount.';
@@ -634,7 +788,7 @@ export default function AdminParts() {
 
     if (threshold > 9999) return 'Reorder threshold is too high.';
 
-    if (form.is_previewable !== false && !INSTALL_AREA_OPTIONS.includes(form.install_area)) {
+    if (previewInfo.isPreviewable && !INSTALL_AREA_OPTIONS.includes(form.install_area)) {
       return 'Please select a predefined install area for AI Preview.';
     }
 
@@ -666,20 +820,33 @@ export default function AdminParts() {
 
     setSaving(true);
 
+    const previewInfo = getCategoryPreviewInfo(form.category, categoryRecords);
+
     const payload = {
       name: cleanProductName,
-      category: sanitizeCategory(form.category).trim() || null,
+      category: sanitizeCategory(form.category).trim(),
       price: parseFloat(sanitizeMoneyInput(form.price)),
       reorder_threshold: parseInt(sanitizeIntegerInput(form.reorder_threshold || '5', 4), 10),
       compatible_models: parseCompatibleModels(form.compatible_models),
       image_url: form.image_url || null,
-      ai_reference_url: form.ai_reference_url || null,
-      prompt_description: sanitizeAiText(form.prompt_description, 240).trim() || null,
-      install_area: INSTALL_AREA_OPTIONS.includes(form.install_area) ? form.install_area : null,
-      color: sanitizeBasicText(form.color, 40).trim() || null,
-      finish: sanitizeBasicText(form.finish, 50).trim() || null,
-      material: sanitizeBasicText(form.material, 50).trim() || null,
-      is_previewable: form.is_previewable !== false,
+      ai_reference_url: previewInfo.isPreviewable ? form.ai_reference_url || null : null,
+      prompt_description: previewInfo.isPreviewable
+        ? sanitizeAiText(form.prompt_description, 240).trim() || null
+        : null,
+      install_area:
+        previewInfo.isPreviewable && INSTALL_AREA_OPTIONS.includes(form.install_area)
+          ? form.install_area
+          : null,
+      color: previewInfo.isPreviewable
+        ? sanitizeBasicText(form.color, 40).trim() || null
+        : null,
+      finish: previewInfo.isPreviewable
+        ? sanitizeBasicText(form.finish, 50).trim() || null
+        : null,
+      material: previewInfo.isPreviewable
+        ? sanitizeBasicText(form.material, 50).trim() || null
+        : null,
+      is_previewable: previewInfo.isPreviewable,
     };
 
     try {
@@ -870,13 +1037,24 @@ export default function AdminParts() {
   }
 
   const derivedCategories = useMemo(
-    () => [...new Set(parts.map((part) => part.category).filter(Boolean))].sort(),
+    () => [...new Set(parts.map((part) => sanitizeCategory(part.category).trim()).filter(Boolean))].sort(),
     [parts]
   );
 
+  const activeCategoryRecords = useMemo(
+    () => categoryRecords.filter((category) => category.is_active !== false),
+    [categoryRecords]
+  );
+
   const allCategories = useMemo(
-    () => [...new Set([...derivedCategories, ...customCategories])].sort(),
-    [derivedCategories, customCategories]
+    () =>
+      [
+        ...new Set([
+          ...activeCategoryRecords.map((category) => sanitizeCategory(category.name).trim()).filter(Boolean),
+          ...derivedCategories,
+        ]),
+      ].sort(),
+    [activeCategoryRecords, derivedCategories]
   );
 
   const categories = useMemo(() => ['all', ...allCategories], [allCategories]);
@@ -915,7 +1093,7 @@ export default function AdminParts() {
     }));
   }
 
-  function addCustomCategory() {
+  async function addCustomCategory() {
     const name = sanitizeCategory(newCatName).trim();
 
     if (!name) return;
@@ -927,13 +1105,40 @@ export default function AdminParts() {
       return;
     }
 
-    setCustomCategories((previous) => [...previous, name]);
-    setNewCatName('');
-    setToast(`✓ Category "${name}" added`);
+    setCatSaving(true);
+
+    try {
+      const { error } = await supabase.from('part_categories').insert({
+        name,
+        is_previewable: newCatPreviewable,
+        is_active: true,
+      });
+
+      if (error) throw error;
+
+      await insertAuditLog('CREATE_CATEGORY', null, {
+        category: name,
+        is_previewable: newCatPreviewable,
+      });
+
+      setNewCatName('');
+      setNewCatPreviewable(false);
+      setToast(
+        `✓ Category "${name}" added as ${newCatPreviewable ? 'Previewable' : 'Shop Only'}`
+      );
+      await fetchPartCategories(false);
+    } catch (err) {
+      const message = err.message || 'Failed to add category.';
+      setToast(`❌ ${message}`);
+      showErrorPopup(message);
+    } finally {
+      setCatSaving(false);
+    }
   }
 
   async function renameCategory(oldName, newName) {
     const trimmed = sanitizeCategory(newName).trim();
+    const categoryRecord = getCategoryRecord(oldName, categoryRecords);
 
     if (!trimmed || trimmed === oldName) {
       setRenamingCat(null);
@@ -943,25 +1148,32 @@ export default function AdminParts() {
     setCatSaving(true);
 
     try {
-      const { error } = await supabase
-        .from('parts')
-        .update({ category: trimmed })
-        .eq('category', oldName);
+      if (categoryRecord?.id) {
+        const { error } = await supabase
+          .from('part_categories')
+          .update({ name: trimmed })
+          .eq('id', categoryRecord.id);
 
-      if (error) throw error;
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('parts')
+          .update({ category: trimmed })
+          .eq('category', oldName);
+
+        if (error) throw error;
+      }
 
       await insertAuditLog('RENAME_CATEGORY', null, {
         old_category: oldName,
         new_category: trimmed,
       });
 
-      setCustomCategories((previous) =>
-        previous.map((category) => (category === oldName ? trimmed : category))
-      );
-
       if (categoryFilter === oldName) setCategoryFilter(trimmed);
+      if (form.category === oldName) applyCategoryToForm(trimmed);
 
       setToast(`✓ Renamed "${oldName}" → "${trimmed}"`);
+      await fetchPartCategories(false);
       await fetchParts(false);
     } catch (err) {
       const message = err.message || 'Failed to rename category.';
@@ -973,28 +1185,86 @@ export default function AdminParts() {
     }
   }
 
-  async function deleteCategory(name) {
-    if (!window.confirm(`Remove category "${name}" from all products?`)) return;
+  async function toggleCategoryPreviewable(categoryName, nextValue) {
+    const categoryRecord = getCategoryRecord(categoryName, categoryRecords);
+
+    if (!categoryRecord?.id) {
+      showErrorPopup('Category record not found. Please refresh and try again.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      nextValue
+        ? `Enable AI Preview for "${categoryName}"? Products in this category can use AI preview fields.`
+        : `Disable AI Preview for "${categoryName}"? AI reference and preview fields will be cleared for products in this category.`
+    );
+
+    if (!confirmed) return;
 
     setCatSaving(true);
 
     try {
       const { error } = await supabase
+        .from('part_categories')
+        .update({ is_previewable: nextValue })
+        .eq('id', categoryRecord.id);
+
+      if (error) throw error;
+
+      await insertAuditLog('UPDATE_CATEGORY_PREVIEW_SETTING', null, {
+        category: categoryName,
+        is_previewable: nextValue,
+      });
+
+      if (form.category === categoryName && !nextValue) {
+        applyCategoryToForm(categoryName);
+      }
+
+      setToast(`✓ ${categoryName} set to ${nextValue ? 'Previewable' : 'Shop Only'}`);
+      await fetchPartCategories(false);
+      await fetchParts(false);
+    } catch (err) {
+      const message = err.message || 'Failed to update category preview setting.';
+      setToast(`❌ ${message}`);
+      showErrorPopup(message);
+    } finally {
+      setCatSaving(false);
+    }
+  }
+
+  async function deleteCategory(name) {
+    if (!window.confirm(`Remove category "${name}" from all products?`)) return;
+
+    const categoryRecord = getCategoryRecord(name, categoryRecords);
+
+    setCatSaving(true);
+
+    try {
+      const { error: clearError } = await supabase
         .from('parts')
         .update({ category: null })
         .eq('category', name);
 
-      if (error) throw error;
+      if (clearError) throw clearError;
+
+      if (categoryRecord?.id) {
+        const { error: deleteError } = await supabase
+          .from('part_categories')
+          .delete()
+          .eq('id', categoryRecord.id);
+
+        if (deleteError) throw deleteError;
+      }
 
       await insertAuditLog('DELETE_CATEGORY', null, {
         category: name,
       });
 
-      setCustomCategories((previous) => previous.filter((category) => category !== name));
-
       if (categoryFilter === name) setCategoryFilter('all');
+      if (form.category === name) applyCategoryToForm('');
 
       setToast(`Removed category "${name}"`);
+      await fetchPartCategories(false);
       await fetchParts(false);
     } catch (err) {
       const message = err.message || 'Failed to remove category.';
@@ -1666,7 +1936,7 @@ export default function AdminParts() {
                   Manage Categories
                 </h2>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  Rename, remove, or add product categories.
+                  Set which categories are Previewable or Shop Only.
                 </p>
               </div>
 
@@ -1684,7 +1954,8 @@ export default function AdminParts() {
                 <p className="mb-2 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
                   Add Category
                 </p>
-                <div className="flex gap-2">
+
+                <div className="space-y-3 rounded-3xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/70">
                   <input
                     type="text"
                     value={newCatName}
@@ -1692,16 +1963,34 @@ export default function AdminParts() {
                     onKeyDown={(event) => {
                       if (event.key === 'Enter') addCustomCategory();
                     }}
-                    placeholder="e.g. brakes, electrical"
-                    className="flex-1 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                    placeholder="e.g. Exhaust, Oil, Mags, Seat"
+                    className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-800 dark:text-white"
                   />
+
+                  <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-gray-200 bg-white p-3 dark:border-dark-700 dark:bg-dark-800">
+                    <input
+                      type="checkbox"
+                      checked={newCatPreviewable}
+                      onChange={(event) => setNewCatPreviewable(event.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <span>
+                      <span className="block text-sm font-black text-gray-900 dark:text-white">
+                        Available for AI Preview
+                      </span>
+                      <span className="mt-1 block text-xs font-semibold leading-5 text-gray-500 dark:text-gray-400">
+                        Enable this only for visible motorcycle parts like mags, exhaust, seat, lights, or body panels.
+                      </span>
+                    </span>
+                  </label>
+
                   <button
                     type="button"
                     onClick={addCustomCategory}
-                    disabled={!newCatName.trim()}
-                    className="rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!newCatName.trim() || catSaving}
+                    className="w-full rounded-2xl bg-primary-600 px-5 py-3 text-sm font-black text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Add
+                    {catSaving ? 'Saving...' : 'Add Category'}
                   </button>
                 </div>
               </div>
@@ -1722,6 +2011,8 @@ export default function AdminParts() {
                     {allCategories.map((category) => {
                       const partCount = parts.filter((part) => part.category === category).length;
                       const isRenaming = renamingCat?.old === category;
+                      const categoryRecord = getCategoryRecord(category, categoryRecords);
+                      const isPreviewable = categoryRecord?.is_previewable === true;
 
                       return (
                         <li
@@ -1765,24 +2056,51 @@ export default function AdminParts() {
                               </button>
                             </div>
                           ) : (
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-black capitalize text-gray-950 dark:text-white">
-                                  {category}
-                                </p>
-                                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                  {partCount} {partCount === 1 ? 'product' : 'products'}
-                                </p>
+                            <div className="space-y-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-black capitalize text-gray-950 dark:text-white">
+                                    {category}
+                                  </p>
+                                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                    {partCount} {partCount === 1 ? 'product' : 'products'} · {isPreviewable ? 'Previewable' : 'Shop Only'}
+                                  </p>
+                                </div>
+
+                                <span
+                                  className={`rounded-full px-3 py-1 text-xs font-black ring-1 ${
+                                    isPreviewable
+                                      ? 'bg-primary-50 text-primary-700 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25'
+                                      : 'bg-gray-100 text-gray-500 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25'
+                                  }`}
+                                >
+                                  {isPreviewable ? 'Previewable' : 'Shop Only'}
+                                </span>
                               </div>
 
-                              <div className="flex flex-shrink-0 gap-1">
+                              <label className="flex cursor-pointer items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 dark:bg-dark-800">
+                                <span className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                                  AI Preview
+                                </span>
+                                <input
+                                  type="checkbox"
+                                  checked={isPreviewable}
+                                  onChange={(event) =>
+                                    toggleCategoryPreviewable(category, event.target.checked)
+                                  }
+                                  disabled={catSaving || !categoryRecord?.id}
+                                  className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:opacity-40"
+                                />
+                              </label>
+
+                              <div className="flex gap-1">
                                 <button
                                   type="button"
                                   onClick={() => setRenamingCat({ old: category, value: category })}
                                   className="rounded-xl bg-primary-50 px-3 py-2 text-xs font-black text-primary-700 transition hover:bg-primary-100 dark:bg-primary-500/10 dark:text-primary-400 dark:hover:bg-primary-500/20"
                                   title="Rename"
                                 >
-                                  ✎
+                                  ✎ Rename
                                 </button>
 
                                 <button
@@ -1792,7 +2110,7 @@ export default function AdminParts() {
                                   className="rounded-xl bg-red-50 px-3 py-2 text-xs font-black text-red-700 transition hover:bg-red-100 disabled:opacity-50 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/20"
                                   title="Delete"
                                 >
-                                  🗑
+                                  🗑 Remove
                                 </button>
                               </div>
                             </div>
@@ -1837,6 +2155,59 @@ export default function AdminParts() {
 
               <div>
                 <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                  Category First *
+                </label>
+
+                {allCategories.length > 0 && !showCategoryInput ? (
+                  <select
+                    name="category"
+                    value={allCategories.includes(form.category) ? form.category : ''}
+                    onChange={handleCategorySelect}
+                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                  >
+                    <option value="">— Select a category first —</option>
+                    {allCategories.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                    <option value="__other__">Other (type new)…</option>
+                  </select>
+                ) : (
+                  <div className="flex gap-2">
+                    <input
+                      name="category"
+                      value={form.category}
+                      onChange={handleCategoryInputChange}
+                      placeholder="e.g. Exhaust, Mags, Seat, Oil"
+                      autoFocus={showCategoryInput}
+                      className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                    />
+
+                    {allCategories.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowCategoryInput(false)}
+                        className="rounded-2xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300"
+                      >
+                        List
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900">
+                  <p className="text-sm font-black text-gray-900 dark:text-white">
+                    AI Preview Status: {categoryPreviewInfo.label}
+                  </p>
+                  <p className="mt-1 text-xs font-semibold leading-5 text-gray-500 dark:text-gray-400">
+                    {categoryPreviewInfo.helper}
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
                   Product Image
                 </label>
 
@@ -1859,142 +2230,120 @@ export default function AdminParts() {
                   </div>
 
                   <div className="min-w-0 flex-1">
-                    <label className="mb-2 inline-flex cursor-pointer items-center justify-center rounded-2xl bg-primary-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700">
-                      {uploadingImage ? 'Uploading...' : 'Upload Product Image'}
+                    <label
+                      className={`mb-2 inline-flex items-center justify-center rounded-2xl px-4 py-3 text-sm font-black text-white shadow-lg transition ${
+                        hasSelectedCategory
+                          ? 'cursor-pointer bg-primary-600 shadow-primary-600/20 hover:bg-primary-700'
+                          : 'cursor-not-allowed bg-gray-400 shadow-none'
+                      }`}
+                    >
+                      {!hasSelectedCategory
+                        ? 'Select Category First'
+                        : uploadingImage
+                        ? 'Uploading...'
+                        : 'Upload Product Image'}
                       <input
                         type="file"
                         accept="image/*"
                         onChange={handleProductImageUpload}
-                        disabled={uploadingImage || saving}
+                        disabled={!hasSelectedCategory || uploadingImage || saving}
                         className="hidden"
                       />
                     </label>
                     <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                      Uploads directly to Supabase Storage bucket: <span className="font-black">{PRODUCT_IMAGE_BUCKET}</span>.
+                      Select the category first so the system can decide if this product is Previewable or Shop Only.
                     </p>
                   </div>
                 </div>
               </div>
 
-              <label
-                className={`flex cursor-pointer gap-4 rounded-3xl border p-4 transition ${
-                  form.is_previewable !== false
-                    ? 'border-primary-200 bg-primary-50 text-primary-800 dark:border-primary-500/25 dark:bg-primary-500/10 dark:text-primary-300'
-                    : 'border-gray-200 bg-gray-50 text-gray-700 dark:border-dark-700 dark:bg-dark-900/70 dark:text-gray-300'
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={form.is_previewable !== false}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      is_previewable: event.target.checked,
-                    }))
-                  }
-                  className="mt-1 h-4 w-4 accent-primary-600"
-                />
-
-                <span>
-                  <span className="block text-sm font-black">
-                    Available for AI Preview
-                  </span>
-                  <span className="mt-1 block text-xs leading-5 opacity-80">
-                    Turn this off for oils, brake fluids, coolant, grease,
-                    cleaners, and other consumables that cannot be shown
-                    visually. Shop-only items will still appear in inventory and
-                    shop, but not in AI Preview.
-                  </span>
-                </span>
-              </label>
-
-              {form.is_previewable !== false && (
+              {categoryPreviewInfo.isPreviewable && (
                 <>
                   <div>
                     <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
                       AI Reference Image
                     </label>
 
-                <div className="flex items-center gap-3">
-                  <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
-                    {form.ai_reference_url ? (
-                      <img
-                        src={form.ai_reference_url}
-                        alt=""
-                        className="h-full w-full object-cover"
-                        onError={(event) => {
-                          event.currentTarget.style.display = 'none';
-                        }}
-                      />
-                    ) : (
-                      <div className="grid h-full w-full place-items-center text-xs font-black text-gray-400">
-                        AI Ref
+                    <div className="flex items-center gap-3">
+                      <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
+                        {form.ai_reference_url ? (
+                          <img
+                            src={form.ai_reference_url}
+                            alt=""
+                            className="h-full w-full object-cover"
+                            onError={(event) => {
+                              event.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <div className="grid h-full w-full place-items-center text-xs font-black text-gray-400">
+                            AI Ref
+                          </div>
+                        )}
                       </div>
-                    )}
+
+                      <div className="min-w-0 flex-1">
+                        <label className="mb-2 inline-flex cursor-pointer items-center justify-center rounded-2xl bg-accent-500 px-4 py-3 text-sm font-black text-white shadow-lg shadow-accent-500/20 transition hover:bg-accent-600">
+                          {uploadingAiReference ? 'Uploading...' : 'Upload AI Reference'}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleAiReferenceUpload}
+                            disabled={uploadingAiReference || saving}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                      Upload one clean cropped photo of the exact product only.
+                    </p>
                   </div>
 
-                  <div className="min-w-0 flex-1">
-                    <label className="mb-2 inline-flex cursor-pointer items-center justify-center rounded-2xl bg-accent-500 px-4 py-3 text-sm font-black text-white shadow-lg shadow-accent-500/20 transition hover:bg-accent-600">
-                      {uploadingAiReference ? 'Uploading...' : 'Upload AI Reference'}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleAiReferenceUpload}
-                        disabled={uploadingAiReference || saving}
-                        className="hidden"
-                      />
+                  <TextInput
+                    label="AI Prompt Description"
+                    name="prompt_description"
+                    value={form.prompt_description}
+                    onChange={handleChange}
+                    placeholder="e.g. gold Enkei 3-spoke mags with glossy metallic alloy finish"
+                    helper="Describe the exact shape, material, color, and finish. This helps the AI replace the real product instead of only recoloring it."
+                  />
+
+                  <div>
+                    <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                      Install Area
                     </label>
+
+                    <select
+                      name="install_area"
+                      value={
+                        INSTALL_AREA_OPTIONS.includes(form.install_area)
+                          ? form.install_area
+                          : ''
+                      }
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          install_area: event.target.value,
+                        }))
+                      }
+                      className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                    >
+                      <option value="">— Select install area —</option>
+                      {INSTALL_AREA_OPTIONS.map((area) => (
+                        <option key={area} value={area}>
+                          {area}
+                        </option>
+                      ))}
+                    </select>
+
+                    <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                      Choose a predefined install area so AI Preview uses consistent placement instructions.
+                    </p>
                   </div>
-                </div>
 
-                <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                  Uploads directly to Supabase Storage bucket: <span className="font-black">{AI_REFERENCE_BUCKET}</span>. Use one clean cropped photo of the exact product only.
-                </p>
-              </div>
-
-              <TextInput
-                label="AI Prompt Description"
-                name="prompt_description"
-                value={form.prompt_description}
-                onChange={handleChange}
-                placeholder="e.g. gold Enkei 3-spoke mags with glossy metallic alloy finish"
-                helper="Describe the exact shape, material, color, and finish. This helps the AI replace the real product instead of only recoloring it."
-              />
-
-              <div>
-                <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                  Install Area
-                </label>
-
-                <select
-                  name="install_area"
-                  value={
-                    INSTALL_AREA_OPTIONS.includes(form.install_area)
-                      ? form.install_area
-                      : ''
-                  }
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      install_area: event.target.value,
-                    }))
-                  }
-                  className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
-                >
-                  <option value="">— Select install area —</option>
-                  {INSTALL_AREA_OPTIONS.map((area) => (
-                    <option key={area} value={area}>
-                      {area}
-                    </option>
-                  ))}
-                </select>
-
-                <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                  Choose a predefined install area so AI Preview uses consistent placement instructions.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-3 gap-4">
                     <TextInput
                       label="Color"
                       name="color"
@@ -2032,61 +2381,6 @@ export default function AdminParts() {
                 placeholder="e.g. Brake Pad Set"
                 helper="Allowed: letters, numbers, spaces, ñ, and basic symbols only."
               />
-
-              <div>
-                <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                  Category
-                </label>
-
-                {allCategories.length > 0 && !showCategoryInput ? (
-                  <select
-                    name="category"
-                    value={allCategories.includes(form.category) ? form.category : ''}
-                    onChange={(event) => {
-                      if (event.target.value === '__other__') {
-                        setShowCategoryInput(true);
-                        setForm((current) => ({ ...current, category: '' }));
-                      } else {
-                        setForm((current) => ({ ...current, category: event.target.value }));
-                      }
-                    }}
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
-                  >
-                    <option value="">— Select a category —</option>
-                    {allCategories.map((category) => (
-                      <option key={category} value={category}>
-                        {category}
-                      </option>
-                    ))}
-                    <option value="__other__">Other (type new)…</option>
-                  </select>
-                ) : (
-                  <div className="flex gap-2">
-                    <input
-                      name="category"
-                      value={form.category}
-                      onChange={handleChange}
-                      placeholder="e.g. exhaust, headlight"
-                      autoFocus={showCategoryInput}
-                      className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
-                    />
-
-                    {allCategories.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setShowCategoryInput(false)}
-                        className="rounded-2xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300"
-                      >
-                        List
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                  Choose an existing category or type a new one.
-                </p>
-              </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <TextInput

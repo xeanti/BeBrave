@@ -188,6 +188,8 @@ export default function BookingScreen({ route, navigation }) {
 
   const [services, setServices] = useState([]);
   const [motorcycleModels, setMotorcycleModels] = useState([]);
+  const [selectedMotorcycleModelId, setSelectedMotorcycleModelId] = useState('');
+  const [motorcycleModelSearch, setMotorcycleModelSearch] = useState('');
   const [mechanics, setMechanics] = useState([]);
 
   const [selectedServices, setSelectedServices] = useState([]);
@@ -406,6 +408,12 @@ export default function BookingScreen({ route, navigation }) {
     return mechanicResults.find((item) => item.available)?.mechanic || null;
   }
 
+  function selectMotorcycleModel(model) {
+    setSelectedMotorcycleModelId(model.id);
+    setMotorcycleMake(sanitizeMotorcycleText(model.make));
+    setMotorcycleModel(sanitizeMotorcycleText(model.model));
+  }
+
   async function fetchData() {
     setLoading(true);
 
@@ -509,15 +517,16 @@ export default function BookingScreen({ route, navigation }) {
 async function hasUnsettledBookingPayment(userId) {
   const { data, error } = await supabase
     .from('bookings')
-    .select('id, payment_status, status, booking_date, services(name)')
+    .select('id, payment_status, status, booking_date, services_summary, services(name)')
     .eq('customer_id', userId)
-    .in('payment_status', ['unpaid', 'checkout_created', 'pending_payment', 'pending_verification'])
-    .not('status', 'in', '("completed","cancelled")')
+    .or('payment_status.is.null,payment_status.neq.paid')
+    .not('status', 'in', '("completed","cancelled","rejected","no_show")')
+    .or('is_walkin.is.null,is_walkin.eq.false')
     .order('created_at', { ascending: false })
     .limit(1);
 
   if (error) {
-    console.log('UNSETTLED PAYMENT CHECK ERROR:', error);
+    console.log('UNSETTLED FULL PAYMENT CHECK ERROR:', error);
     return false;
   }
 
@@ -554,8 +563,8 @@ if (unsettledBooking) {
   setSubmitting(false);
 
   Alert.alert(
-    'Unsettled Payment',
-    'You still have a booking with an unpaid reservation fee. Please settle or cancel your existing booking before creating a new one.'
+    'Booking Not Allowed',
+    'You still have an existing booking that is not fully paid. Please complete the full payment before booking again.'
   );
 
   navigation.navigate('Main', {
@@ -708,7 +717,26 @@ const { data: booking, error: bookingError } = await supabase
 if (bookingError) {
   setSubmitting(false);
 
-  const message = String(bookingError.message || '').toLowerCase();
+  const rawMessage = bookingError.message || 'Failed to submit booking. Please try again.';
+  const message = String(rawMessage).toLowerCase();
+
+  if (
+    message.includes('not fully paid') ||
+    message.includes('full payment') ||
+    message.includes('unsettled') ||
+    message.includes('existing booking')
+  ) {
+    Alert.alert(
+      'Booking Not Allowed',
+      'You still have an existing booking that is not fully paid. Please complete the full payment before booking again.'
+    );
+
+    navigation.navigate('Main', {
+      screen: 'Appointments',
+    });
+
+    return;
+  }
 
   if (
     message.includes('duplicate') ||
@@ -726,7 +754,7 @@ if (bookingError) {
     return;
   }
 
-  Alert.alert('Error', bookingError.message);
+  Alert.alert('Booking Failed', rawMessage);
   return;
 }
 
@@ -909,6 +937,17 @@ const adminBookingMessage =
     setStep(step + 1);
   }
 
+  const filteredMotorcycleModels = useMemo(() => {
+    const term = motorcycleModelSearch.trim().toLowerCase();
+
+    if (!term) return motorcycleModels;
+
+    return motorcycleModels.filter((model) => {
+      const text = `${model.make || ''} ${model.model || ''}`.toLowerCase();
+      return text.includes(term);
+    });
+  }, [motorcycleModels, motorcycleModelSearch]);
+
   const servicesTotal = useMemo(() => getServicesTotal(selectedServices), [selectedServices]);
   const servicesDuration = useMemo(() => getServicesDuration(selectedServices), [selectedServices]);
   const servicesSummary = useMemo(() => getServicesSummary(selectedServices), [selectedServices]);
@@ -1034,7 +1073,10 @@ const adminBookingMessage =
               placeholder="e.g. Honda, Yamaha, Kawasaki"
               placeholderTextColor={theme.textMuted}
               value={motorcycleMake}
-              onChangeText={(value) => setMotorcycleMake(sanitizeMotorcycleText(value))}
+              onChangeText={(value) => {
+                setSelectedMotorcycleModelId('');
+                setMotorcycleMake(sanitizeMotorcycleText(value));
+              }}
               maxLength={60}
             />
 
@@ -1044,7 +1086,10 @@ const adminBookingMessage =
               placeholder="e.g. CBR500R, MT-07"
               placeholderTextColor={theme.textMuted}
               value={motorcycleModel}
-              onChangeText={(value) => setMotorcycleModel(sanitizeMotorcycleText(value))}
+              onChangeText={(value) => {
+                setSelectedMotorcycleModelId('');
+                setMotorcycleModel(sanitizeMotorcycleText(value));
+              }}
               maxLength={60}
             />
 
@@ -1072,29 +1117,89 @@ const adminBookingMessage =
             />
 
             {motorcycleModels.length > 0 && (
-              <View style={{ marginTop: 8 }}>
-                <Text style={s.label}>Quick Pick (from our database)</Text>
+              <View style={s.modelPickerSection}>
+                <Text style={s.label}>Select from Motorcycle Catalog</Text>
+                <Text style={s.modelPickerHint}>
+                  Choose your motorcycle like AI Preview, or type manually above if your model is not listed.
+                </Text>
 
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={s.quickPicks}
-                >
-                  {motorcycleModels.map((m) => (
-                    <TouchableOpacity
-                      key={m.id}
-                      style={s.quickPickChip}
-                      onPress={() => {
-                        setMotorcycleMake(sanitizeMotorcycleText(m.make));
-                        setMotorcycleModel(sanitizeMotorcycleText(m.model));
-                      }}
-                    >
-                      <Text style={s.quickPickText}>
-                        {m.make} {m.model}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
+                <TextInput
+                  style={[s.input, s.modelSearchInput]}
+                  placeholder="Search make or model..."
+                  placeholderTextColor={theme.textMuted}
+                  value={motorcycleModelSearch}
+                  onChangeText={setMotorcycleModelSearch}
+                />
+
+                {filteredMotorcycleModels.length === 0 ? (
+                  <View style={s.modelEmptyState}>
+                    <Text style={s.modelEmptyIcon}>🏍️</Text>
+                    <Text style={s.modelEmptyText}>No matching motorcycle model found.</Text>
+                  </View>
+                ) : (
+                  <View style={s.modelGrid}>
+                    {filteredMotorcycleModels.map((m) => {
+                      const isSelected = selectedMotorcycleModelId === m.id;
+
+                      return (
+                        <TouchableOpacity
+                          key={m.id}
+                          style={[
+                            s.modelCard,
+                            isSelected && s.modelCardActive,
+                          ]}
+                          onPress={() => selectMotorcycleModel(m)}
+                          activeOpacity={0.75}
+                        >
+                          {m.reference_photo_url ? (
+                            <Image
+                              source={{ uri: m.reference_photo_url }}
+                              style={s.modelCardImage}
+                              resizeMode="cover"
+                            />
+                          ) : (
+                            <View
+                              style={[
+                                s.modelCardImage,
+                                s.modelCardImagePlaceholder,
+                              ]}
+                            >
+                              <Text style={s.modelCardPlaceholderIcon}>🏍️</Text>
+                            </View>
+                          )}
+
+                          <View style={s.modelCardBody}>
+                            <Text
+                              style={[
+                                s.modelCardMake,
+                                isSelected && s.modelCardMakeActive,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {m.make}
+                            </Text>
+
+                            <Text
+                              style={[
+                                s.modelCardModel,
+                                isSelected && s.modelCardModelActive,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {m.model}
+                            </Text>
+                          </View>
+
+                          {isSelected && (
+                            <View style={s.modelCardCheck}>
+                              <Text style={s.modelCardCheckText}>✓</Text>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
               </View>
             )}
           </View>
@@ -1849,22 +1954,105 @@ const styles = (theme) => StyleSheet.create({
     height: 100,
     textAlignVertical: 'top',
   },
-  quickPicks: {
+  modelPickerSection: {
+    marginTop: 8,
     marginBottom: 16,
-    paddingVertical: 4,
   },
-  quickPickChip: {
+  modelPickerHint: {
+    color: theme.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: -2,
+    marginBottom: 10,
+  },
+  modelSearchInput: {
+    marginBottom: 12,
+  },
+  modelGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  modelCard: {
+    width: '47%',
+    backgroundColor: theme.bg2,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: theme.border,
+    overflow: 'hidden',
+  },
+  modelCardActive: {
+    borderColor: theme.primary,
+    backgroundColor: theme.primary + '0D',
+  },
+  modelCardImage: {
+    width: '100%',
+    height: 110,
+    backgroundColor: theme.bg3,
+  },
+  modelCardImagePlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modelCardPlaceholderIcon: {
+    fontSize: 36,
+  },
+  modelCardBody: {
+    padding: 10,
+  },
+  modelCardMake: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: theme.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 2,
+  },
+  modelCardMakeActive: {
+    color: theme.primaryLight,
+  },
+  modelCardModel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: theme.text,
+  },
+  modelCardModelActive: {
+    color: theme.primaryLight,
+  },
+  modelCardCheck: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: theme.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modelCardCheckText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  modelEmptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: theme.bg2,
     borderWidth: 1,
     borderColor: theme.border,
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    marginRight: 8,
+    borderRadius: 14,
+    paddingVertical: 28,
+    paddingHorizontal: 16,
   },
-  quickPickText: {
-    color: theme.text,
+  modelEmptyIcon: {
+    fontSize: 34,
+    marginBottom: 8,
+  },
+  modelEmptyText: {
+    color: theme.textMuted,
     fontSize: 13,
+    textAlign: 'center',
   },
   dateCard: {
     flexDirection: 'row',

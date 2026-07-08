@@ -20,6 +20,30 @@ const DATE_FILTERS = [
   { key: '30d', label: 'Last 30 Days' },
 ];
 
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+const TABLE_MEMORY_KEY = 'motofix_inventory_movements_table_state';
+
+function getSavedTableState() {
+  try {
+    return JSON.parse(localStorage.getItem(TABLE_MEMORY_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveTableState(state) {
+  try {
+    localStorage.setItem(TABLE_MEMORY_KEY, JSON.stringify(state));
+  } catch {
+    // Ignore browser storage errors.
+  }
+}
+
+function sanitizePageSize(value) {
+  const parsed = Number(value);
+  return PAGE_SIZE_OPTIONS.includes(parsed) ? parsed : 10;
+}
+
 const POSITIVE_TYPES = ['stock_in', 'released', 'refund_return'];
 const NEGATIVE_TYPES = ['stock_out', 'reserved', 'used_service', 'sold_order', 'manual_adjustment'];
 
@@ -45,6 +69,17 @@ function formatShortDate(value) {
   });
 }
 
+function formatPieces(value) {
+  const amount = Math.abs(Number(value) || 0);
+  return `${amount.toLocaleString('en-PH')} ${amount === 1 ? 'pc' : 'pcs'}`;
+}
+
+function formatSignedPieces(value) {
+  const amount = Number(value) || 0;
+  const sign = amount > 0 ? '+' : amount < 0 ? '-' : '';
+  return `${sign}${formatPieces(amount)}`;
+}
+
 function getMovementMeta(type) {
   return (
     MOVEMENT_TYPES.find((item) => item.key === type) || {
@@ -63,6 +98,7 @@ function getSignedQuantity(movement) {
 
   const previousStock = Number(movement.previous_stock) || 0;
   const newStock = Number(movement.new_stock) || 0;
+
   return newStock - previousStock;
 }
 
@@ -70,6 +106,18 @@ function getQuantityTone(signedQuantity) {
   if (signedQuantity > 0) return 'text-green-600 dark:text-green-300';
   if (signedQuantity < 0) return 'text-red-600 dark:text-red-300';
   return 'text-gray-600 dark:text-gray-300';
+}
+
+function getChangeBadgeClass(signedQuantity) {
+  if (signedQuantity > 0) {
+    return 'bg-green-50 text-green-700 ring-green-200 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/25';
+  }
+
+  if (signedQuantity < 0) {
+    return 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25';
+  }
+
+  return 'bg-gray-100 text-gray-700 ring-gray-200 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-500/25';
 }
 
 function getBadgeClass(type) {
@@ -115,7 +163,7 @@ function getDateThreshold(filter) {
   return null;
 }
 
-function StatCard({ label, value, icon, tone = 'default' }) {
+function StatCard({ label, value, helper, icon, tone = 'default' }) {
   const tones = {
     default: 'text-gray-950 dark:text-white',
     primary: 'text-primary-600 dark:text-primary-400',
@@ -133,7 +181,71 @@ function StatCard({ label, value, icon, tone = 'default' }) {
         </p>
         <span className="text-2xl">{icon}</span>
       </div>
-      <p className={`text-2xl font-black ${tones[tone] || tones.default}`}>{value}</p>
+
+      <p className={`text-2xl font-black ${tones[tone] || tones.default}`}>
+        {value}
+      </p>
+
+      {helper && (
+        <p className="mt-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
+          {helper}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function StockChangeCard({ movement, signedQuantity }) {
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/60">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[10px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+          Change
+        </span>
+
+        <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ring-1 ${getChangeBadgeClass(signedQuantity)}`}>
+          {signedQuantity > 0 ? 'Added' : signedQuantity < 0 ? 'Deducted' : 'No Change'}
+        </span>
+      </div>
+
+      <p className={`text-xl font-black ${getQuantityTone(signedQuantity)}`}>
+        {formatSignedPieces(signedQuantity)}
+      </p>
+    </div>
+  );
+}
+
+function StockBeforeAfter({ movement }) {
+  const previousStock = Number(movement.previous_stock) || 0;
+  const newStock = Number(movement.new_stock) || 0;
+  const wentUp = newStock > previousStock;
+  const wentDown = newStock < previousStock;
+
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/60">
+      <p className="mb-2 text-[10px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+        Stock Count
+      </p>
+
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+        <div className="rounded-xl bg-white px-3 py-2 text-center ring-1 ring-gray-100 dark:bg-dark-800 dark:ring-dark-700">
+          <p className="text-[10px] font-black uppercase text-gray-400">Before</p>
+          <p className="text-base font-black text-gray-950 dark:text-white">
+            {previousStock.toLocaleString('en-PH')}
+          </p>
+        </div>
+
+        <span className={`text-lg font-black ${wentUp ? 'text-green-500' : wentDown ? 'text-red-500' : 'text-gray-400'}`}>
+          →
+        </span>
+
+        <div className="rounded-xl bg-white px-3 py-2 text-center ring-1 ring-gray-100 dark:bg-dark-800 dark:ring-dark-700">
+          <p className="text-[10px] font-black uppercase text-gray-400">After</p>
+          <p className={`text-base font-black ${wentUp ? 'text-green-600 dark:text-green-300' : wentDown ? 'text-red-600 dark:text-red-300' : 'text-gray-950 dark:text-white'}`}>
+            {newStock.toLocaleString('en-PH')}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -157,10 +269,14 @@ export default function AdminInventoryMovements() {
   const [fetchError, setFetchError] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
 
-  const [search, setSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState('all');
-  const [dateFilter, setDateFilter] = useState('all');
-  const [sortBy, setSortBy] = useState('newest');
+  const savedTableState = getSavedTableState();
+
+  const [search, setSearch] = useState(savedTableState.search || '');
+  const [typeFilter, setTypeFilter] = useState(savedTableState.typeFilter || 'all');
+  const [dateFilter, setDateFilter] = useState(savedTableState.dateFilter || 'all');
+  const [sortBy, setSortBy] = useState(savedTableState.sortBy || 'newest');
+  const [currentPage, setCurrentPage] = useState(Number(savedTableState.currentPage) || 1);
+  const [pageSize, setPageSize] = useState(sanitizePageSize(savedTableState.pageSize));
 
   useEffect(() => {
     fetchMovements();
@@ -192,6 +308,21 @@ export default function AdminInventoryMovements() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
+
+  useEffect(() => {
+    saveTableState({
+      search,
+      typeFilter,
+      dateFilter,
+      sortBy,
+      currentPage,
+      pageSize,
+    });
+  }, [search, typeFilter, dateFilter, sortBy, currentPage, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, typeFilter, dateFilter, sortBy, pageSize]);
 
   async function fetchMovements(showLoader = true) {
     if (showLoader) setLoading(true);
@@ -326,17 +457,23 @@ export default function AdminInventoryMovements() {
       totalMovements,
       stockIn,
       stockOut,
-      netChange: stockIn - stockOut,
       sold,
       serviceUsed,
     };
   }, [filteredMovements]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredMovements.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedMovements = filteredMovements.slice(startIndex, endIndex);
 
   function clearFilters() {
     setSearch('');
     setTypeFilter('all');
     setDateFilter('all');
     setSortBy('newest');
+    setCurrentPage(1);
   }
 
   const hasFilters = search || typeFilter !== 'all' || dateFilter !== 'all' || sortBy !== 'newest';
@@ -384,18 +521,12 @@ export default function AdminInventoryMovements() {
           </div>
         )}
 
-        <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-          <StatCard label="Movements" value={stats.totalMovements} icon="📜" tone="primary" />
-          <StatCard label="Stock In" value={`+${stats.stockIn}`} icon="➕" tone="green" />
-          <StatCard label="Stock Out" value={`-${stats.stockOut}`} icon="➖" tone="red" />
-          <StatCard
-            label="Net Change"
-            value={stats.netChange > 0 ? `+${stats.netChange}` : String(stats.netChange)}
-            icon="📊"
-            tone={stats.netChange >= 0 ? 'green' : 'red'}
-          />
-          <StatCard label="Sold" value={stats.sold} icon="🧾" tone="accent" />
-          <StatCard label="Service Used" value={stats.serviceUsed} icon="🛠️" tone="yellow" />
+        <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <StatCard label="Movements" value={stats.totalMovements} helper="Total records" icon="📜" tone="primary" />
+          <StatCard label="Stock Added" value={`+${stats.stockIn}`} helper="Items added back/in" icon="➕" tone="green" />
+          <StatCard label="Stock Deducted" value={`-${stats.stockOut}`} helper="Items removed/out" icon="➖" tone="red" />
+          <StatCard label="Sold Orders" value={stats.sold} helper="Deducted by orders" icon="🧾" tone="accent" />
+          <StatCard label="Service Usage" value={stats.serviceUsed} helper="Used in repairs" icon="🛠️" tone="yellow" />
         </div>
 
         <div className="mb-6 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800">
@@ -424,7 +555,7 @@ export default function AdminInventoryMovements() {
           <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto]">
             <input
               type="text"
-              placeholder="Search product, reason, user, order ID, or booking ID..."
+              placeholder="Search part, reason, user, order ID, or booking ID..."
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
@@ -449,26 +580,53 @@ export default function AdminInventoryMovements() {
             >
               <option value="newest">Sort: Newest</option>
               <option value="oldest">Sort: Oldest</option>
-              <option value="qty_high">Quantity: High to Low</option>
-              <option value="qty_low">Quantity: Low to High</option>
+              <option value="qty_high">Change: High to Low</option>
+              <option value="qty_low">Change: Low to High</option>
             </select>
           </div>
         </div>
 
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
-            Showing {filteredMovements.length} of {movements.length} movement records
-          </p>
+        <div className="mb-4 rounded-3xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold leading-6 text-blue-800 dark:border-blue-500/25 dark:bg-blue-500/10 dark:text-blue-200">
+          <strong>How to read this page:</strong> <span className="font-black">Change</span> shows how many pieces were added or deducted.
+          <span className="font-black"> Stock Count</span> shows the actual inventory before and after the movement.
+        </div>
 
-          {hasFilters && (
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="text-sm font-black text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-            >
-              Clear filters
-            </button>
-          )}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
+              Showing {filteredMovements.length === 0 ? 0 : startIndex + 1}–{Math.min(endIndex, filteredMovements.length)} of {filteredMovements.length} movement records
+            </p>
+            <p className="mt-1 text-xs font-semibold text-gray-400 dark:text-gray-500">
+              Page {safeCurrentPage} of {totalPages} · Saved table view restores after reload
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              Per page
+              <select
+                value={pageSize}
+                onChange={(event) => setPageSize(sanitizePageSize(event.target.value))}
+                className="rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm font-black text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-800 dark:text-white"
+              >
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {hasFilters && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="text-sm font-black text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
         </div>
 
         {loading ? (
@@ -483,7 +641,7 @@ export default function AdminInventoryMovements() {
             </h2>
             <p className="mx-auto mb-6 max-w-md text-sm leading-6 text-gray-600 dark:text-gray-400">
               {movements.length === 0
-                ? 'No stock history has been recorded yet. Try adding stock, selling products, or using products in service.'
+                ? 'No stock history has been recorded yet. Try adding stock, selling parts, or using parts in service.'
                 : 'No movement records match your current filters.'}
             </p>
             {hasFilters && (
@@ -498,34 +656,39 @@ export default function AdminInventoryMovements() {
           </div>
         ) : (
           <div className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
-            <div className="hidden border-b border-gray-200 bg-gray-50 px-5 py-3 text-xs font-black uppercase tracking-wider text-gray-500 dark:border-dark-700 dark:bg-dark-900/60 dark:text-gray-400 lg:grid lg:grid-cols-[1.4fr_1fr_0.8fr_1fr_1fr_1fr] lg:gap-4">
-              <div>Product</div>
+            <div className="hidden border-b border-gray-200 bg-gray-50 px-5 py-3 text-xs font-black uppercase tracking-wider text-gray-500 dark:border-dark-700 dark:bg-dark-900/60 dark:text-gray-400 lg:grid lg:grid-cols-[1.3fr_0.9fr_1.1fr_1.3fr_1fr_1fr] lg:gap-4">
+              <div>Part</div>
               <div>Movement</div>
-              <div>Quantity</div>
-              <div>Stock</div>
+              <div>Change</div>
+              <div>Stock Count</div>
               <div>Performed By</div>
               <div>Date / Link</div>
             </div>
 
             <div className="divide-y divide-gray-100 dark:divide-dark-700">
-              {filteredMovements.map((movement) => {
+              {paginatedMovements.map((movement) => {
                 const meta = getMovementMeta(movement.movement_type);
                 const signedQuantity = getSignedQuantity(movement);
-                const quantityLabel = signedQuantity > 0 ? `+${signedQuantity}` : String(signedQuantity);
                 const part = movement.parts;
                 const performer = movement.profiles;
 
                 return (
                   <article
                     key={movement.id}
-                    className="grid gap-4 px-5 py-5 transition hover:bg-gray-50 dark:hover:bg-dark-900/50 lg:grid-cols-[1.4fr_1fr_0.8fr_1fr_1fr_1fr] lg:items-center"
+                    className="grid gap-4 px-5 py-5 transition hover:bg-gray-50 dark:hover:bg-dark-900/50 lg:grid-cols-[1.3fr_0.9fr_1.1fr_1.3fr_1fr_1fr] lg:items-center"
                   >
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
                         {part?.image_url ? (
-                          <img src={part.image_url} alt={part.name || 'Product'} className="h-full w-full object-cover" />
+                          <img
+                            src={part.image_url}
+                            alt={part.name || 'Part'}
+                            className="h-full w-full object-cover"
+                          />
                         ) : (
-                          <div className="grid h-full w-full place-items-center text-2xl text-gray-400">⚙️</div>
+                          <div className="grid h-full w-full place-items-center text-2xl text-gray-400">
+                            ⚙️
+                          </div>
                         )}
                       </div>
 
@@ -551,21 +714,9 @@ export default function AdminInventoryMovements() {
                       </span>
                     </div>
 
-                    <div>
-                      <p className={`text-lg font-black ${getQuantityTone(signedQuantity)}`}>
-                        {quantityLabel}
-                      </p>
-                      <p className="text-xs font-semibold text-gray-500 dark:text-gray-400">
-                        {Number(movement.quantity) || 0} pcs
-                      </p>
-                    </div>
+                    <StockChangeCard movement={movement} signedQuantity={signedQuantity} />
 
-                    <div>
-                      <p className="text-sm font-black text-gray-950 dark:text-white">
-                        {movement.previous_stock} → {movement.new_stock}
-                      </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">previous → new</p>
-                    </div>
+                    <StockBeforeAfter movement={movement} />
 
                     <div className="min-w-0">
                       <p className="truncate text-sm font-black text-gray-950 dark:text-white">
@@ -580,10 +731,6 @@ export default function AdminInventoryMovements() {
                       <p className="text-sm font-black text-gray-950 dark:text-white">
                         {formatShortDate(movement.created_at)}
                       </p>
-                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                        {formatDateTime(movement.created_at)}
-                      </p>
-
                       <div className="mt-2 flex flex-wrap gap-2">
                         {movement.related_order_id && (
                           <span className="rounded-full bg-accent-50 px-2.5 py-1 text-[10px] font-black text-accent-700 ring-1 ring-accent-100 dark:bg-accent-500/10 dark:text-accent-300 dark:ring-accent-500/25">
@@ -602,6 +749,56 @@ export default function AdminInventoryMovements() {
                 );
               })}
             </div>
+
+            {totalPages > 1 && (
+              <div className="flex flex-col gap-3 border-t border-gray-100 bg-gray-50 px-5 py-4 dark:border-dark-700 dark:bg-dark-900/60 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm font-bold text-gray-500 dark:text-gray-400">
+                  Page {safeCurrentPage} of {totalPages}
+                </p>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(1)}
+                    disabled={safeCurrentPage <= 1}
+                    className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300"
+                  >
+                    First
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((page) => Math.max(page - 1, 1))}
+                    disabled={safeCurrentPage <= 1}
+                    className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300"
+                  >
+                    Prev
+                  </button>
+
+                  <span className="rounded-2xl bg-white px-4 py-2 text-sm font-black text-gray-700 ring-1 ring-gray-200 dark:bg-dark-800 dark:text-gray-300 dark:ring-dark-700">
+                    {safeCurrentPage} / {totalPages}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((page) => Math.min(page + 1, totalPages))}
+                    disabled={safeCurrentPage >= totalPages}
+                    className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300"
+                  >
+                    Next
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={safeCurrentPage >= totalPages}
+                    className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300"
+                  >
+                    Last
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
