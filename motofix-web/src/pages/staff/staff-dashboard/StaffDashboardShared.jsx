@@ -243,10 +243,22 @@ export function bookingRequiresReservationPayment(booking) {
   return getReservationFee(booking) > 0 || Boolean(status);
 }
 
-export function isReservationPaid(booking) {
+export function hasReservationPaymentEvidence(booking) {
   const status = String(booking?.payment_status || '').toLowerCase();
 
-  return ['paid', 'verified', 'completed', 'success', 'successful'].includes(status);
+  return (
+    ['paid', 'pending_verification'].includes(status) ||
+    Boolean(booking?.paid_at)
+  );
+}
+
+export function isReservationPaymentVerified(booking) {
+  return booking?.payment_received === true;
+}
+
+// Customer/provider payment evidence is separate from staff verification.
+export function isReservationPaid(booking) {
+  return isReservationPaymentVerified(booking);
 }
 
 export function getReservationPaidAmount(booking) {

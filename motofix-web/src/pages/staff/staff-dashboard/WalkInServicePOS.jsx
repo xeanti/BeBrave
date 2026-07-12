@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
 import CustomerPicker from '../../../components/CustomerPicker';
 import { adjustPartStock } from '../../../lib/inventory';
+import { createReceiptHistory } from '../../../lib/receiptHistory';
 
 import {
   Banner,
@@ -46,9 +47,6 @@ function sanitizeModel(value) {
     .slice(0, 80);
 }
 
-function sanitizeReference(value) {
-  return String(value || '').replace(/[^a-zA-Z0-9-]/g, '').slice(0, 40);
-}
 
 function sanitizeShortText(value, maxLength = 100) {
   return String(value || '')
@@ -81,6 +79,26 @@ function sanitizeUuid(value) {
   return String(value || '').replace(/[^a-zA-Z0-9-]/g, '').slice(0, 80);
 }
 
+const GCASH_REFERENCE_MIN_LENGTH = 8;
+const GCASH_REFERENCE_MAX_LENGTH = 20;
+
+function sanitizeGcashReference(value) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .replace(/\D/g, '')
+    .slice(0, GCASH_REFERENCE_MAX_LENGTH);
+}
+
+function isValidGcashReference(value) {
+  const reference = sanitizeGcashReference(value);
+
+  return (
+    reference.length >= GCASH_REFERENCE_MIN_LENGTH &&
+    reference.length <= GCASH_REFERENCE_MAX_LENGTH &&
+    !/^0+$/.test(reference)
+  );
+}
+
 function sanitizePaymentMethod(value) {
   const method = String(value || 'cash').toLowerCase();
   return ['cash', 'gcash'].includes(method) ? method : 'cash';
@@ -89,6 +107,50 @@ function sanitizePaymentMethod(value) {
 function isValidOptionalPhone(value) {
   if (!value) return true;
   return /^09\d{9}$/.test(value);
+}
+
+async function findDuplicateWalkinGcashReference(reference) {
+  const cleanReference = sanitizeGcashReference(reference);
+
+  if (!isValidGcashReference(cleanReference)) return null;
+
+  const [walkinResult, receiptsResult] = await Promise.all([
+    supabase
+      .from('walkin_queue_payments')
+      .select('id, walkin_queue_id')
+      .eq('reference_number', cleanReference)
+      .limit(1),
+    supabase
+      .from('receipts')
+      .select('id, source_id')
+      .eq('payment_reference', cleanReference)
+      .limit(1),
+  ]);
+
+  const queryError = walkinResult.error || receiptsResult.error;
+
+  if (queryError) {
+    throw new Error(
+      queryError.message ||
+        'Unable to verify whether the GCash reference was already used.'
+    );
+  }
+
+  if ((walkinResult.data || []).length > 0) {
+    return {
+      source: 'walkin_queue_payments',
+      id: walkinResult.data[0].id,
+    };
+  }
+
+  if ((receiptsResult.data || []).length > 0) {
+    return {
+      source: 'receipts',
+      id: receiptsResult.data[0].id,
+    };
+  }
+
+  return null;
 }
 
 function getServicePrice(service) {
@@ -140,6 +202,127 @@ function statusStyle(status) {
   return 'bg-primary-50 text-primary-700 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25';
 }
 
+function getWalkinReceiptItems(queueItem) {
+  const serviceItems = (Array.isArray(queueItem?.services)
+    ? queueItem.services
+    : []
+  ).map((service) => {
+    const quantity = Math.max(1, Number(service?.quantity) || 1);
+    const unitPrice =
+      Number(service?.subtotal) ||
+      (Number(service?.base_price) || 0) +
+        (Number(service?.labor_cost) || 0);
+
+    return {
+      itemType: 'service',
+      itemName: service?.name || 'Walk-in Service',
+      quantity,
+      unitPrice,
+      lineTotal:
+        Number(service?.subtotal) || unitPrice * quantity,
+      relatedServiceId: service?.id || service?.service_id || null,
+    };
+  });
+
+  const productItems = (Array.isArray(queueItem?.products)
+    ? queueItem.products
+    : []
+  ).map((product) => {
+    const quantity = Math.max(1, Number(product?.quantity) || 1);
+    const unitPrice =
+      Number(product?.unit_price ?? product?.price) || 0;
+
+    return {
+      itemType: 'product',
+      itemName: product?.name || 'Product / Part',
+      quantity,
+      unitPrice,
+      lineTotal:
+        Number(product?.subtotal) || unitPrice * quantity,
+      relatedPartId: product?.id || product?.part_id || null,
+    };
+  });
+
+  const items = [...serviceItems, ...productItems];
+
+  if (items.length > 0) return items;
+
+  return [
+    {
+      itemType: 'service',
+      itemName: 'Walk-in motorcycle service',
+      quantity: 1,
+      unitPrice: Number(queueItem?.total_amount) || 0,
+      lineTotal: Number(queueItem?.total_amount) || 0,
+    },
+  ];
+}
+
+async function saveWalkinReceiptHistory({
+  queueItem,
+  payment,
+  amount,
+  cleanMethod,
+  cleanReference,
+  staffId,
+}) {
+  const issuedAt =
+    payment?.receipt_issued_at ||
+    payment?.created_at ||
+    new Date().toISOString();
+
+  const receiptNumber =
+    payment?.receipt_number ||
+    `MTFX-WALKIN-${String(payment?.id || queueItem.id)
+      .slice(0, 8)
+      .toUpperCase()}`;
+
+  return createReceiptHistory({
+    receiptNumber,
+    sourceType: 'walkin',
+    sourceId: queueItem.id,
+    paymentTable: 'walkin_queue_payments',
+    paymentId: payment?.id || null,
+    customerId: queueItem.customer_id || null,
+    customerName: getQueueCustomerName(queueItem),
+    customerPhone:
+      queueItem.guest_phone ||
+      queueItem.walkin_customer_phone ||
+      queueItem.profiles?.phone ||
+      null,
+    customerEmail: queueItem.profiles?.email || null,
+    paymentMethod:
+      cleanMethod === 'gcash' ? 'GCash Manual' : 'Cash',
+    paymentReference:
+      cleanReference ||
+      payment?.receipt_number ||
+      receiptNumber,
+    subtotal:
+      Number(queueItem.service_total || 0) +
+        Number(
+          queueItem.product_total ??
+            queueItem.parts_total ??
+            0
+        ) ||
+      amount,
+    discountAmount: Number(queueItem.discount_amount) || 0,
+    taxAmount: 0,
+    totalAmount: amount,
+    amountPaid: amount,
+    balanceAmount: 0,
+    status: 'issued',
+    notes: `Walk-in service payment for ${queueItem.queue_number}.`,
+    issuedBy: staffId || null,
+    issuedAt,
+    metadata: {
+      queue_number: queueItem.queue_number,
+      motorcycle_model: queueItem.motorcycle_model || null,
+      payment_type: 'full',
+      queue_status_before_payment: queueItem.status || null,
+    },
+    items: getWalkinReceiptItems(queueItem),
+  });
+}
 
 const WALKIN_SERVICE_DRAFT_KEY = 'motofix_staff_walkin_service_draft';
 
@@ -198,7 +381,7 @@ export default function WalkInServicePOS({ staffId, onReceipt }) {
 
   const [payingQueueId, setPayingQueueId] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState(() => sanitizePaymentMethod(draft.paymentMethod || 'cash'));
-  const [paymentReference, setPaymentReference] = useState(() => sanitizeReference(draft.paymentReference || ''));
+  const [paymentReference, setPaymentReference] = useState(() => sanitizeGcashReference(draft.paymentReference || ''));
 
   const [submitting, setSubmitting] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(null);
@@ -816,7 +999,7 @@ Products added here will be deducted from inventory now.`
     if (!queueItem?.id) return;
 
     const cleanMethod = sanitizePaymentMethod(paymentMethod);
-    const cleanReference = sanitizeReference(paymentReference).trim();
+    const cleanReference = sanitizeGcashReference(paymentReference);
     const amount = Number(queueItem.total_amount) || 0;
 
     if (amount <= 0) {
@@ -824,9 +1007,36 @@ Products added here will be deducted from inventory now.`
       return;
     }
 
-    if (cleanMethod === 'gcash' && !cleanReference) {
-      setMessage('Error: Enter the GCash reference number.');
+    if (
+      cleanMethod === 'gcash' &&
+      !isValidGcashReference(cleanReference)
+    ) {
+      setMessage(
+        `Error: Enter a valid GCash reference containing ${GCASH_REFERENCE_MIN_LENGTH}–${GCASH_REFERENCE_MAX_LENGTH} digits only.`
+      );
       return;
+    }
+
+    if (cleanMethod === 'gcash') {
+      try {
+        const duplicateReference =
+          await findDuplicateWalkinGcashReference(cleanReference);
+
+        if (duplicateReference) {
+          setMessage(
+            'Error: This GCash reference number has already been used. Check the transaction receipt and enter a unique reference.'
+          );
+          return;
+        }
+      } catch (referenceError) {
+        setMessage(
+          `Error: ${
+            referenceError.message ||
+            'Unable to validate the GCash reference number.'
+          }`
+        );
+        return;
+      }
     }
 
     const confirmed = window.confirm(
@@ -892,32 +1102,127 @@ This will mark the walk-in as completed.`
         },
       });
 
+      let receiptHistoryWarning = '';
+
+      try {
+        await saveWalkinReceiptHistory({
+          queueItem,
+          payment,
+          amount,
+          cleanMethod,
+          cleanReference,
+          staffId,
+        });
+      } catch (receiptError) {
+        console.error(
+          'Walk-in payment saved, but receipt history failed:',
+          receiptError
+        );
+
+        receiptHistoryWarning =
+          ' Payment was saved, but it could not be added to the Receipts tab. Check the receipts table permissions or run the receipt-history SQL migration.';
+      }
+
       onReceipt?.({
         customerName: getQueueCustomerName(queueItem),
+        customerPhone:
+          queueItem.guest_phone ||
+          queueItem.walkin_customer_phone ||
+          queueItem.profiles?.phone ||
+          '—',
+        customerEmail: queueItem.profiles?.email || '—',
         type: 'walkin_queue_service',
+        sourceLabel: 'Walk-in Service POS',
+        transactionLabel: 'Walk-in Motorcycle Service',
         paymentType: 'full',
+        paymentReference:
+          cleanReference ||
+          payment?.receipt_number ||
+          queueItem.queue_number,
         items: [
-          ...((queueItem.services || []).map((service) => ({
-            label: service.name || 'Service',
-            amount: Number(service.subtotal) || 0,
-          }))),
-          ...((queueItem.products || []).map((product) => ({
-            label: `${product.quantity || 1} × ${product.name || 'Product'}`,
-            amount: Number(product.subtotal) || 0,
-          }))),
+          ...((queueItem.services || []).map((service) => {
+            const quantity = Math.max(
+              1,
+              Number(service?.quantity) || 1
+            );
+            const lineTotal =
+              Number(service?.subtotal) ||
+              (Number(service?.base_price) || 0) +
+                (Number(service?.labor_cost) || 0);
+            const unitPrice =
+              quantity > 0 ? lineTotal / quantity : lineTotal;
+
+            return {
+              label: service?.name || 'Motorcycle Service',
+              description: 'Service',
+              quantity,
+              unitPrice,
+              lineTotal,
+              amount: lineTotal,
+            };
+          })),
+          ...((queueItem.products || []).map((product) => {
+            const quantity = Math.max(
+              1,
+              Number(product?.quantity) || 1
+            );
+            const unitPrice =
+              Number(product?.unit_price ?? product?.price) || 0;
+            const lineTotal =
+              Number(product?.subtotal) ||
+              unitPrice * quantity;
+
+            return {
+              label: product?.name || 'Product / Part',
+              description: 'Product / Part',
+              quantity,
+              unitPrice,
+              lineTotal,
+              amount: lineTotal,
+            };
+          })),
         ],
+        subtotal:
+          Number(queueItem.service_total || 0) +
+            Number(
+              queueItem.product_total ??
+                queueItem.parts_total ??
+                0
+            ) ||
+          amount,
+        discountAmount:
+          Number(queueItem.discount_amount) || 0,
+        taxAmount: 0,
         total: amount,
         amountPaid: amount,
-        paymentMethod: cleanMethod === 'gcash' ? 'GCash Manual' : 'Cash',
-        receiptNumber: payment?.receipt_number || queueItem.queue_number,
-        issuedAt: payment?.receipt_issued_at || payment?.created_at || new Date().toISOString(),
+        balance: 0,
+        status: 'paid',
+        paymentMethod:
+          cleanMethod === 'gcash'
+            ? 'GCash Manual'
+            : 'Cash',
+        receiptNumber:
+          payment?.receipt_number ||
+          `MTFX-WALKIN-${String(payment?.id || queueItem.id)
+            .slice(0, 8)
+            .toUpperCase()}`,
+        issuedAt:
+          payment?.receipt_issued_at ||
+          payment?.created_at ||
+          new Date().toISOString(),
         referenceId: queueItem.queue_number,
+        queueNumber: queueItem.queue_number,
+        motorcycleModel: queueItem.motorcycle_model || '',
+        mechanicName: getMechanicName(queueItem),
+        notes: queueItem.notes || 'Walk-in service payment.',
       });
 
       setPaymentMethod('cash');
       setPaymentReference('');
       setPayingQueueId(null);
-      setMessage(`Payment recorded for ${queueItem.queue_number}.`);
+      setMessage(
+        `Payment recorded for ${queueItem.queue_number}.${receiptHistoryWarning}`
+      );
       await fetchWalkinQueue(false);
     } catch (err) {
       setMessage(`Error: ${err.message || 'Failed to collect payment.'}`);
@@ -1137,12 +1442,58 @@ This will mark the walk-in as completed.`
                       <PaymentMethodPicker value={paymentMethod} onChange={(nextMethod) => setPaymentMethod(sanitizePaymentMethod(nextMethod))} />
 
                       {paymentMethod === 'gcash' && (
-                        <input
-                          value={paymentReference}
-                          onChange={(event) => setPaymentReference(sanitizeReference(event.target.value))}
-                          placeholder="GCash reference number"
-                          className="mt-3 w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-800 dark:text-white"
-                        />
+                        <div className="mt-3">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            maxLength={GCASH_REFERENCE_MAX_LENGTH}
+                            autoComplete="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            value={paymentReference}
+                            onChange={(event) => {
+                              setPaymentReference(
+                                sanitizeGcashReference(
+                                  event.target.value
+                                )
+                              );
+                              setMessage('');
+                            }}
+                            placeholder={`${GCASH_REFERENCE_MIN_LENGTH}–${GCASH_REFERENCE_MAX_LENGTH} digits`}
+                            aria-describedby={`walkin-gcash-help-${item.id}`}
+                            className={`w-full rounded-2xl border bg-white px-4 py-3 text-sm font-semibold tracking-wider text-gray-900 outline-none transition focus:ring-4 dark:bg-dark-800 dark:text-white ${
+                              paymentReference &&
+                              !isValidGcashReference(paymentReference)
+                                ? 'border-red-400 focus:border-red-500 focus:ring-red-500/10 dark:border-red-500'
+                                : 'border-gray-200 focus:border-primary-500 focus:ring-primary-500/10 dark:border-dark-700'
+                            }`}
+                          />
+
+                          <div
+                            id={`walkin-gcash-help-${item.id}`}
+                            className="mt-2 flex items-center justify-between gap-3 text-[10px]"
+                          >
+                            <span
+                              className={
+                                paymentReference &&
+                                !isValidGcashReference(
+                                  paymentReference
+                                )
+                                  ? 'font-bold text-red-600 dark:text-red-400'
+                                  : 'text-gray-500 dark:text-gray-400'
+                              }
+                            >
+                              Digits only. Spaces, letters, and symbols are
+                              removed automatically.
+                            </span>
+
+                            <span className="whitespace-nowrap font-black text-gray-500 dark:text-gray-400">
+                              {paymentReference.length}/
+                              {GCASH_REFERENCE_MAX_LENGTH}
+                            </span>
+                          </div>
+                        </div>
                       )}
 
                       <button

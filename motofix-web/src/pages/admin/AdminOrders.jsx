@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
 
@@ -26,10 +27,85 @@ function formatDateTime(value) {
   });
 }
 
-function getCustomerName(order) {
-  const name = `${order?.profiles?.first_name || ''} ${order?.profiles?.last_name || ''}`.trim();
+function getOrderNoteValue(order, label) {
+  const notes = String(order?.notes || '');
+  const escapedLabel = String(label || '').replace(
+    /[.*+?^${}()|[\]\\]/g,
+    '\\$&'
+  );
+  const match = notes.match(
+    new RegExp(`^${escapedLabel}:\\s*(.+)$`, 'im')
+  );
 
-  return name || 'Unknown Customer';
+  return match?.[1]?.trim() || '';
+}
+
+function getCustomerName(order) {
+  const guestName =
+    order?.walkin_customer_name ||
+    order?.guest_name ||
+    order?.customer_name ||
+    getOrderNoteValue(order, 'Guest Name');
+
+  if (guestName) return String(guestName).trim();
+
+  const profile = order?.profiles || order?.customer || {};
+  const registeredName = `${profile?.first_name || ''} ${
+    profile?.last_name || ''
+  }`.trim();
+
+  if (registeredName) return registeredName;
+
+  const guestPhone =
+    order?.customer_contact_phone ||
+    order?.walkin_customer_phone ||
+    order?.guest_phone ||
+    getOrderNoteValue(order, 'Guest Phone');
+
+  if (guestPhone) return `Guest ${guestPhone}`;
+
+  if (profile?.phone) return `Customer ${profile.phone}`;
+  if (profile?.email) return profile.email;
+
+  return order?.is_walkin
+    ? 'Guest Customer'
+    : 'Customer';
+}
+
+function getCustomerPhone(order) {
+  const profile = order?.profiles || order?.customer || {};
+
+  return (
+    order?.customer_contact_phone ||
+    order?.walkin_customer_phone ||
+    order?.guest_phone ||
+    getOrderNoteValue(order, 'Guest Phone') ||
+    profile?.phone ||
+    ''
+  );
+}
+
+function getCustomerEmail(order) {
+  const profile = order?.profiles || order?.customer || {};
+
+  return (
+    order?.customer_email ||
+    profile?.email ||
+    ''
+  );
+}
+
+function getCustomerContactDisplay(order) {
+  const email = getCustomerEmail(order);
+  const phone = getCustomerPhone(order);
+
+  if (email && phone) return `${email} · ${phone}`;
+  if (email) return email;
+  if (phone) return phone;
+
+  return order?.is_walkin
+    ? 'Guest counter sale'
+    : 'No contact information';
 }
 
 function normalizeStatus(status) {
@@ -417,6 +493,40 @@ export default function AdminOrders() {
     setCurrentPage(1);
   }, [filter, search, pageSize]);
 
+  useEffect(() => {
+    if (!errorPopup) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    const previousPaddingRight =
+      document.body.style.paddingRight;
+    const scrollbarWidth = Math.max(
+      window.innerWidth -
+        document.documentElement.clientWidth,
+      0
+    );
+
+    document.body.style.overflow = 'hidden';
+
+    if (scrollbarWidth > 0) {
+      document.body.style.paddingRight = `${scrollbarWidth}px`;
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        clearErrorPopup();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.paddingRight =
+        previousPaddingRight;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [errorPopup]);
+
   function showErrorPopup(message) {
     const cleanMessage =
       typeof message === 'string' && message.trim()
@@ -559,8 +669,9 @@ export default function AdminOrders() {
     return orders.filter((order) => {
       const matchesStatus = filter === 'all' || normalizeStatus(order.status) === filter;
       const customerName = getCustomerName(order).toLowerCase();
-      const email = String(order.profiles?.email || '').toLowerCase();
-      const phone = String(order.profiles?.phone || '').toLowerCase();
+      const email = getCustomerEmail(order).toLowerCase();
+      const phone = getCustomerPhone(order).toLowerCase();
+      const notes = String(order.notes || '').toLowerCase();
       const id = String(order.id || '').toLowerCase();
       const fulfillment = String(order.fulfillment_method || '').toLowerCase();
       const address = String(order.delivery_address || '').toLowerCase();
@@ -574,6 +685,7 @@ export default function AdminOrders() {
         customerName.includes(searchTerm) ||
         email.includes(searchTerm) ||
         phone.includes(searchTerm) ||
+        notes.includes(searchTerm) ||
         id.includes(searchTerm) ||
         fulfillment.includes(searchTerm) ||
         address.includes(searchTerm) ||
@@ -767,10 +879,15 @@ export default function AdminOrders() {
                           {getCustomerName(order)}
                         </h2>
 
-                        <p className="mt-1 text-sm leading-6 text-gray-600 dark:text-gray-400">
-                          👤 {order.profiles?.email || 'No email'}
-                          {order.profiles?.phone ? ` · ${order.profiles.phone}` : ''}
+                        <p className="mt-1 break-words text-sm leading-6 text-gray-600 dark:text-gray-400">
+                          👤 {getCustomerContactDisplay(order)}
                         </p>
+
+                        {!order.customer_id && (
+                          <span className="mt-2 inline-flex rounded-full bg-pink-50 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-pink-700 ring-1 ring-pink-200 dark:bg-pink-500/10 dark:text-pink-300 dark:ring-pink-500/25">
+                            Guest Customer
+                          </span>
+                        )}
 
                         <p className="mt-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
                           Ordered on {formatDateTime(order.created_at)}
@@ -887,34 +1004,73 @@ export default function AdminOrders() {
         )}
       </div>
 
-      {errorPopup && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-md rounded-3xl border border-red-200 bg-white p-6 shadow-2xl dark:border-red-500/30 dark:bg-dark-800">
-            <div className="mb-4 flex items-start gap-3">
-              <div className="grid h-11 w-11 flex-shrink-0 place-items-center rounded-2xl bg-red-50 text-2xl ring-1 ring-red-100 dark:bg-red-500/10 dark:ring-red-500/25">
-                ⚠️
-              </div>
-
-              <div className="min-w-0 flex-1">
-                <p className="text-lg font-black text-gray-950 dark:text-white">
-                  Action Failed
-                </p>
-                <p className="mt-2 whitespace-pre-wrap text-sm font-semibold leading-6 text-red-700 dark:text-red-300">
-                  {errorPopup}
-                </p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={clearErrorPopup}
-              className="w-full rounded-2xl bg-red-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-red-600/20 transition hover:bg-red-700"
+      {errorPopup &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[9999] flex items-center justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                clearErrorPopup();
+              }
+            }}
+          >
+            <div
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="admin-orders-error-title"
+              aria-describedby="admin-orders-error-message"
+              className="relative mx-auto rounded-3xl border border-red-200 bg-white p-5 shadow-2xl outline-none dark:border-red-500/30 dark:bg-dark-800 sm:p-6"
+              style={{
+                width: 'min(calc(100vw - 32px), 440px)',
+                maxWidth: 440,
+                maxHeight: 'calc(100dvh - 32px)',
+                overflowY: 'auto',
+              }}
+              onMouseDown={(event) => event.stopPropagation()}
             >
-              Okay
-            </button>
-          </div>
-        </div>
-      )}
+              <button
+                type="button"
+                onClick={clearErrorPopup}
+                aria-label="Close error message"
+                className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-xl border border-gray-200 bg-gray-50 text-lg font-black text-gray-500 transition hover:bg-gray-100 hover:text-gray-950 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white"
+              >
+                ×
+              </button>
+
+              <div className="mb-5 flex items-start gap-3 pr-10">
+                <div className="grid h-11 w-11 flex-shrink-0 place-items-center rounded-2xl bg-red-50 text-2xl ring-1 ring-red-100 dark:bg-red-500/10 dark:ring-red-500/25">
+                  ⚠️
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <p
+                    id="admin-orders-error-title"
+                    className="text-lg font-black text-gray-950 dark:text-white"
+                  >
+                    Action Failed
+                  </p>
+
+                  <p
+                    id="admin-orders-error-message"
+                    className="mt-2 break-words whitespace-pre-wrap text-sm font-semibold leading-6 text-red-700 dark:text-red-300"
+                  >
+                    {errorPopup}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={clearErrorPopup}
+                className="w-full rounded-2xl bg-red-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-red-600/20 transition hover:bg-red-700 focus:outline-none focus:ring-4 focus:ring-red-500/20"
+              >
+                Okay
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

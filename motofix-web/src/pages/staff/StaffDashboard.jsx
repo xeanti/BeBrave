@@ -169,6 +169,34 @@ function shouldCountAsPendingOrder(order) {
 }
 
 
+function shouldCountAsPendingBookingPayment(booking) {
+  const status = String(booking?.status || '').toLowerCase();
+  const paymentStatus = String(booking?.payment_status || '').toLowerCase();
+
+  if (
+    ['completed', 'cancelled', 'canceled', 'refunded', 'void'].includes(status)
+  ) {
+    return false;
+  }
+
+  // A provider/customer payment is still actionable until staff verifies it.
+  if (paymentStatus === 'paid' && booking?.payment_received !== true) {
+    return true;
+  }
+
+  return [
+    'unpaid',
+    'checkout_created',
+    'pending_payment',
+    'pending_verification',
+    'partial',
+    'partially_paid',
+    'failed',
+    'expired',
+  ].includes(paymentStatus);
+}
+
+
 export default function StaffDashboard() {
   const { user } = useAuth();
 
@@ -281,27 +309,18 @@ export default function StaffDashboard() {
 
         supabase
           .from('bookings')
-          .select('id', { count: 'exact', head: true })
+          .select('id, status, payment_status, payment_received')
           .or('is_walkin.is.null,is_walkin.eq.false')
           .neq('status', 'completed')
           .neq('status', 'cancelled')
-          .in('payment_status', [
-            'unpaid',
-            'checkout_created',
-            'pending_payment',
-            'pending_verification',
-            'partial',
-            'partially_paid',
-            'failed',
-            'expired',
-          ]),
+          .limit(1000),
 
         supabase
-        .from('orders')
-        .select('id, status, payment_status, payment_received')
-        .not('status', 'in', '(completed,cancelled,canceled,returned,refunded)')
-        .not('payment_status', 'eq', 'paid')
-        .limit(1000),
+          .from('orders')
+          .select('id, status, payment_status, payment_received')
+          .not('status', 'in', '(completed,cancelled,canceled,returned,refunded)')
+          .not('payment_status', 'eq', 'paid')
+          .limit(1000),
 
 
         supabase
@@ -318,31 +337,34 @@ export default function StaffDashboard() {
           ]),
       ]);
 
-const paymentOrderCount = (paymentOrdersResult.data || []).filter((order) => {
-  const paymentStatus = String(order.payment_status || '').toLowerCase();
-  const status = String(order.status || '').toLowerCase();
+      const paymentBookingCount = (paymentBookingsResult.data || []).filter(
+        shouldCountAsPendingBookingPayment
+      ).length;
 
-  if (
-    ['completed', 'cancelled', 'canceled', 'refunded', 'returned', 'void'].includes(status) ||
-    paymentStatus === 'paid' ||
-    order.payment_received === true
-  ) {
-    return false;
-  }
+      const paymentOrderCount = (paymentOrdersResult.data || []).filter((order) => {
+        const paymentStatus = String(order.payment_status || '').toLowerCase();
+        const status = String(order.status || '').toLowerCase();
 
-  return [
-    'unpaid',
-    'pending',
-    'pending_payment',
-    'checkout_created',
-    'pending_verification',
-    'partial',
-    'partially_paid',
-    'failed',
-    'expired',
-  ].includes(paymentStatus);
-}).length;
+        if (
+          ['completed', 'cancelled', 'canceled', 'refunded', 'returned', 'void'].includes(status) ||
+          paymentStatus === 'paid' ||
+          order.payment_received === true
+        ) {
+          return false;
+        }
 
+        return [
+          'unpaid',
+          'pending',
+          'pending_payment',
+          'checkout_created',
+          'pending_verification',
+          'partial',
+          'partially_paid',
+          'failed',
+          'expired',
+        ].includes(paymentStatus);
+      }).length;
 
       setTabCounts({
         bookingQueue: bookingQueueResult.error ? 0 : bookingQueueResult.count || 0,
@@ -351,7 +373,7 @@ const paymentOrderCount = (paymentOrdersResult.data || []).filter((order) => {
           ? 0
           : (ordersResult.data || []).filter(shouldCountAsPendingOrder).length,
         payments:
-          (paymentBookingsResult.error ? 0 : paymentBookingsResult.count || 0) +
+          (paymentBookingsResult.error ? 0 : paymentBookingCount) +
           (paymentOrdersResult.error ? 0 : paymentOrderCount),
         progress: progressResult.error ? 0 : progressResult.count || 0,
       });

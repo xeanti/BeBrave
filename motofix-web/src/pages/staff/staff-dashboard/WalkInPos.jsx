@@ -733,20 +733,60 @@ export default function WalkInPOS({ staffId, onReceipt }) {
         },
       });
 
-      onReceipt({
+      onReceipt?.({
         customerName: saleCustomerName,
+        customerPhone:
+          cleanCustomerMode === 'guest'
+            ? cleanGuestPhone || '—'
+            : customer?.phone ||
+              customer?.contact_number ||
+              customer?.mobile_number ||
+              '—',
+        customerEmail:
+          cleanCustomerMode === 'registered'
+            ? customer?.email || '—'
+            : '—',
         type: 'product_counter_sale',
+        sourceLabel: 'Product Counter Sale',
+        transactionLabel: 'Product Counter Sale',
         paymentType: 'full',
-        items: checkoutCart.map((item) => ({
-          label: `${item.quantity} × ${item.name}`,
-          amount: (Number(item.price) || 0) * item.quantity,
-        })),
+        paymentReference:
+          cleanPaymentReference ||
+          payment?.receipt_number ||
+          receiptNumber,
+        items: checkoutCart.map((item) => {
+          const quantity = Math.max(1, Number(item.quantity) || 1);
+          const unitPrice = Number(item.price) || 0;
+          const lineTotal = unitPrice * quantity;
+
+          return {
+            label: item.name || 'Product',
+            description: item.category || 'Product',
+            quantity,
+            unitPrice,
+            lineTotal,
+            amount: lineTotal,
+          };
+        }),
+        subtotal: checkoutTotal,
+        discountAmount: 0,
+        taxAmount: 0,
         total: checkoutTotal,
         amountPaid: checkoutTotal,
-        paymentMethod: cleanPaymentMethod === 'gcash' ? 'GCash Manual' : 'Cash',
+        balance: 0,
+        status: 'paid',
+        paymentMethod:
+          cleanPaymentMethod === 'gcash'
+            ? 'GCash Manual'
+            : 'Cash',
         receiptNumber,
-        issuedAt: payment?.receipt_issued_at || payment?.created_at || now,
+        issuedAt:
+          payment?.receipt_issued_at ||
+          payment?.created_at ||
+          now,
         referenceId: order.id.slice(0, 8).toUpperCase(),
+        orderId: order.id,
+        notes: cleanSaleNote || 'Product counter sale.',
       });
 
       setMessage(`Sale completed. Receipt ${receiptNumber} generated.`);

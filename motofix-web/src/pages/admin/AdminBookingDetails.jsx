@@ -1903,9 +1903,18 @@ export default function AdminBookingDetails() {
         type={documentModal.type}
         invoice={documentModal.invoice}
         receipt={documentModal.receipt}
-        booking={documentModal.booking}
+        booking={documentModal.booking || booking}
         payments={documentModal.payments}
         customerName={documentModal.customerName}
+        customerPhone={
+          (documentModal.booking || booking)?.profiles?.phone ||
+          (documentModal.booking || booking)?.walkin_customer_phone ||
+          ''
+        }
+        customerEmail={
+          (documentModal.booking || booking)?.profiles?.email ||
+          ''
+        }
         onClose={closeDocumentModal}
       />
     </div>

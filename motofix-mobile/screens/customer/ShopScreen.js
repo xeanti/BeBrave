@@ -326,27 +326,21 @@ export default function ShopScreen({ navigation }) {
   return (
     <View style={s.container}>
       <View style={s.header}>
-        <View style={{ flex: 1 }}>
-          <Text style={s.kicker}>MotoFix Product Shop</Text>
-          <Text style={s.title}>Shop</Text>
-          <Text style={s.subtitle}>
-            Browse products, check compatibility, and review your order before checkout.
-          </Text>
-        </View>
+        <Text style={s.title}>Shop</Text>
 
         <View style={s.headerActions}>
           <TouchableOpacity
             style={s.historyButton}
             onPress={() => navigation.navigate('OrderHistory')}
           >
-            <Ionicons name="receipt-outline" size={20} color={theme.text} />
+            <Ionicons name="receipt-outline" size={17} color={theme.text} />
           </TouchableOpacity>
 
           <TouchableOpacity
             style={s.historyButton}
             onPress={() => navigation.navigate('Checkout')}
           >
-            <Ionicons name="cart-outline" size={20} color={theme.text} />
+            <Ionicons name="cart-outline" size={17} color={theme.text} />
             {cartTotalItems > 0 && (
               <View style={s.headerCartBadge}>
                 <Text style={s.headerCartBadgeText}>{cartTotalItems}</Text>
@@ -954,41 +948,41 @@ const styles = (theme) =>
       marginTop: 10,
     },
     header: {
-      paddingHorizontal: 18,
-      paddingTop: 20,
-      paddingBottom: 12,
+      paddingHorizontal: 16,
+      paddingTop: 4,
+      paddingBottom: 5,
       flexDirection: 'row',
       justifyContent: 'space-between',
-      alignItems: 'flex-start',
-      gap: 12,
+      alignItems: 'center',
+      gap: 8,
     },
     kicker: {
       color: theme.primaryLight,
-      fontSize: 11,
+      fontSize: 9,
       fontWeight: '900',
       textTransform: 'uppercase',
-      letterSpacing: 1,
+      letterSpacing: 0.7,
     },
     title: {
       color: theme.text,
-      fontSize: 28,
+      fontSize: 18,
+      lineHeight: 22,
       fontWeight: '900',
-      marginTop: 3,
     },
     subtitle: {
       color: theme.textSub || theme.textMuted,
-      fontSize: 13,
-      marginTop: 3,
-      maxWidth: 280,
+      fontSize: 10,
+      lineHeight: 12,
+      marginTop: 0,
     },
     headerActions: {
       flexDirection: 'row',
-      gap: 8,
+      gap: 5,
     },
     historyButton: {
-      width: 44,
-      height: 44,
-      borderRadius: 14,
+      width: 32,
+      height: 32,
+      borderRadius: 10,
       backgroundColor: theme.card,
       borderWidth: 1,
       borderColor: theme.border,
@@ -998,21 +992,21 @@ const styles = (theme) =>
     },
     headerCartBadge: {
       position: 'absolute',
-      top: -5,
-      right: -5,
-      minWidth: 18,
-      height: 18,
-      borderRadius: 9,
+      top: -4,
+      right: -4,
+      minWidth: 16,
+      height: 16,
+      borderRadius: 8,
       backgroundColor: theme.primary,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingHorizontal: 4,
+      paddingHorizontal: 3,
       borderWidth: 1,
       borderColor: theme.bg,
     },
     headerCartBadgeText: {
       color: '#fff',
-      fontSize: 10,
+      fontSize: 9,
       fontWeight: '900',
     },
     searchRow: {

@@ -12,6 +12,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { adjustPartStock } from '../lib/inventory';
+import {
+  generateOrSyncBookingInvoice,
+  getInvoiceForBooking,
+} from '../lib/invoices';
 
 const STATUS_STEPS = [
   {
@@ -137,11 +141,47 @@ function getInitialPartsUsed(booking) {
   return normalizePartsUsed(booking?.products);
 }
 
+function getServiceLineTotal(service) {
+  const quantity = Math.max(1, Number(service?.quantity) || 1);
+  const basePrice =
+    Number(service?.base_price ?? service?.services?.base_price) || 0;
+  const laborCost =
+    Number(service?.labor_cost ?? service?.services?.labor_cost) || 0;
+
+  return (basePrice + laborCost) * quantity;
+}
+
 function getServiceTotal(booking) {
-  return (
-    (Number(booking?.services?.base_price) || 0) +
-    (Number(booking?.services?.labor_cost) || 0)
-  );
+  const savedServiceTotal = Number(booking?.service_total);
+
+  if (Number.isFinite(savedServiceTotal) && savedServiceTotal > 0) {
+    return savedServiceTotal;
+  }
+
+  const existingPartsTotal =
+    Number(booking?.parts_total ?? booking?.product_total) || 0;
+  const savedTotal = Number(booking?.total_amount);
+
+  if (
+    Number.isFinite(savedTotal) &&
+    savedTotal > 0 &&
+    savedTotal >= existingPartsTotal
+  ) {
+    return savedTotal - existingPartsTotal;
+  }
+
+  const selectedServices = Array.isArray(booking?.booking_services)
+    ? booking.booking_services
+    : [];
+
+  if (selectedServices.length > 0) {
+    return selectedServices.reduce(
+      (sum, service) => sum + getServiceLineTotal(service),
+      0
+    );
+  }
+
+  return getServiceLineTotal(booking?.services);
 }
 
 function getPartLineTotal(item) {
@@ -372,45 +412,112 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
     const normalized = nextProducts.map(normalizePartLine);
     const nextProductsTotal = getProductsTotal(normalized);
     const nextTotal = serviceTotal + nextProductsTotal;
+    const now = new Date().toISOString();
 
     const payload = {
       parts_used: normalized,
       products: normalized,
+      service_total: serviceTotal,
       parts_total: nextProductsTotal,
       product_total: nextProductsTotal,
       total_amount: nextTotal,
-      updated_at: new Date().toISOString(),
+      updated_at: now,
       ...extraPayload,
     };
 
-    const { error } = await supabase
+    let updateResult = await supabase
       .from('bookings')
       .update(payload)
       .eq('id', bookingId);
 
-    if (!error) {
-      setPartsUsed(normalized);
-      onUpdated?.();
-      return;
-    }
-
-    const message = String(error.message || '').toLowerCase();
-
+    // Older databases may not have service_total yet. Keep the financial
+    // synchronization working by retrying without that optional column.
     if (
-      message.includes('schema cache') ||
-      message.includes('column') ||
-      message.includes('parts_used') ||
-      message.includes('products') ||
-      message.includes('parts_total') ||
-      message.includes('product_total') ||
-      message.includes('parts_stock_deducted_at')
+      updateResult.error &&
+      String(updateResult.error.message || '')
+        .toLowerCase()
+        .includes('service_total')
     ) {
-      throw new Error(
-        'Missing booking inventory columns. Run the inventory_restore_tracking_cancel_flags.sql file first.'
-      );
+      const fallbackPayload = { ...payload };
+      delete fallbackPayload.service_total;
+
+      updateResult = await supabase
+        .from('bookings')
+        .update(fallbackPayload)
+        .eq('id', bookingId);
     }
 
-    throw error;
+    if (updateResult.error) {
+      const errorMessage = String(
+        updateResult.error.message || ''
+      ).toLowerCase();
+
+      if (
+        errorMessage.includes('schema cache') ||
+        errorMessage.includes('column') ||
+        errorMessage.includes('parts_used') ||
+        errorMessage.includes('products') ||
+        errorMessage.includes('parts_total') ||
+        errorMessage.includes('product_total') ||
+        errorMessage.includes('parts_stock_deducted_at')
+      ) {
+        throw new Error(
+          'Missing booking inventory columns. Run the inventory_restore_tracking_cancel_flags.sql file first.'
+        );
+      }
+
+      throw updateResult.error;
+    }
+
+    setPartsUsed(normalized);
+
+    let invoice = null;
+    let invoiceSyncWarning = '';
+
+    try {
+      await generateOrSyncBookingInvoice({ bookingId });
+      invoice = await getInvoiceForBooking(bookingId);
+    } catch (invoiceError) {
+      console.warn(
+        'Booking totals changed, but invoice synchronization failed:',
+        invoiceError
+      );
+      invoiceSyncWarning =
+        ' Booking total changed, but the invoice could not be synchronized.';
+    }
+
+    const amountPaid = Number(invoice?.amount_paid);
+    const balanceDue = Number(invoice?.balance_due);
+
+    await supabase.from('audit_logs').insert({
+      action: 'SYNC_BOOKING_PARTS_FINANCIALS',
+      entity: 'bookings',
+      entity_id: bookingId,
+      performed_by: await getCurrentUserId(),
+      details: {
+        service_total: serviceTotal,
+        parts_total: nextProductsTotal,
+        total_amount: nextTotal,
+        amount_paid: Number.isFinite(amountPaid) ? amountPaid : null,
+        remaining_balance: Number.isFinite(balanceDue) ? balanceDue : null,
+        invoice_status: invoice?.status || null,
+        synchronized_at: now,
+      },
+    });
+
+    if (typeof onUpdated === 'function') {
+      await onUpdated();
+    }
+
+    return {
+      serviceTotal,
+      partsTotal: nextProductsTotal,
+      totalAmount: nextTotal,
+      amountPaid: Number.isFinite(amountPaid) ? amountPaid : null,
+      balanceDue: Number.isFinite(balanceDue) ? balanceDue : null,
+      invoiceStatus: invoice?.status || null,
+      invoiceSyncWarning,
+    };
   }
 
   async function insertProgressEvent(step) {
@@ -544,8 +651,9 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
         relatedOrderId: null,
       });
 
-      await updateBookingProducts(nextProducts, {
-        parts_stock_deducted_at: booking?.parts_stock_deducted_at || new Date().toISOString(),
+      const financials = await updateBookingProducts(nextProducts, {
+        parts_stock_deducted_at:
+          booking?.parts_stock_deducted_at || new Date().toISOString(),
       });
 
       await supabase.from('audit_logs').insert({
@@ -562,7 +670,15 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
       });
 
       setPartSearch('');
-      setMessage(`${part.name} added to products used. Inventory deducted automatically.`);
+      setMessage(
+        `${part.name} added. Total is now ${formatPeso(
+          financials.totalAmount
+        )}${
+          financials.balanceDue !== null
+            ? ` · Remaining balance ${formatPeso(financials.balanceDue)}`
+            : ''
+        }.${financials.invoiceSyncWarning}`
+      );
       await fetchProducts(false);
     } catch (err) {
       setMessage(`Error: ${err.message || 'Failed to add part used.'}`);
@@ -676,13 +792,19 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
 
       const nextProducts = partsUsed.filter((_, itemIndex) => itemIndex !== index);
 
-      await updateBookingProducts(nextProducts);
+      const financials = await updateBookingProducts(nextProducts);
 
       await fetchProducts(false);
       setMessage(
-        deducted
-          ? `${line.name} removed and returned to inventory.`
-          : `${line.name} removed from products used.`
+        `${
+          deducted
+            ? `${line.name} removed and returned to inventory`
+            : `${line.name} removed from products used`
+        }. Total is now ${formatPeso(financials.totalAmount)}${
+          financials.balanceDue !== null
+            ? ` · Remaining balance ${formatPeso(financials.balanceDue)}`
+            : ''
+        }.${financials.invoiceSyncWarning}`
       );
     } catch (err) {
       setMessage(`Error: ${err.message || 'Failed to remove part.'}`);

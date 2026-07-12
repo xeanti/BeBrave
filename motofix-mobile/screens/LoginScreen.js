@@ -102,7 +102,7 @@ export default function LoginScreen({ navigation }) {
 
         Alert.alert(
           'Access Restricted',
-          'Admin, super admin, and staff accounts must use the web portal.'
+          'Admin, Super Admin, and Staff accounts must use the web portal.'
         );
 
         return;

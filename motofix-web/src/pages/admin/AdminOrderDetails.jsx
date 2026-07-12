@@ -363,7 +363,12 @@ function buildInvoiceForDisplay(invoice, order, paymentList = []) {
 }
 
 export default function AdminOrderDetails() {
-  const { orderId } = useParams();
+  const params = useParams();
+  const orderId =
+    params.orderId ||
+    params.id ||
+    params.order_id ||
+    '';
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -476,26 +481,25 @@ export default function AdminOrderDetails() {
     setFetchError('');
     setDocumentError('');
 
-    const { data, error } = await supabase
-      .from('orders')
-      .select(`
-        *,
-        profiles!orders_customer_id_fkey(first_name, last_name, email, phone),
-        order_items(*, parts(name, image_url, category, stock_quantity))
-      `)
-      .eq('id', orderId)
-      .maybeSingle();
+    const { data: baseOrder, error: orderError } =
+      await supabase
+        .from('orders')
+        .select('*')
+        .eq('id', orderId)
+        .maybeSingle();
 
-    if (error) {
+    if (orderError) {
       setOrder(null);
       setPayments([]);
       setInvoice(null);
       setLoading(false);
-      showErrorPopup(error.message || 'Order not found.');
+      showErrorPopup(
+        orderError.message || 'Order not found.'
+      );
       return;
     }
 
-    if (!data) {
+    if (!baseOrder) {
       setOrder(null);
       setPayments([]);
       setInvoice(null);
@@ -503,6 +507,46 @@ export default function AdminOrderDetails() {
       setLoading(false);
       return;
     }
+
+    const [profileResult, itemsResult] = await Promise.all([
+      baseOrder.customer_id
+        ? supabase
+            .from('profiles')
+            .select('first_name, last_name, email, phone')
+            .eq('id', baseOrder.customer_id)
+            .maybeSingle()
+        : Promise.resolve({
+            data: null,
+            error: null,
+          }),
+      supabase
+        .from('order_items')
+        .select(`
+          *,
+          parts(name, image_url, category, stock_quantity)
+        `)
+        .eq('order_id', baseOrder.id),
+    ]);
+
+    if (profileResult.error) {
+      console.warn(
+        'Order loaded, but customer profile could not be loaded:',
+        profileResult.error
+      );
+    }
+
+    if (itemsResult.error) {
+      console.warn(
+        'Order loaded, but order items could not be loaded:',
+        itemsResult.error
+      );
+    }
+
+    const data = {
+      ...baseOrder,
+      profiles: profileResult.data || null,
+      order_items: itemsResult.data || [],
+    };
 
     setOrder(data);
 
@@ -699,7 +743,9 @@ export default function AdminOrderDetails() {
           method: paymentForm.method || 'cash',
           processed_by: user?.id || null,
         })
-        .select('id, receipt_number, receipt_issued_at, payment_type, method, amount')
+        .select(
+          'id, receipt_number, receipt_issued_at, created_at, payment_type, method, amount'
+        )
         .single();
 
       if (paymentError) throw paymentError;
@@ -938,8 +984,20 @@ export default function AdminOrderDetails() {
       setInvoice(displayInvoice);
       setDocumentModal('invoice');
     } catch (err) {
-      setDocumentError(err.message || 'Failed to load invoice.');
-      showErrorPopup(err.message || 'Failed to load invoice.');
+      const originalMessage =
+        err.message || 'Failed to load invoice.';
+      const isGuestInvoiceFunctionIssue =
+        !order?.customer_id &&
+        originalMessage
+          .toLowerCase()
+          .includes('order not found');
+
+      const message = isGuestInvoiceFunctionIssue
+        ? 'The order exists, but the current invoice SQL treats guest orders as missing because customer_id is empty. Run fix_guest_order_invoice_generation.sql in Supabase, then try again.'
+        : originalMessage;
+
+      setDocumentError(message);
+      showErrorPopup(message);
     } finally {
       setLoadingInvoice(false);
     }
@@ -1455,10 +1513,21 @@ export default function AdminOrderDetails() {
       <InvoiceReceiptModal
         isOpen={documentModal === 'invoice'}
         type="invoice"
-        invoice={buildInvoiceForDisplay(invoice, order, payments)}
+        invoice={buildInvoiceForDisplay(
+          invoice,
+          order,
+          payments
+        )}
         payments={excludeOldRefundPayments(payments)}
         order={order}
         customerName={customerName}
+        customerPhone={
+          order?.walkin_customer_phone ||
+          order?.guest_phone ||
+          order?.profiles?.phone ||
+          ''
+        }
+        customerEmail={order?.profiles?.email || ''}
         onClose={closeDocumentModal}
       />
 
@@ -1466,8 +1535,16 @@ export default function AdminOrderDetails() {
         isOpen={documentModal === 'receipt'}
         type="receipt"
         receipt={selectedReceipt}
+        payments={excludeOldRefundPayments(payments)}
         order={order}
         customerName={customerName}
+        customerPhone={
+          order?.walkin_customer_phone ||
+          order?.guest_phone ||
+          order?.profiles?.phone ||
+          ''
+        }
+        customerEmail={order?.profiles?.email || ''}
         onClose={closeDocumentModal}
       />
 

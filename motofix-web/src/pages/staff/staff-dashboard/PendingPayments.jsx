@@ -4,6 +4,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
 import { fetchPaymentsFor, summarizePayments } from '../../../lib/payments';
+import { generateOrSyncBookingInvoice } from '../../../lib/invoices';
+import { createReceiptHistory } from '../../../lib/receiptHistory';
 
 import {
   Section,
@@ -17,6 +19,8 @@ import {
   getReservationFee,
   bookingRequiresReservationPayment,
   getReservationPaidAmount,
+  hasReservationPaymentEvidence,
+  isReservationPaymentVerified,
   isReservationPaid,
   getLatestOnlinePayment,
   getOnlinePaymentReference,
@@ -25,6 +29,8 @@ import {
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
 const DEFAULT_PAGE_SIZE = 10;
 const ALLOWED_PAYMENT_METHODS = ['cash', 'gcash', 'card', 'bank_transfer'];
+const GCASH_REFERENCE_MIN_LENGTH = 8;
+const GCASH_REFERENCE_MAX_LENGTH = 20;
 const PAID_ORDER_PAYMENT_STATUSES = [
   'paid',
   'payment_received',
@@ -36,6 +42,18 @@ const PAID_ORDER_PAYMENT_STATUSES = [
   'confirmed',
 ];
 
+const CONFIRMED_BOOKING_ONLINE_PAYMENT_STATUSES = [
+  'paid',
+  'completed',
+  'success',
+  'successful',
+  'succeeded',
+  'captured',
+  'verified',
+  'confirmed',
+  'settled',
+];
+
 function sanitizeSearch(value) {
   return String(value || '')
     .replace(/[<>`]/g, '')
@@ -43,10 +61,80 @@ function sanitizeSearch(value) {
     .slice(0, 80);
 }
 
-function sanitizeReference(value) {
-  return String(value || '')
-    .replace(/[^a-zA-Z0-9\-_.]/g, '')
-    .slice(0, 50);
+function sanitizeGcashReference(value) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .replace(/\D/g, '')
+    .slice(0, GCASH_REFERENCE_MAX_LENGTH);
+}
+
+function isValidGcashReference(value) {
+  const reference = sanitizeGcashReference(value);
+
+  return (
+    reference.length >= GCASH_REFERENCE_MIN_LENGTH &&
+    reference.length <= GCASH_REFERENCE_MAX_LENGTH &&
+    !/^0+$/.test(reference)
+  );
+}
+
+async function findDuplicateGcashReference(reference) {
+  const cleanReference = sanitizeGcashReference(reference);
+
+  if (!isValidGcashReference(cleanReference)) return null;
+
+  const [paymentsResult, bookingsResult, ordersResult] = await Promise.all([
+    supabase
+      .from('payments')
+      .select('id, booking_id, order_id')
+      .ilike('notes', `%Reference: ${cleanReference}%`)
+      .limit(1),
+    supabase
+      .from('bookings')
+      .select('id')
+      .eq('payment_reference', cleanReference)
+      .limit(1),
+    supabase
+      .from('orders')
+      .select('id')
+      .eq('payment_reference', cleanReference)
+      .limit(1),
+  ]);
+
+  const queryError =
+    paymentsResult.error ||
+    bookingsResult.error ||
+    ordersResult.error;
+
+  if (queryError) {
+    throw new Error(
+      queryError.message ||
+        'Unable to verify whether the GCash reference was already used.'
+    );
+  }
+
+  if ((paymentsResult.data || []).length > 0) {
+    return {
+      source: 'payment',
+      id: paymentsResult.data[0].id,
+    };
+  }
+
+  if ((bookingsResult.data || []).length > 0) {
+    return {
+      source: 'booking',
+      id: bookingsResult.data[0].id,
+    };
+  }
+
+  if ((ordersResult.data || []).length > 0) {
+    return {
+      source: 'order',
+      id: ordersResult.data[0].id,
+    };
+  }
+
+  return null;
 }
 
 function sanitizeAmountInput(value) {
@@ -70,6 +158,23 @@ function normalizePaymentMethod(value) {
   const method = String(value || 'cash').trim().toLowerCase();
 
   return ALLOWED_PAYMENT_METHODS.includes(method) ? method : 'cash';
+}
+
+function getReservationPaymentMethod(booking, latestOnlinePayment = null) {
+  const rawMethod = String(
+    latestOnlinePayment?.payment_method ||
+      latestOnlinePayment?.provider ||
+      booking?.payment_method ||
+      ''
+  ).toLowerCase();
+
+  if (rawMethod.includes('cash')) return 'cash';
+  if (rawMethod.includes('card')) return 'card';
+  if (rawMethod.includes('bank')) return 'bank_transfer';
+
+  // PayMongo QR Ph, personal GCash, and manual GCash are recorded as GCash
+  // in the canonical payments table.
+  return 'gcash';
 }
 
 function safeId(value) {
@@ -232,26 +337,98 @@ function getOrderPaymentSummary(order, paymentList = []) {
 }
 
 
-function getBookingPaidAmountWithoutDoubleCount(booking, paymentList = []) {
+function getConfirmedBookingOnlinePaymentTotal(paymentList = []) {
+  return (paymentList || []).reduce((sum, payment) => {
+    const paymentType = String(
+      payment?.payment_type || payment?.type || ''
+    ).toLowerCase();
+
+    if (paymentType === 'refund') {
+      return sum - (Number(payment?.amount) || 0);
+    }
+
+    const status = String(
+      payment?.status || payment?.payment_status || ''
+    ).toLowerCase();
+
+    if (!CONFIRMED_BOOKING_ONLINE_PAYMENT_STATUSES.includes(status)) {
+      return sum;
+    }
+
+    return sum + (Number(payment?.amount) || 0);
+  }, 0);
+}
+
+function manualPaymentsAlreadyIncludeReservation(booking, paymentList = []) {
+  const verifiedAt = new Date(
+    booking?.payment_received_at || booking?.paid_at || ''
+  ).getTime();
+
+  if (!Number.isFinite(verifiedAt)) return false;
+
+  // Counter reservation payments are inserted immediately before the booking
+  // is marked payment_received. Payments made later are balance payments.
+  const verificationWindowEnd = verifiedAt + 2 * 60 * 1000;
+
+  return (paymentList || []).some((payment) => {
+    const paymentType = String(
+      payment?.payment_type || payment?.type || ''
+    ).toLowerCase();
+
+    if (paymentType === 'refund') return false;
+    if ((Number(payment?.amount) || 0) <= 0) return false;
+
+    const createdAt = new Date(
+      payment?.created_at ||
+        payment?.receipt_issued_at ||
+        payment?.paid_at ||
+        ''
+    ).getTime();
+
+    return (
+      Number.isFinite(createdAt) &&
+      createdAt <= verificationWindowEnd
+    );
+  });
+}
+
+function getBookingPaidAmountWithoutDoubleCount(
+  booking,
+  paymentList = [],
+  onlinePaymentList = []
+) {
   const total = calculateBookingTotal(booking);
   const manualTotalPaid =
     Number(summarizePayments(paymentList || []).totalPaid) || 0;
+  const onlineTotalPaid = getConfirmedBookingOnlinePaymentTotal(
+    onlinePaymentList
+  );
   const reservationPaidAmount = getReservationPaidAmount(booking);
-  const paymentStatus = String(booking?.payment_status || '').toLowerCase();
 
-  if (paymentStatus === 'paid' && reservationPaidAmount >= total && total > 0) {
-    return total;
-  }
+  const reservationNeedsFallback =
+    reservationPaidAmount > 0 &&
+    onlineTotalPaid <= 0 &&
+    !manualPaymentsAlreadyIncludeReservation(booking, paymentList);
 
-  // If a receipt/payment row already exists for the down payment, do not add
-  // bookings.down_payment_amount again. Otherwise the same ₱98 reservation fee
-  // becomes counted twice and the due becomes ₱295 instead of ₱393.
-  return Math.max(manualTotalPaid, reservationPaidAmount);
+  const totalPaid =
+    manualTotalPaid +
+    onlineTotalPaid +
+    (reservationNeedsFallback ? reservationPaidAmount : 0);
+
+  return Math.max(0, total > 0 ? Math.min(totalPaid, total) : totalPaid);
 }
 
-function getBookingDueWithoutDoubleCount(booking, paymentList = []) {
+function getBookingDueWithoutDoubleCount(
+  booking,
+  paymentList = [],
+  onlinePaymentList = []
+) {
   const total = calculateBookingTotal(booking);
-  const totalPaid = getBookingPaidAmountWithoutDoubleCount(booking, paymentList);
+  const totalPaid = getBookingPaidAmountWithoutDoubleCount(
+    booking,
+    paymentList,
+    onlinePaymentList
+  );
 
   return Math.max(total - totalPaid, 0);
 }
@@ -336,6 +513,13 @@ function getBookingPaymentInstruction(booking, latestOnlinePayment = null) {
   const paymentStatus = String(booking?.payment_status || '').toLowerCase();
   const paymentMethod = String(booking?.payment_method || '').toLowerCase();
 
+  if (
+    hasReservationPaymentEvidence(booking) &&
+    !isReservationPaymentVerified(booking)
+  ) {
+    return 'Customer payment detected. A staff member must verify the payment before confirming the booking.';
+  }
+
   if (paymentStatus === 'pending_payment' || paymentMethod === 'cash_at_shop' || paymentMethod === 'cash') {
     return 'Waiting for cash down payment at the shop counter before booking confirmation.';
   }
@@ -380,6 +564,15 @@ function OrderPaymentBadge({ status }) {
 }
 
 
+
+function needsReservationVerification(booking) {
+  return (
+    bookingRequiresReservationPayment(booking) &&
+    hasReservationPaymentEvidence(booking) &&
+    !isReservationPaymentVerified(booking)
+  );
+}
+
 function getBookingPaymentActionLabel(type, record, due, totalPaid) {
   if (type !== 'booking') return 'Confirm';
 
@@ -390,6 +583,100 @@ function getBookingPaymentActionLabel(type, record, due, totalPaid) {
   }
 
   return 'Confirm';
+}
+
+
+function getReceiptPaymentMethod(method) {
+  const value = String(method || 'cash').toLowerCase();
+
+  if (value.includes('gcash')) return 'GCash Manual';
+  if (value.includes('paymongo')) return 'PayMongo';
+  if (value.includes('qrph')) return 'QRPH';
+  if (value.includes('card')) return 'Card';
+  if (value.includes('bank')) return 'Bank Transfer';
+
+  return 'Cash';
+}
+
+function getBookingReceiptItems(booking, total) {
+  const receiptItems = [];
+
+  const services = Array.isArray(booking?.booking_services)
+    ? booking.booking_services
+    : [];
+
+  services.forEach((service) => {
+    const quantity = Math.max(1, Number(service?.quantity) || 1);
+    const unitPrice =
+      (Number(service?.base_price) || 0) +
+      (Number(service?.labor_cost) || 0);
+
+    receiptItems.push({
+      itemType: 'service',
+      itemName:
+        service?.service_name ||
+        service?.name ||
+        service?.services?.name ||
+        'Motorcycle Service',
+      quantity,
+      unitPrice,
+      lineTotal: unitPrice * quantity,
+      relatedServiceId: service?.service_id || null,
+    });
+  });
+
+  const products = Array.isArray(booking?.parts_used)
+    ? booking.parts_used
+    : Array.isArray(booking?.products)
+      ? booking.products
+      : [];
+
+  products.forEach((product) => {
+    const quantity = Math.max(1, Number(product?.quantity) || 1);
+    const unitPrice =
+      Number(product?.unit_price ?? product?.price) || 0;
+
+    receiptItems.push({
+      itemType: 'product',
+      itemName: product?.name || 'Product / Part',
+      quantity,
+      unitPrice,
+      lineTotal:
+        Number(product?.subtotal) || unitPrice * quantity,
+      relatedPartId: product?.part_id || product?.id || null,
+    });
+  });
+
+  if (receiptItems.length === 0) {
+    receiptItems.push({
+      itemType: 'service',
+      itemName: getBookingServicesSummary(booking),
+      quantity: 1,
+      unitPrice: Number(total) || 0,
+      lineTotal: Number(total) || 0,
+    });
+  }
+
+  return receiptItems;
+}
+
+async function saveReceiptHistorySafely(payload) {
+  try {
+    const receipt = await createReceiptHistory(payload);
+
+    return {
+      receipt,
+      warning: '',
+    };
+  } catch (receiptError) {
+    console.error('Payment saved, but receipt history failed:', receiptError);
+
+    return {
+      receipt: null,
+      warning:
+        'Payment was saved, but it could not be added to the Receipts tab. Check the receipts table permissions or run the receipt-history SQL migration.',
+    };
+  }
 }
 
 function PaginationControls({ page, totalPages, pageSize, onPageChange, onPageSizeChange }) {
@@ -514,14 +801,14 @@ export default function PendingPayments({ staffId, onReceipt }) {
             *,
             services(name, base_price, labor_cost),
             booking_services(id, service_id, service_name, base_price, labor_cost, estimated_duration_minutes, quantity),
-            profiles!bookings_customer_id_fkey(first_name, last_name, profile_photo_url)
+            profiles!bookings_customer_id_fkey(first_name, last_name, phone, email, profile_photo_url)
           `)
           .neq('status', 'completed')
           .neq('status', 'cancelled')
           .order('created_at', { ascending: false }),
         supabase
           .from('orders')
-          .select('*, profiles!orders_customer_id_fkey(first_name, last_name, profile_photo_url)')
+          .select('*, profiles!orders_customer_id_fkey(first_name, last_name, phone, email, profile_photo_url)')
           .not('status', 'in', '(completed,cancelled,canceled,returned,refunded,void)')
           .order('created_at', { ascending: false }),
       ]);
@@ -643,13 +930,20 @@ export default function PendingPayments({ staffId, onReceipt }) {
       }
 
       setBookings(
-        bookingsData.filter(
-          (booking) =>
+        bookingsData.filter((booking) => {
+          const payments = groupedBookingPayments[booking.id] || [];
+          const onlinePayments =
+            groupedOnlineBookingPayments[booking.id] || [];
+
+          return (
+            needsReservationVerification(booking) ||
             getBookingDueWithoutDoubleCount(
               booking,
-              groupedBookingPayments[booking.id] || []
+              payments,
+              onlinePayments
             ) > 0
-        )
+          );
+        })
       );
 
       setOrders(
@@ -699,13 +993,297 @@ export default function PendingPayments({ staffId, onReceipt }) {
     setError('');
   }
 
+
+  async function verifyReservationPayment(record, latestOnlinePayment = null) {
+    if (!record?.id || savingPayment) return;
+
+    if (!needsReservationVerification(record)) {
+      setError('This reservation payment is not waiting for staff verification.');
+      return;
+    }
+
+    const reservationFee = getReservationFee(record);
+    const onlineAmount = Number(latestOnlinePayment?.amount) || 0;
+    const verifiedAmount = onlineAmount > 0 ? onlineAmount : reservationFee;
+    const rawReference = getOnlinePaymentReference(record, latestOnlinePayment);
+    const reference =
+      rawReference && rawReference !== '—' ? rawReference : null;
+    const canonicalMethod = getReservationPaymentMethod(
+      record,
+      latestOnlinePayment
+    );
+
+    const actionConfirmed = window.confirm(
+      `Verify this reservation payment?\n\n` +
+        `Customer: ${getCustomerName(record)}\n` +
+        `Amount: ${formatPeso(verifiedAmount)}\n` +
+        `Reference: ${reference || 'No reference'}\n\n` +
+        'After verification, staff may confirm the booking.'
+    );
+
+    if (!actionConfirmed) return;
+
+    setSavingPayment(true);
+    setError('');
+
+    let receiptHistoryWarning = '';
+
+    try {
+      const now = new Date().toISOString();
+
+      // Keep one canonical down-payment entry in public.payments. The invoice
+      // RPC uses this table to calculate amount_paid and balance_due.
+      const { data: existingPayments, error: existingPaymentsError } =
+        await supabase
+          .from('payments')
+          .select(
+            'id, amount, payment_type, method, notes, receipt_number, receipt_issued_at, created_at'
+          )
+          .eq('booking_id', record.id)
+          .neq('payment_type', 'refund');
+
+      if (existingPaymentsError) throw existingPaymentsError;
+
+      let canonicalPayment = (existingPayments || []).find(
+        (payment) => {
+          const paymentType = String(
+            payment?.payment_type || ''
+          ).toLowerCase();
+          const paymentAmount = Number(payment?.amount) || 0;
+          const notes = String(payment?.notes || '');
+
+          if (paymentType === 'down_payment') return true;
+
+          return (
+            Math.abs(paymentAmount - verifiedAmount) < 0.01 &&
+            Boolean(reference) &&
+            notes.includes(reference)
+          );
+        }
+      );
+
+      if (!canonicalPayment && verifiedAmount > 0) {
+        const referenceNote = reference
+          ? `Verified reservation payment · Reference: ${reference}`
+          : 'Verified reservation payment';
+
+        const {
+          data: insertedCanonicalPayment,
+          error: canonicalPaymentError,
+        } = await supabase
+            .from('payments')
+            .insert({
+              booking_id: record.id,
+              amount: verifiedAmount,
+              payment_type: 'down_payment',
+              method: canonicalMethod,
+              notes: referenceNote,
+              processed_by: staffId || null,
+            })
+            .select(
+              'id, amount, payment_type, method, receipt_number, receipt_issued_at, created_at'
+            )
+            .single();
+
+        if (canonicalPaymentError) throw canonicalPaymentError;
+
+        canonicalPayment = insertedCanonicalPayment;
+      }
+
+      const { error: updateError } = await supabase
+        .from('bookings')
+        .update({
+          payment_status: 'paid',
+          reservation_fee: reservationFee,
+          payment_reference: reference || record.payment_reference || null,
+          payment_received: true,
+          payment_received_at: now,
+          payment_received_by: staffId || null,
+          paid_at:
+            record.paid_at ||
+            latestOnlinePayment?.paid_at ||
+            latestOnlinePayment?.created_at ||
+            now,
+          updated_at: now,
+        })
+        .eq('id', record.id);
+
+      if (updateError) throw updateError;
+
+      // Rebuild invoice totals after the canonical payment is stored.
+      await generateOrSyncBookingInvoice({ bookingId: record.id });
+
+      if (canonicalPayment?.id) {
+        const issuedAt =
+          canonicalPayment.receipt_issued_at ||
+          canonicalPayment.created_at ||
+          now;
+        const receiptNumber =
+          canonicalPayment.receipt_number ||
+          `MTFX-DP-${safeShortId(canonicalPayment.id)}`;
+
+        const receiptHistoryResult = await saveReceiptHistorySafely({
+          receiptNumber,
+          sourceType: 'booking',
+          sourceId: record.id,
+          paymentTable: 'payments',
+          paymentId: canonicalPayment.id,
+          customerId: record.customer_id || null,
+          customerName: getCustomerName(record),
+          customerPhone:
+            record.profiles?.phone ||
+            record.customer?.phone ||
+            null,
+          customerEmail:
+            record.profiles?.email ||
+            record.customer?.email ||
+            null,
+          paymentMethod: getReceiptPaymentMethod(
+            canonicalPayment.method || canonicalMethod
+          ),
+          paymentReference:
+            reference ||
+            record.payment_reference ||
+            receiptNumber,
+          subtotal: calculateBookingTotal(record),
+          discountAmount: 0,
+          taxAmount: 0,
+          totalAmount: calculateBookingTotal(record),
+          amountPaid: verifiedAmount,
+          balanceAmount: Math.max(
+            calculateBookingTotal(record) - verifiedAmount,
+            0
+          ),
+          status: 'issued',
+          notes: 'Verified booking reservation payment.',
+          issuedBy: staffId || null,
+          issuedAt,
+          metadata: {
+            payment_type: 'down_payment',
+            booking_status: record.status || null,
+            provider: latestOnlinePayment?.provider || null,
+          },
+          items: getBookingReceiptItems(
+            record,
+            calculateBookingTotal(record)
+          ),
+        });
+
+        receiptHistoryWarning = receiptHistoryResult.warning;
+      }
+
+      const { error: auditError } = await supabase.from('audit_logs').insert({
+        action: 'VERIFY_RESERVATION_PAYMENT',
+        entity: 'bookings',
+        entity_id: record.id,
+        performed_by: staffId || null,
+        details: {
+          amount: verifiedAmount,
+          reservation_fee: reservationFee,
+          payment_method: canonicalMethod,
+          payment_reference: reference,
+          provider: latestOnlinePayment?.provider || null,
+          provider_payment_id: latestOnlinePayment?.provider_payment_id || null,
+          canonical_payment_id: canonicalPayment?.id || null,
+          canonical_payment_created: Boolean(canonicalPayment?.id),
+          verified_at: now,
+        },
+      });
+
+      if (auditError) {
+        console.warn(
+          'Payment verified, but the audit log could not be saved:',
+          auditError.message
+        );
+      }
+
+      if (canonicalPayment?.id) {
+        const bookingTotal = calculateBookingTotal(record);
+        const receiptNumber =
+          canonicalPayment.receipt_number ||
+          `MTFX-DP-${safeShortId(canonicalPayment.id)}`;
+
+        onReceipt?.({
+          customerName: getCustomerName(record),
+          customerPhone:
+            record.profiles?.phone ||
+            record.customer?.phone ||
+            '—',
+          customerEmail:
+            record.profiles?.email ||
+            record.customer?.email ||
+            '—',
+          type: 'reservation_payment_verification',
+          sourceLabel: 'Payment Verification',
+          transactionLabel: 'Verified Reservation Payment',
+          paymentType: 'down_payment',
+          paymentReference:
+            reference ||
+            record.payment_reference ||
+            receiptNumber,
+          items: getBookingReceiptItems(
+            record,
+            bookingTotal
+          ).map((item) => ({
+            label: item.itemName || 'Motorcycle Service',
+            description: item.itemType || 'Service',
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            lineTotal: item.lineTotal,
+            amount: item.lineTotal,
+          })),
+          subtotal: bookingTotal,
+          discountAmount: 0,
+          taxAmount: 0,
+          total: bookingTotal,
+          amountPaid: verifiedAmount,
+          balance: Math.max(
+            bookingTotal - verifiedAmount,
+            0
+          ),
+          status:
+            bookingTotal - verifiedAmount <= 0
+              ? 'paid'
+              : 'partially_paid',
+          paymentMethod: getReceiptPaymentMethod(
+            canonicalPayment.method || canonicalMethod
+          ),
+          receiptNumber,
+          issuedAt:
+            canonicalPayment.receipt_issued_at ||
+            canonicalPayment.created_at ||
+            now,
+          referenceId: safeShortId(record.id),
+          bookingId: record.id,
+          motorcycleModel:
+            record.motorcycle_model ||
+            record.motorcycleModel ||
+            '',
+          notes: 'Verified booking reservation payment.',
+        });
+      }
+
+      await fetchPending(false);
+
+      if (receiptHistoryWarning) {
+        setError(receiptHistoryWarning);
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to verify the reservation payment.');
+    } finally {
+      setSavingPayment(false);
+    }
+  }
+
   async function confirmPayment() {
     if (!confirming || savingPayment) return;
 
-    const { type, record, due, total } = confirming;
+    let receiptHistoryWarning = '';
+
+    const { type, record, due, total, totalPaid = 0 } = confirming;
     const paidAmount = parseMoney(amount);
     const cleanMethod = normalizePaymentMethod(method);
-    const cleanReference = sanitizeReference(paymentReference);
+    const cleanReference = sanitizeGcashReference(paymentReference);
     const customerName = getCustomerName(record);
 
     if (!paidAmount || paidAmount <= 0) {
@@ -718,9 +1296,34 @@ export default function PendingPayments({ staffId, onReceipt }) {
       return;
     }
 
-    if (cleanMethod === 'gcash' && !cleanReference) {
-      setError('Enter the GCash reference number before confirming payment.');
+    if (
+      cleanMethod === 'gcash' &&
+      !isValidGcashReference(cleanReference)
+    ) {
+      setError(
+        `Enter a valid GCash reference containing ${GCASH_REFERENCE_MIN_LENGTH}–${GCASH_REFERENCE_MAX_LENGTH} digits only.`
+      );
       return;
+    }
+
+    if (cleanMethod === 'gcash') {
+      try {
+        const duplicateReference =
+          await findDuplicateGcashReference(cleanReference);
+
+        if (duplicateReference) {
+          setError(
+            'This GCash reference number has already been used. Check the transaction receipt and enter a unique reference.'
+          );
+          return;
+        }
+      } catch (referenceError) {
+        setError(
+          referenceError.message ||
+            'Unable to validate the GCash reference number.'
+        );
+        return;
+      }
     }
 
     const actionConfirmed = window.confirm(
@@ -754,7 +1357,7 @@ export default function PendingPayments({ staffId, onReceipt }) {
             notes: receiptNotes,
             processed_by: staffId || null,
           })
-          .select('id, receipt_number, receipt_issued_at, payment_type, method, amount')
+          .select('id, receipt_number, receipt_issued_at, created_at, payment_type, method, amount')
           .single();
 
         if (paymentError) throw paymentError;
@@ -762,8 +1365,8 @@ export default function PendingPayments({ staffId, onReceipt }) {
 
         if (
           bookingRequiresReservationPayment(record) &&
-          !isReservationPaid(record) &&
-          paidAmount >= getReservationFee(record)
+          !isReservationPaymentVerified(record) &&
+          totalPaid + paidAmount >= getReservationFee(record)
         ) {
           const { error: modulePaymentError } = await supabase
             .from('bookings')
@@ -771,6 +1374,9 @@ export default function PendingPayments({ staffId, onReceipt }) {
               payment_status: 'paid',
               reservation_fee: getReservationFee(record),
               payment_reference: cleanReference || paymentRecord?.receipt_number || null,
+              payment_received: true,
+              payment_received_at: now,
+              payment_received_by: staffId || null,
               paid_at: now,
               updated_at: now,
             })
@@ -779,17 +1385,11 @@ export default function PendingPayments({ staffId, onReceipt }) {
           if (modulePaymentError) throw modulePaymentError;
         }
 
-        if (isFullPayment) {
-          const { error: updateError } = await supabase
-            .from('bookings')
-            .update({
-              status: 'completed',
-              updated_at: now,
-            })
-            .eq('id', record.id);
-
-          if (updateError) throw updateError;
-        }
+        // A fully paid invoice must not complete the motorcycle service.
+        // Service status is controlled only from Service Progress.
+        await generateOrSyncBookingInvoice({
+          bookingId: record.id,
+        });
 
         await supabase.from('audit_logs').insert({
           action: 'CONFIRM_PAYMENT',
@@ -801,20 +1401,129 @@ export default function PendingPayments({ staffId, onReceipt }) {
             amount: paidAmount,
             payment_reference: cleanReference || null,
             is_full_payment: isFullPayment,
+            service_status_unchanged: true,
+            current_service_status: record.status || null,
           },
         });
 
+        const bookingReceiptHistory = await saveReceiptHistorySafely({
+          receiptNumber:
+            paymentRecord?.receipt_number ||
+            `MTFX-BKG-${safeShortId(paymentRecord?.id || record.id)}`,
+          sourceType: 'booking',
+          sourceId: record.id,
+          paymentTable: 'payments',
+          paymentId: paymentRecord?.id || null,
+          customerId: record.customer_id || null,
+          customerName,
+          customerPhone:
+            record.profiles?.phone ||
+            record.customer?.phone ||
+            null,
+          customerEmail:
+            record.profiles?.email ||
+            record.customer?.email ||
+            null,
+          paymentMethod: getReceiptPaymentMethod(
+            paymentRecord?.method || cleanMethod
+          ),
+          paymentReference:
+            cleanReference ||
+            paymentRecord?.receipt_number ||
+            record.payment_reference ||
+            null,
+          subtotal: total,
+          discountAmount: 0,
+          taxAmount: 0,
+          totalAmount: total,
+          amountPaid: paidAmount,
+          balanceAmount: Math.max(due - paidAmount, 0),
+          status: 'issued',
+          notes: `${
+            isFullPayment ? 'Full' : 'Balance'
+          } payment for scheduled booking.`,
+          issuedBy: staffId || null,
+          issuedAt:
+            paymentRecord?.receipt_issued_at ||
+            paymentRecord?.created_at ||
+            now,
+          metadata: {
+            payment_type:
+              paymentRecord?.payment_type ||
+              (isFullPayment ? 'full' : 'balance'),
+            booking_status: record.status || null,
+            due_before_payment: due,
+            total_paid_before_payment: totalPaid,
+          },
+          items: getBookingReceiptItems(record, total),
+        });
+
+        receiptHistoryWarning = bookingReceiptHistory.warning;
+
         onReceipt?.({
           customerName,
-          type,
-          paymentType: paymentRecord?.payment_type || (isFullPayment ? 'full' : 'balance'),
-          items: [{ label: getBookingServicesSummary(record), amount: total }],
+          customerPhone:
+            record.profiles?.phone ||
+            record.customer?.phone ||
+            '—',
+          customerEmail:
+            record.profiles?.email ||
+            record.customer?.email ||
+            '—',
+          type: 'booking_payment',
+          sourceLabel: 'Payment Verification',
+          transactionLabel: 'Scheduled Booking Payment',
+          paymentType:
+            paymentRecord?.payment_type ||
+            (isFullPayment ? 'full' : 'balance'),
+          paymentReference:
+            cleanReference ||
+            paymentRecord?.receipt_number ||
+            record.payment_reference ||
+            '—',
+          items: getBookingReceiptItems(record, total).map(
+            (item) => ({
+              label: item.itemName || 'Motorcycle Service',
+              description: item.itemType || 'Service',
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              lineTotal: item.lineTotal,
+              amount: item.lineTotal,
+            })
+          ),
+          subtotal: total,
+          discountAmount: 0,
+          taxAmount: 0,
           total,
-          amountPaid: paymentRecord?.amount ?? paidAmount,
-          paymentMethod: paymentRecord?.method || cleanMethod,
-          receiptNumber: paymentRecord?.receipt_number,
-          issuedAt: paymentRecord?.receipt_issued_at,
+          amountPaid:
+            paymentRecord?.amount ?? paidAmount,
+          balance: Math.max(due - paidAmount, 0),
+          status:
+            Math.max(due - paidAmount, 0) <= 0
+              ? 'paid'
+              : 'partially_paid',
+          paymentMethod:
+            getReceiptPaymentMethod(
+              paymentRecord?.method || cleanMethod
+            ),
+          receiptNumber:
+            paymentRecord?.receipt_number ||
+            `MTFX-BKG-${safeShortId(
+              paymentRecord?.id || record.id
+            )}`,
+          issuedAt:
+            paymentRecord?.receipt_issued_at ||
+            paymentRecord?.created_at ||
+            now,
           referenceId: safeShortId(record.id),
+          bookingId: record.id,
+          motorcycleModel:
+            record.motorcycle_model ||
+            record.motorcycleModel ||
+            '',
+          notes: `${
+            isFullPayment ? 'Full' : 'Balance'
+          } payment for scheduled booking.`,
         });
       } else {
         const previousPaid = getOrderPaidAmount(record, orderPayments[record.id] || []);
@@ -832,7 +1541,7 @@ export default function PendingPayments({ staffId, onReceipt }) {
             notes: receiptNotes,
             processed_by: staffId || null,
           })
-          .select('id, receipt_number, receipt_issued_at, payment_type, method, amount')
+          .select('id, receipt_number, receipt_issued_at, created_at, payment_type, method, amount')
           .single();
 
         if (paymentError) throw paymentError;
@@ -872,17 +1581,128 @@ export default function PendingPayments({ staffId, onReceipt }) {
           },
         });
 
+        const orderReceiptHistory = await saveReceiptHistorySafely({
+          receiptNumber:
+            paymentRecord?.receipt_number ||
+            `MTFX-ORD-${safeShortId(paymentRecord?.id || record.id)}`,
+          sourceType: 'order',
+          sourceId: record.id,
+          paymentTable: 'payments',
+          paymentId: paymentRecord?.id || null,
+          customerId: record.customer_id || null,
+          customerName,
+          customerPhone:
+            record.walkin_customer_phone ||
+            record.profiles?.phone ||
+            record.customer?.phone ||
+            null,
+          customerEmail:
+            record.profiles?.email ||
+            record.customer?.email ||
+            null,
+          paymentMethod: getReceiptPaymentMethod(
+            paymentRecord?.method || cleanMethod
+          ),
+          paymentReference:
+            cleanReference ||
+            paymentRecord?.receipt_number ||
+            record.payment_reference ||
+            null,
+          subtotal: total,
+          discountAmount: 0,
+          taxAmount: 0,
+          totalAmount: total,
+          amountPaid: paidAmount,
+          balanceAmount: newDue,
+          status: 'issued',
+          notes: `${
+            isFullPayment ? 'Full' : 'Balance'
+          } payment for parts order.`,
+          issuedBy: staffId || null,
+          issuedAt:
+            paymentRecord?.receipt_issued_at ||
+            paymentRecord?.created_at ||
+            now,
+          metadata: {
+            payment_type:
+              paymentRecord?.payment_type ||
+              (isFullPayment ? 'full' : 'balance'),
+            order_status: record.status || null,
+            previous_paid: previousPaid,
+            new_total_paid: newTotalPaid,
+          },
+          items: [
+            {
+              itemType: 'product',
+              itemName: 'Parts order',
+              quantity: 1,
+              unitPrice: total,
+              lineTotal: total,
+            },
+          ],
+        });
+
+        receiptHistoryWarning = orderReceiptHistory.warning;
+
         onReceipt?.({
           customerName,
-          type,
-          paymentType: paymentRecord?.payment_type || (isFullPayment ? 'full' : 'balance'),
-          items: [{ label: 'Parts order', amount: Number(record.total_amount) || 0 }],
+          customerPhone:
+            record.walkin_customer_phone ||
+            record.profiles?.phone ||
+            record.customer?.phone ||
+            '—',
+          customerEmail:
+            record.profiles?.email ||
+            record.customer?.email ||
+            '—',
+          type: 'order_payment',
+          sourceLabel: 'Payment Verification',
+          transactionLabel: 'Parts Order Payment',
+          paymentType:
+            paymentRecord?.payment_type ||
+            (isFullPayment ? 'full' : 'balance'),
+          paymentReference:
+            cleanReference ||
+            paymentRecord?.receipt_number ||
+            record.payment_reference ||
+            '—',
+          items: [
+            {
+              label: 'Parts Order',
+              description: 'Order payment',
+              quantity: 1,
+              unitPrice: total,
+              lineTotal: total,
+              amount: total,
+            },
+          ],
+          subtotal: total,
+          discountAmount: 0,
+          taxAmount: 0,
           total,
-          amountPaid: paymentRecord?.amount ?? paidAmount,
-          paymentMethod: paymentRecord?.method || cleanMethod,
-          receiptNumber: paymentRecord?.receipt_number,
-          issuedAt: paymentRecord?.receipt_issued_at,
+          amountPaid:
+            paymentRecord?.amount ?? paidAmount,
+          balance: newDue,
+          status:
+            newDue <= 0 ? 'paid' : 'partially_paid',
+          paymentMethod:
+            getReceiptPaymentMethod(
+              paymentRecord?.method || cleanMethod
+            ),
+          receiptNumber:
+            paymentRecord?.receipt_number ||
+            `MTFX-ORD-${safeShortId(
+              paymentRecord?.id || record.id
+            )}`,
+          issuedAt:
+            paymentRecord?.receipt_issued_at ||
+            paymentRecord?.created_at ||
+            now,
           referenceId: safeShortId(record.id),
+          orderId: record.id,
+          notes: `${
+            isFullPayment ? 'Full' : 'Balance'
+          } payment for parts order.`,
         });
       }
 
@@ -891,6 +1711,10 @@ export default function PendingPayments({ staffId, onReceipt }) {
       setMethod('cash');
       setPaymentReference('');
       await fetchPending(false);
+
+      if (receiptHistoryWarning) {
+        setError(receiptHistoryWarning);
+      }
     } catch (err) {
       setError(err.message || 'Failed to confirm payment.');
     } finally {
@@ -923,7 +1747,12 @@ export default function PendingPayments({ staffId, onReceipt }) {
   const totals = useMemo(() => {
     const bookingDue = filteredBookings.reduce(
       (sum, booking) =>
-        sum + getBookingDueWithoutDoubleCount(booking, bookingPayments[booking.id] || []),
+        sum +
+        getBookingDueWithoutDoubleCount(
+          booking,
+          bookingPayments[booking.id] || [],
+          onlineBookingPayments[booking.id] || []
+        ),
       0
     );
 
@@ -937,7 +1766,13 @@ export default function PendingPayments({ staffId, onReceipt }) {
       orderDue,
       totalDue: bookingDue + orderDue,
     };
-  }, [filteredBookings, filteredOrders, bookingPayments, orderPayments]);
+  }, [
+    filteredBookings,
+    filteredOrders,
+    bookingPayments,
+    onlineBookingPayments,
+    orderPayments,
+  ]);
 
   const safePageSize = PAGE_SIZE_OPTIONS.includes(Number(pageSize))
     ? Number(pageSize)
@@ -953,15 +1788,27 @@ export default function PendingPayments({ staffId, onReceipt }) {
   const paginatedOrders = filteredOrders.slice(orderStart, orderStart + safePageSize);
 
   function PaymentRow({ type, record, payments }) {
-    const orderSummary = type === 'order' ? getOrderPaymentSummary(record, payments) : null;
-    const total = type === 'booking' ? calculateBookingTotal(record) : orderSummary.total;
+    const orderSummary =
+      type === 'order' ? getOrderPaymentSummary(record, payments) : null;
+    const onlinePayments =
+      type === 'booking' ? onlineBookingPayments[record.id] || [] : [];
+    const total =
+      type === 'booking' ? calculateBookingTotal(record) : orderSummary.total;
     const totalPaid =
       type === 'booking'
-        ? getBookingPaidAmountWithoutDoubleCount(record, payments)
+        ? getBookingPaidAmountWithoutDoubleCount(
+            record,
+            payments,
+            onlinePayments
+          )
         : orderSummary.totalPaid;
     const due =
       type === 'booking'
-        ? getBookingDueWithoutDoubleCount(record, payments)
+        ? getBookingDueWithoutDoubleCount(
+            record,
+            payments,
+            onlinePayments
+          )
         : orderSummary.due;
     const percent =
       type === 'booking'
@@ -969,9 +1816,11 @@ export default function PendingPayments({ staffId, onReceipt }) {
           ? Math.min(Math.round((totalPaid / total) * 100), 100)
           : 0
         : orderSummary.percent;
-    const requiresReservationPayment = type === 'booking' && bookingRequiresReservationPayment(record);
-    const onlinePayments = type === 'booking' ? onlineBookingPayments[record.id] || [] : [];
+    const requiresReservationPayment =
+      type === 'booking' && bookingRequiresReservationPayment(record);
     const latestOnlinePayment = getLatestOnlinePayment(onlinePayments);
+    const waitingForStaffVerification =
+      type === 'booking' && needsReservationVerification(record);
 
     return (
       <div className="flex items-center gap-4 rounded-3xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900">
@@ -987,7 +1836,13 @@ export default function PendingPayments({ staffId, onReceipt }) {
 
           {requiresReservationPayment && (
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <ModulePaymentBadge status={record.payment_status} />
+              <ModulePaymentBadge
+                status={
+                  waitingForStaffVerification
+                    ? 'pending_verification'
+                    : record.payment_status
+                }
+              />
               <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">
                 Fee {formatPeso(getReservationFee(record))} · {getBookingPaymentMethodDisplay(record, latestOnlinePayment)} · Ref {record.payment_reference || getOnlinePaymentReference(record, latestOnlinePayment)}
               </span>
@@ -1006,6 +1861,12 @@ export default function PendingPayments({ staffId, onReceipt }) {
           {requiresReservationPayment && !isReservationPaid(record) && (
             <p className="mt-2 rounded-xl bg-yellow-50 px-3 py-2 text-[11px] font-semibold leading-4 text-yellow-800 ring-1 ring-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-200 dark:ring-yellow-500/25">
               {getBookingPaymentInstruction(record, latestOnlinePayment)}
+            </p>
+          )}
+
+          {waitingForStaffVerification && (
+            <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-bold leading-4 text-amber-800 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
+              Payment evidence is available. Verify the reference or provider payment before confirming this reservation.
             </p>
           )}
 
@@ -1028,11 +1889,28 @@ export default function PendingPayments({ staffId, onReceipt }) {
           <p className="mb-2 text-[10px] font-bold text-gray-400">due</p>
           <button
             type="button"
-            onClick={() => openConfirm(type, record, due, total, totalPaid)}
-            disabled={savingPayment || due <= 0}
-            className="rounded-2xl bg-primary-600 px-4 py-2 text-xs font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => {
+              if (waitingForStaffVerification) {
+                verifyReservationPayment(record, latestOnlinePayment);
+                return;
+              }
+
+              openConfirm(type, record, due, total, totalPaid);
+            }}
+            disabled={
+              savingPayment || (!waitingForStaffVerification && due <= 0)
+            }
+            className={`rounded-2xl px-4 py-2 text-xs font-black text-white shadow-lg transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              waitingForStaffVerification
+                ? 'bg-amber-600 shadow-amber-600/20 hover:bg-amber-700'
+                : 'bg-primary-600 shadow-primary-600/20 hover:bg-primary-700'
+            }`}
           >
-            {getBookingPaymentActionLabel(type, record, due, totalPaid)}
+            {waitingForStaffVerification
+              ? savingPayment
+                ? 'Verifying...'
+                : 'Verify Reservation Payment'
+              : getBookingPaymentActionLabel(type, record, due, totalPaid)}
           </button>
         </div>
       </div>
@@ -1200,14 +2078,49 @@ export default function PendingPayments({ staffId, onReceipt }) {
       )}
 
       {confirming && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-3xl border border-gray-200 bg-white p-6 shadow-2xl dark:border-dark-700 dark:bg-dark-800">
-            <div className="mb-5 text-center">
-              <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-3xl bg-primary-50 text-2xl ring-1 ring-primary-100 dark:bg-primary-500/10 dark:ring-primary-500/20">
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !savingPayment) {
+              closeConfirm();
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-payment-title"
+            className="relative mx-auto overflow-y-auto rounded-3xl border border-gray-200 bg-white p-5 shadow-2xl dark:border-dark-700 dark:bg-dark-800 sm:p-6"
+            style={{
+              width: 'min(100%, 440px)',
+              maxWidth: 440,
+              maxHeight: 'calc(100dvh - 32px)',
+            }}
+          >
+            <button
+              type="button"
+              onClick={closeConfirm}
+              disabled={savingPayment}
+              aria-label="Close payment confirmation"
+              className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-xl border border-gray-200 bg-gray-50 text-lg font-black text-gray-500 transition hover:border-gray-300 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-400 dark:hover:text-white"
+            >
+              ×
+            </button>
+
+            <div className="mb-5 pr-10 text-center">
+              <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-primary-50 text-xl ring-1 ring-primary-100 dark:bg-primary-500/10 dark:ring-primary-500/20">
                 💳
               </div>
-              <h3 className="text-xl font-black text-gray-950 dark:text-white">Confirm Payment</h3>
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+
+              <h3
+                id="confirm-payment-title"
+                className="text-lg font-black text-gray-950 dark:text-white sm:text-xl"
+              >
+                Confirm Payment
+              </h3>
+
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 sm:text-sm">
                 {getCustomerName(confirming.record)} —{' '}
                 <span className="font-black text-accent-600 dark:text-accent-400">
                   {formatPeso(confirming.due)} due
@@ -1216,64 +2129,112 @@ export default function PendingPayments({ staffId, onReceipt }) {
             </div>
 
             {error && (
-              <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+              <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300 sm:text-sm">
                 {error}
               </div>
             )}
 
-            <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            <label className="mb-2 block text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
               Amount Received
             </label>
+
             <input
               type="text"
               inputMode="decimal"
               value={amount}
-              onChange={(event) => setAmount(sanitizeAmountInput(event.target.value))}
-              className="mb-4 w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-lg font-black text-gray-950 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+              onChange={(event) =>
+                setAmount(sanitizeAmountInput(event.target.value))
+              }
+              className="mb-4 w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-base font-black text-gray-950 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
             />
 
-            <p className="mb-2 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            <p className="mb-2 text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
               Payment Method
             </p>
+
             <div className="mb-4">
               <PaymentMethodPicker
                 value={method}
-                onChange={(value) => setMethod(normalizePaymentMethod(value))}
+                onChange={(value) =>
+                  setMethod(normalizePaymentMethod(value))
+                }
               />
             </div>
 
             {normalizePaymentMethod(method) === 'gcash' && (
               <>
-                <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                <label className="mb-2 block text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
                   GCash Reference Number
                 </label>
+
                 <input
                   type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={GCASH_REFERENCE_MAX_LENGTH}
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   value={paymentReference}
-                  onChange={(event) => setPaymentReference(sanitizeReference(event.target.value))}
-                  placeholder="Required for GCash"
-                  className="mb-4 w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-black text-gray-950 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                  onChange={(event) => {
+                    setPaymentReference(
+                      sanitizeGcashReference(event.target.value)
+                    );
+
+                    if (error) setError('');
+                  }}
+                  placeholder={`${GCASH_REFERENCE_MIN_LENGTH}–${GCASH_REFERENCE_MAX_LENGTH} digits`}
+                  aria-describedby="gcash-reference-help"
+                  className={`w-full rounded-2xl border bg-gray-50 px-4 py-3 text-sm font-black tracking-wider text-gray-950 outline-none transition focus:ring-4 dark:bg-dark-900 dark:text-white ${
+                    paymentReference &&
+                    !isValidGcashReference(paymentReference)
+                      ? 'border-red-400 focus:border-red-500 focus:ring-red-500/10 dark:border-red-500'
+                      : 'border-gray-200 focus:border-primary-500 focus:ring-primary-500/10 dark:border-dark-700'
+                  }`}
                 />
+
+                <div
+                  id="gcash-reference-help"
+                  className="mb-4 mt-2 flex items-center justify-between gap-3 text-[10px]"
+                >
+                  <span
+                    className={
+                      paymentReference &&
+                      !isValidGcashReference(paymentReference)
+                        ? 'font-bold text-red-600 dark:text-red-400'
+                        : 'text-gray-500 dark:text-gray-400'
+                    }
+                  >
+                    Digits only. Spaces, letters, and symbols are removed
+                    automatically.
+                  </span>
+
+                  <span className="whitespace-nowrap font-black text-gray-500 dark:text-gray-400">
+                    {paymentReference.length}/{GCASH_REFERENCE_MAX_LENGTH}
+                  </span>
+                </div>
               </>
             )}
 
-            <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={confirmPayment}
-                disabled={savingPayment}
-                className="w-full rounded-2xl bg-primary-600 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {savingPayment ? 'Saving...' : 'Confirm & Generate Receipt'}
-              </button>
-
+            <div className="grid gap-2 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={closeConfirm}
                 disabled={savingPayment}
-                className="w-full rounded-2xl border border-gray-200 py-3 text-sm font-black text-gray-700 transition hover:border-gray-300 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-700 dark:text-gray-300"
+                className="order-2 w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700 transition hover:border-gray-300 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-700 dark:text-gray-300 dark:hover:bg-dark-900 sm:order-1"
               >
                 Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmPayment}
+                disabled={savingPayment}
+className="order-1 w-full rounded-2xl bg-amber-500 px-4 py-3 text-sm font-black text-amber-950 shadow-lg shadow-amber-500/20 transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-60 sm:order-2"              >
+
+                {savingPayment
+                  ? 'Saving...'
+                  : 'Confirm & Generate Receipt'}
               </button>
             </div>
           </div>
