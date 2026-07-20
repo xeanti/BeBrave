@@ -1,3 +1,4 @@
+import { confirmAction } from '../../components/ConfirmModal';
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
@@ -784,8 +785,8 @@ export default function AdminServices() {
     }
   }
 
-  function removeModelReferencePhoto() {
-    const confirmed = window.confirm('Remove the uploaded motorcycle reference photo?');
+  async function removeModelReferencePhoto() {
+    const confirmed = await confirmAction('Remove the uploaded motorcycle reference photo?');
 
     if (!confirmed) return;
 
@@ -862,7 +863,7 @@ export default function AdminServices() {
           return;
         }
 
-        const confirmed = window.confirm(
+        const confirmed = await confirmAction(
           editingId
             ? `Save changes to service "${payload.name}"?`
             : `Add new service "${payload.name}"?`
@@ -914,7 +915,7 @@ export default function AdminServices() {
           return;
         }
 
-        const confirmed = window.confirm(
+        const confirmed = await confirmAction(
           editingId
             ? `Save changes to motorcycle model "${payload.make} ${payload.model}"?`
             : `Add new motorcycle model "${payload.make} ${payload.model}"?`
@@ -975,7 +976,7 @@ export default function AdminServices() {
   const nextActive = !service.is_active;
   const actionText = nextActive ? 'activate' : 'set inactive';
 
-  const confirmed = window.confirm(
+  const confirmed = await confirmAction(
     `Are you sure you want to ${actionText} "${serviceName}"?`
   );
 
@@ -1006,7 +1007,7 @@ export default function AdminServices() {
 
   async function deleteService(service) {
     const serviceName = cleanInlineText(service.name, 80) || 'this service';
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `Delete "${serviceName}"?
 
 This action cannot be undone. If this service is already used by bookings, the database may block the delete.`
@@ -1039,7 +1040,7 @@ This action cannot be undone. If this service is already used by bookings, the d
 
   async function deleteModel(model) {
     const modelName = cleanInlineText(`${model.make || ''} ${model.model || ''}`, 160) || 'this model';
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `Delete "${modelName}"?
 
 This action cannot be undone. If this model is already used by records, the database may block the delete.`
@@ -1514,16 +1515,35 @@ This action cannot be undone. If this model is already used by records, the data
 
       {/* Add/Edit Panel */}
       {panelOpen && (
-        <div className="fixed inset-0 z-[100] flex justify-end" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closePanel} />
-
-          <div className="relative h-full w-full overflow-y-auto bg-white shadow-2xl dark:bg-dark-800 sm:max-w-lg">
-            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4 dark:border-dark-700 dark:bg-dark-800">
-              <h2 className="text-lg font-black text-gray-950 dark:text-white">
-                {editingId
-                  ? `Edit ${activeTab === 'services' ? 'Service' : 'Motorcycle Model'}`
-                  : `Add New ${activeTab === 'services' ? 'Service' : 'Motorcycle Model'}`}
-              </h2>
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm sm:p-6"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !saving && !uploadingModelImage) {
+              closePanel();
+            }
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="admin-service-modal-title"
+            className="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+          >
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4 dark:border-dark-700 dark:bg-dark-800 sm:px-8">
+              <div className="min-w-0">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-primary-600 dark:text-primary-400">
+                  {activeTab === 'services' ? 'Service Management' : 'Motorcycle Catalog'}
+                </p>
+                <h2
+                  id="admin-service-modal-title"
+                  className="mt-1 text-xl font-black text-gray-950 dark:text-white"
+                >
+                  {editingId
+                    ? `Edit ${activeTab === 'services' ? 'Service' : 'Motorcycle Model'}`
+                    : `Add New ${activeTab === 'services' ? 'Service' : 'Motorcycle Model'}`}
+                </h2>
+              </div>
 
               <button
                 type="button"
@@ -1534,7 +1554,7 @@ This action cannot be undone. If this model is already used by records, the data
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-5 p-6">
+            <form onSubmit={handleSubmit} className="space-y-5 px-6 py-6 sm:px-8">
               {formError && (
                 <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
                   {formError}
@@ -1717,7 +1737,7 @@ This action cannot be undone. If this model is already used by records, the data
                 </button>
               </div>
             </form>
-          </div>
+          </section>
         </div>
       )}
     </div>

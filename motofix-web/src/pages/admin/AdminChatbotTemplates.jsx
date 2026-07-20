@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
+import { confirmAction } from '../../components/ConfirmModal';
 
 const EMPTY_FORM = {
   id: null,
@@ -412,7 +413,7 @@ export default function AdminChatbotTemplates() {
   }
 
   async function deleteTemplate(template) {
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `Delete "${template.title || template.intent}"? This cannot be undone.`
     );
 

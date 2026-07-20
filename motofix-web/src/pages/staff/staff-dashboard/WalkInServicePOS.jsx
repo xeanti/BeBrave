@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
+import { confirmAction } from '../../../components/ConfirmModal';
 import CustomerPicker from '../../../components/CustomerPicker';
 import { adjustPartStock } from '../../../lib/inventory';
 import { createReceiptHistory } from '../../../lib/receiptHistory';
@@ -679,9 +680,17 @@ export default function WalkInServicePOS({ staffId, onReceipt }) {
     return `WQ-${today.replace(/-/g, '')}-${String((count || 0) + 1).padStart(3, '0')}`;
   }
 
-  function resetForm(options = {}) {
+  async function resetForm(options = {}) {
     if (!options.skipConfirm && hasSavedDraft) {
-      const confirmed = window.confirm('Clear the current walk-in service draft?');
+      const confirmed = await confirmAction({
+        title: 'Clear Walk-in Draft?',
+        message:
+          'This will remove the customer, motorcycle, services, products, discount, payment details, and notes saved in the current walk-in form.',
+        confirmLabel: 'Clear Draft',
+        cancelLabel: 'Keep Draft',
+        tone: 'warning',
+      });
+
       if (!confirmed) return;
     }
 
@@ -754,20 +763,30 @@ export default function WalkInServicePOS({ staffId, onReceipt }) {
       return;
     }
 
-    const confirmed = window.confirm(
-      `Create walk-in queue for ${
-        cleanCustomerMode === 'guest' ? cleanGuestName : getCustomerName(customer)
-      }?
+    const customerName =
+      cleanCustomerMode === 'guest'
+        ? cleanGuestName
+        : getCustomerName(customer);
 
-Motorcycle: ${cleanMotorcycleModel}
-Services: ${cleanSelectedServices
-        .map((service) => service.name)
-        .join(', ')}
-Products: ${productCart.length} item(s)
-Total: ${formatPeso(total)}
-
-Products added here will be deducted from inventory now.`
-    );
+    const confirmed = await confirmAction({
+      title: 'Confirm Walk-in Queue',
+      message:
+        `Review the walk-in service for ${customerName} before adding it to today’s queue.`,
+      details: [
+        `Motorcycle: ${cleanMotorcycleModel}`,
+        `Services: ${cleanSelectedServices
+          .map((service) => service.name)
+          .join(', ')}`,
+        `Products: ${productCart.length} item(s)`,
+        `Total: ${formatPeso(total)}`,
+        productCart.length > 0
+          ? 'Selected products will be deducted from inventory after confirmation.'
+          : 'No inventory products will be deducted.',
+      ],
+      confirmLabel: 'Add to Queue',
+      cancelLabel: 'Review Details',
+      tone: 'primary',
+    });
 
     if (!confirmed) return;
 
@@ -935,24 +954,39 @@ Products added here will be deducted from inventory now.`
       return;
     }
 
-    if (nextStatus === 'cancelled') {
-      const products = Array.isArray(queueItem?.products) ? queueItem.products : [];
-      const hasProducts = products.length > 0;
+    const products = Array.isArray(queueItem?.products)
+      ? queueItem.products
+      : [];
+    const isCancellation = nextStatus === 'cancelled';
 
-      const confirmed = window.confirm(
-        hasProducts
-          ? `Cancel ${queueItem?.queue_number || 'this walk-in'} and return used products/parts back to inventory?`
-          : `Cancel ${queueItem?.queue_number || 'this walk-in'}?`
-      );
+    const confirmed = await confirmAction({
+      title: isCancellation
+        ? 'Cancel Walk-in Queue?'
+        : 'Update Queue Status?',
+      message: isCancellation
+        ? `Cancel ${queueItem?.queue_number || 'this walk-in'}?`
+        : `Move ${queueItem?.queue_number || 'this walk-in'} to ${formatStatus(
+            nextStatus
+          )}?`,
+      details: isCancellation
+        ? [
+            `Customer: ${getQueueCustomerName(queueItem)}`,
+            products.length > 0
+              ? `${products.length} selected product item(s) will be returned to inventory.`
+              : 'No inventory products need to be returned.',
+          ]
+        : [
+            `Customer: ${getQueueCustomerName(queueItem)}`,
+            `New status: ${formatStatus(nextStatus)}`,
+          ],
+      confirmLabel: isCancellation
+        ? 'Cancel Queue'
+        : 'Update Status',
+      cancelLabel: 'Go Back',
+      tone: isCancellation ? 'danger' : 'primary',
+    });
 
-      if (!confirmed) return;
-    } else {
-      const confirmed = window.confirm(
-        `Update ${queueItem?.queue_number || 'this walk-in'} to ${formatStatus(nextStatus)}?`
-      );
-
-      if (!confirmed) return;
-    }
+    if (!confirmed) return;
 
     setUpdatingStatus(`${queueId}-${nextStatus}`);
     setMessage('');
@@ -1039,17 +1073,21 @@ Products added here will be deducted from inventory now.`
       }
     }
 
-    const confirmed = window.confirm(
-      `Collect ${formatPeso(amount)} for ${queueItem.queue_number}?
-
-Customer: ${getQueueCustomerName(queueItem)}
-Method: ${cleanMethod === 'gcash' ? 'GCash Manual' : 'Cash'}${
-        cleanReference ? `
-Reference: ${cleanReference}` : ''
-      }
-
-This will mark the walk-in as completed.`
-    );
+    const confirmed = await confirmAction({
+      title: 'Confirm Walk-in Payment',
+      message:
+        `Record payment for ${queueItem.queue_number} and complete this walk-in service?`,
+      details: [
+        `Customer: ${getQueueCustomerName(queueItem)}`,
+        `Amount: ${formatPeso(amount)}`,
+        `Method: ${cleanMethod === 'gcash' ? 'GCash Manual' : 'Cash'}`,
+        cleanReference ? `Reference: ${cleanReference}` : null,
+        'The walk-in queue will be marked as completed.',
+      ].filter(Boolean),
+      confirmLabel: 'Record Payment',
+      cancelLabel: 'Review Payment',
+      tone: 'primary',
+    });
 
     if (!confirmed) return;
 

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import RatingModal from '../components/RatingModal';
+import { alertAction } from '../components/ConfirmModal';
 
 const SHOP_OPEN = 8;
 const SHOP_CLOSE = 17;
@@ -407,7 +408,12 @@ export default function Appointments() {
     const policyCheck = canCancelBooking(cancellingBooking, policies);
 
     if (!policyCheck.allowed) {
-      alert(policyCheck.reason);
+      void alertAction({
+        title: 'Cancellation Unavailable',
+        message: policyCheck.reason,
+        confirmLabel: 'Okay',
+        tone: 'warning',
+      });
       return;
     }
 
@@ -431,7 +437,12 @@ export default function Appointments() {
     setCancelSaving(false);
 
     if (error) {
-      alert('Failed to cancel: ' + error.message);
+      void alertAction({
+        title: 'Cancellation Failed',
+        message: error.message || 'The appointment could not be cancelled.',
+        confirmLabel: 'Okay',
+        tone: 'danger',
+      });
     } else {
       setCancellingBooking(null);
       fetchBookings();
@@ -442,7 +453,12 @@ export default function Appointments() {
     const policyCheck = canCancelBooking(booking, policies);
 
     if (!policyCheck.allowed) {
-      alert(policyCheck.reason);
+      void alertAction({
+        title: 'Cancellation Unavailable',
+        message: policyCheck.reason,
+        confirmLabel: 'Okay',
+        tone: 'warning',
+      });
       return;
     }
 
@@ -453,7 +469,12 @@ export default function Appointments() {
     const policyCheck = canRescheduleBooking(booking, policies);
 
     if (!policyCheck.allowed) {
-      alert(policyCheck.reason);
+      void alertAction({
+        title: 'Reschedule Unavailable',
+        message: policyCheck.reason,
+        confirmLabel: 'Okay',
+        tone: 'warning',
+      });
       return;
     }
 
@@ -915,11 +936,20 @@ export default function Appointments() {
       {/* Reschedule modal */}
       {reschedulingBooking && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[9999] flex items-center justify-center overflow-y-auto bg-black/65 p-4 backdrop-blur-sm sm:p-6"
           onClick={closeReschedule}
         >
-          <div
-            className="w-full max-w-lg rounded-3xl border border-gray-200 bg-white p-6 shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reschedule-modal-title"
+            className="my-auto max-h-[90vh] shrink-0 overflow-y-auto rounded-3xl border border-gray-200 bg-white p-6 shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+            style={{
+              width: '520px',
+              maxWidth: 'calc(100vw - 32px)',
+              minWidth: 0,
+              flex: '0 0 auto',
+            }}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="mb-5 flex items-start justify-between gap-4">
@@ -927,7 +957,10 @@ export default function Appointments() {
                 <p className="mb-1 text-xs font-black uppercase tracking-[0.2em] text-primary-600 dark:text-primary-400">
                   Reschedule
                 </p>
-                <h2 className="text-xl font-black text-gray-950 dark:text-white">
+                <h2
+                  id="reschedule-modal-title"
+                  className="text-xl font-black text-gray-950 dark:text-white"
+                >
                   Change Appointment Slot
                 </h2>
                 <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
@@ -1063,25 +1096,37 @@ export default function Appointments() {
                 </button>
               </div>
             </form>
-          </div>
+          </section>
         </div>
       )}
 
       {/* Cancel confirmation modal */}
       {cancellingBooking && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[9999] flex items-center justify-center overflow-y-auto bg-black/65 p-4 backdrop-blur-sm sm:p-6"
           onClick={() => !cancelSaving && setCancellingBooking(null)}
         >
-          <div
-            className="w-full max-w-sm rounded-3xl border border-gray-200 bg-white p-6 shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="cancel-appointment-title"
+            className="my-auto max-h-[90vh] shrink-0 overflow-y-auto rounded-3xl border border-gray-200 bg-white p-6 shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+            style={{
+              width: '400px',
+              maxWidth: 'calc(100vw - 32px)',
+              minWidth: 0,
+              flex: '0 0 auto',
+            }}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="mb-4 grid h-14 w-14 place-items-center rounded-3xl bg-red-50 text-2xl text-red-600 ring-1 ring-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/20">
               ⚠
             </div>
 
-            <h2 className="mb-2 text-xl font-black text-gray-950 dark:text-white">
+            <h2
+              id="cancel-appointment-title"
+              className="mb-2 text-xl font-black text-gray-950 dark:text-white"
+            >
               Cancel appointment?
             </h2>
 
@@ -1130,7 +1175,7 @@ export default function Appointments() {
                 {cancelSaving ? 'Cancelling...' : 'Yes, Cancel'}
               </button>
             </div>
-          </div>
+          </section>
         </div>
       )}
     </div>

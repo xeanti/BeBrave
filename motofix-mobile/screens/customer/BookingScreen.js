@@ -1,4 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
+
+import { useFocusEffect } from '@react-navigation/native';
+
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, StatusBar, Alert, Platform, Image,
@@ -210,6 +218,12 @@ export default function BookingScreen({ route, navigation }) {
   const [unavailableTimeSlots, setUnavailableTimeSlots] = useState([]);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [checkingTimeSlots, setCheckingTimeSlots] = useState(false);
+  const [checkingBookingEligibility, setCheckingBookingEligibility] =
+  useState(true);
+
+const [blockingBooking, setBlockingBooking] = useState(null);
+const [bookingEligibilityError, setBookingEligibilityError] =
+  useState('');
 
   useEffect(() => {
     if (route?.params?.preselectedService) {
@@ -514,24 +528,102 @@ export default function BookingScreen({ route, navigation }) {
   return acceptedBookingPolicy;
 }
 
-async function hasUnsettledBookingPayment(userId) {
+const PAID_RESERVATION_STATUSES = new Set([
+  'paid',
+  'reservation_paid',
+  'down_payment_paid',
+  'partial',
+  'partially_paid',
+  'verified',
+  'completed',
+  'succeeded',
+  'success',
+  'settled',
+]);
+
+function hasPaidReservationFee(booking) {
+  const paymentStatus = String(
+    booking?.payment_status || ''
+  ).toLowerCase();
+
+  return PAID_RESERVATION_STATUSES.has(paymentStatus);
+}
+
+async function getBlockingBooking(userId) {
   const { data, error } = await supabase
     .from('bookings')
-    .select('id, payment_status, status, booking_date, services_summary, services(name)')
+    .select(`
+      id,
+      payment_status,
+      status,
+      booking_date,
+      booking_time,
+      services_summary,
+      services(name)
+    `)
     .eq('customer_id', userId)
-    .or('payment_status.is.null,payment_status.neq.paid')
-    .not('status', 'in', '("completed","cancelled","rejected","no_show")')
+    .eq('status', 'pending')
     .or('is_walkin.is.null,is_walkin.eq.false')
     .order('created_at', { ascending: false })
-    .limit(1);
+    .limit(20);
 
   if (error) {
-    console.log('UNSETTLED FULL PAYMENT CHECK ERROR:', error);
-    return false;
+    throw error;
   }
 
-  return data?.[0] || null;
+  return (
+    (data || []).find(
+      (booking) => !hasPaidReservationFee(booking)
+    ) || null
+  );
 }
+
+const checkBookingEligibility = useCallback(async () => {
+  setCheckingBookingEligibility(true);
+  setBookingEligibilityError('');
+
+  try {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError) {
+      throw userError;
+    }
+
+    if (!user?.id) {
+      setBlockingBooking(null);
+      setBookingEligibilityError(
+        'Please sign in before booking a service.'
+      );
+      return;
+    }
+
+    const existingBlockingBooking =
+      await getBlockingBooking(user.id);
+
+    setBlockingBooking(existingBlockingBooking);
+  } catch (error) {
+    console.error(
+      'BOOKING ELIGIBILITY CHECK ERROR:',
+      error
+    );
+
+    setBlockingBooking(null);
+    setBookingEligibilityError(
+      'Unable to check your existing bookings. Check your connection and try again.'
+    );
+  } finally {
+    setCheckingBookingEligibility(false);
+  }
+}, []);
+
+useFocusEffect(
+  useCallback(() => {
+    checkBookingEligibility();
+  }, [checkBookingEligibility])
+);
 
   async function handleSubmit() {
     if (!bookingDate) {
@@ -557,22 +649,33 @@ if (!user?.id) {
   return;
 }
 
-const unsettledBooking = await hasUnsettledBookingPayment(user.id);
+let existingBlockingBooking = null;
 
-if (unsettledBooking) {
+try {
+  existingBlockingBooking =
+    await getBlockingBooking(user.id);
+} catch (error) {
+  console.error(
+    'BOOKING ELIGIBILITY CHECK ERROR:',
+    error
+  );
+
   setSubmitting(false);
 
   Alert.alert(
-    'Booking Not Allowed',
-    'You still have an existing booking that is not fully paid. Please complete the full payment before booking again.'
+    'Unable to Check Booking',
+    'Unable to verify your existing bookings. Please try again.'
   );
-
-  navigation.navigate('Main', {
-    screen: 'Appointments',
-  });
 
   return;
 }
+
+if (existingBlockingBooking) {
+  setBlockingBooking(existingBlockingBooking);
+  setSubmitting(false);
+  return;
+}
+
 
 const consentsAccepted = await requireBookingConsents();
 
@@ -724,11 +827,13 @@ if (bookingError) {
     message.includes('not fully paid') ||
     message.includes('full payment') ||
     message.includes('unsettled') ||
-    message.includes('existing booking')
+    message.includes('existing booking') ||
+    message.includes('reservation fee') ||
+    message.includes('down payment')
   ) {
     Alert.alert(
       'Booking Not Allowed',
-      'You still have an existing booking that is not fully paid. Please complete the full payment before booking again.'
+      'You have a pending booking whose reservation fee is unpaid or unverified. Once the down payment is paid and verified, you may book another appointment.'
     );
 
     navigation.navigate('Main', {
@@ -956,15 +1061,257 @@ const adminBookingMessage =
 
   const s = styles(theme);
 
-  if (loading) {
-    return (
-      <View style={s.centered}>
-        <ActivityIndicator size="large" color={theme.primaryLight} />
+if (checkingBookingEligibility) {
+  return (
+    <View
+      style={[
+        s.container,
+        {
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 24,
+        },
+      ]}
+    >
+      <StatusBar
+        barStyle={
+          isDark ? 'light-content' : 'dark-content'
+        }
+        backgroundColor={theme.bg}
+      />
+
+      <ActivityIndicator
+        size="large"
+        color={theme.primary}
+      />
+
+      <Text
+        style={{
+          marginTop: 16,
+          color: theme.textSub,
+          textAlign: 'center',
+        }}
+      >
+        Checking your existing bookings…
+      </Text>
+    </View>
+  );
+}
+
+if (bookingEligibilityError) {
+  return (
+    <View
+      style={[
+        s.container,
+        {
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 24,
+        },
+      ]}
+    >
+      <View
+        style={{
+          width: '100%',
+          maxWidth: 450,
+          padding: 24,
+          borderRadius: 24,
+          backgroundColor: theme.card,
+          borderWidth: 1,
+          borderColor: theme.border,
+        }}
+      >
+        <Text
+          style={{
+            color: theme.text,
+            fontSize: 22,
+            fontWeight: '800',
+            textAlign: 'center',
+          }}
+        >
+          Booking Check Unavailable
+        </Text>
+
+        <Text
+          style={{
+            marginTop: 12,
+            color: theme.textSub,
+            lineHeight: 22,
+            textAlign: 'center',
+          }}
+        >
+          {bookingEligibilityError}
+        </Text>
+
+        <TouchableOpacity
+          onPress={checkBookingEligibility}
+          style={{
+            marginTop: 20,
+            paddingVertical: 14,
+            borderRadius: 16,
+            backgroundColor: theme.primary,
+          }}
+        >
+          <Text
+            style={{
+              color: '#ffffff',
+              fontWeight: '800',
+              textAlign: 'center',
+            }}
+          >
+            Try Again
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={{
+            marginTop: 10,
+            paddingVertical: 12,
+          }}
+        >
+          <Text
+            style={{
+              color: theme.textSub,
+              fontWeight: '700',
+              textAlign: 'center',
+            }}
+          >
+            Go Back
+          </Text>
+        </TouchableOpacity>
       </View>
-    );
-  }
+    </View>
+  );
+}
+
+if (blockingBooking) {
+  const serviceName =
+    blockingBooking.services_summary ||
+    blockingBooking.services?.name ||
+    'your existing appointment';
 
   return (
+    <View
+      style={[
+        s.container,
+        {
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 24,
+        },
+      ]}
+    >
+      <StatusBar
+        barStyle={
+          isDark ? 'light-content' : 'dark-content'
+        }
+        backgroundColor={theme.bg}
+      />
+
+      <View
+        style={{
+          width: '100%',
+          maxWidth: 450,
+          padding: 24,
+          borderRadius: 24,
+          backgroundColor: theme.card,
+          borderWidth: 1,
+          borderColor: theme.border,
+        }}
+      >
+        <Text
+          style={{
+            color: theme.text,
+            fontSize: 24,
+            fontWeight: '800',
+            textAlign: 'center',
+          }}
+        >
+          Booking Unavailable
+        </Text>
+
+        <Text
+          style={{
+            marginTop: 14,
+            color: theme.textSub,
+            lineHeight: 22,
+            textAlign: 'center',
+          }}
+        >
+          You already have a booking for {serviceName}
+          whose reservation fee is still unpaid or
+          unverified.
+        </Text>
+
+        <Text
+          style={{
+            marginTop: 12,
+            color: theme.textSub,
+            lineHeight: 22,
+            textAlign: 'center',
+          }}
+        >
+          Once the down payment is paid and verified,
+          you can book another appointment even when
+          the previous service has a remaining balance.
+        </Text>
+
+        <TouchableOpacity
+          onPress={() =>
+            navigation.navigate('Main', {
+              screen: 'Appointments',
+            })
+          }
+          style={{
+            marginTop: 22,
+            paddingVertical: 14,
+            borderRadius: 16,
+            backgroundColor: theme.primary,
+          }}
+        >
+          <Text
+            style={{
+              color: '#ffffff',
+              fontWeight: '800',
+              textAlign: 'center',
+            }}
+          >
+            View Existing Booking
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={checkBookingEligibility}
+          style={{
+            marginTop: 10,
+            paddingVertical: 12,
+          }}
+        >
+          <Text
+            style={{
+              color: theme.primary,
+              fontWeight: '800',
+              textAlign: 'center',
+            }}
+          >
+            Recheck Payment
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+if (loading) {
+  return (
+    <View style={s.centered}>
+      <ActivityIndicator size="large" color={theme.primaryLight} />
+    </View>
+  );
+}
+
+return (
     <View style={s.container}>
       <StatusBar
         barStyle={isDark ? 'light-content' : 'dark-content'}

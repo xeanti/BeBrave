@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabaseClient';
 import { summarizePayments } from '../../lib/payments';
+import { confirmAction } from '../../components/ConfirmModal';
 
 function formatPeso(value) {
   const amount = Number(value) || 0;
@@ -1204,7 +1205,7 @@ export default function AdminReports() {
     });
   }
 
-  function downloadCSV(data, filename, reportTitle) {
+  async function downloadCSV(data, filename, reportTitle) {
     if (isDateRangeInvalid(dateFrom, dateTo)) {
       setToast('Invalid date range. The From date must be before the To date.');
       return;
@@ -1215,7 +1216,7 @@ export default function AdminReports() {
       return;
     }
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `Export ${data.length} row${data.length === 1 ? '' : 's'} from ${reportTitle}?`
     );
 
@@ -1381,13 +1382,13 @@ export default function AdminReports() {
     );
   }
 
-  function handlePrint() {
+  async function handlePrint() {
     if (isDateRangeInvalid(dateFrom, dateTo)) {
       setToast('Invalid date range. The From date must be before the To date.');
       return;
     }
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `Print the ${activeTab === 'audit' ? 'Audit Logs' : activeTab} report?`
     );
 

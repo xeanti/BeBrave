@@ -1,3 +1,4 @@
+import { confirmAction } from '../../components/ConfirmModal';
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
@@ -478,6 +479,232 @@ function UserSkeleton() {
   );
 }
 
+
+function ReadOnlyUserDirectory({
+  users,
+  loading,
+  error,
+  lastUpdated,
+  onRefresh,
+}) {
+  const [directorySearch, setDirectorySearch] = useState('');
+  const [directoryRole, setDirectoryRole] = useState('all');
+
+  const visibleUsers = useMemo(() => {
+    const query = directorySearch.trim().toLowerCase();
+
+    return [...(users || [])]
+      .filter((profile) => {
+        const matchesRole =
+          directoryRole === 'all' || profile.role === directoryRole;
+        const haystack = [
+          getFullName(profile),
+          profile.email,
+          profile.phone,
+          profile.role,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+
+        return matchesRole && (!query || haystack.includes(query));
+      })
+      .sort((a, b) =>
+        getFullName(a).localeCompare(getFullName(b), 'en', {
+          sensitivity: 'base',
+        })
+      );
+  }, [users, directorySearch, directoryRole]);
+
+  return (
+    <main className="min-h-screen bg-gray-50 px-4 py-6 dark:bg-dark-900 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <header className="overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-slate-900 to-primary-950 p-6 text-white shadow-xl sm:p-8">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <span className="inline-flex rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-primary-100">
+                Admin read-only access
+              </span>
+              <h1 className="mt-4 text-3xl font-black sm:text-4xl">
+                User Directory
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+                Admins can see every MotoFix account for operational reference.
+                Creating accounts, changing roles, editing profiles, schedules,
+                certificates, and account status remain restricted to super admins.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={loading}
+              className="rounded-2xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-black text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {loading ? 'Refreshing…' : 'Refresh directory'}
+            </button>
+          </div>
+        </header>
+
+        <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-800">
+          <div className="grid gap-3 md:grid-cols-[1fr_220px]">
+            <label className="block">
+              <span className="mb-2 block text-xs font-black uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Search users
+              </span>
+              <input
+                type="search"
+                value={directorySearch}
+                onChange={(event) =>
+                  setDirectorySearch(sanitizeSearch(event.target.value))
+                }
+                placeholder="Name, email, phone, or role"
+                className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-600 dark:bg-dark-900 dark:text-white"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-xs font-black uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Role
+              </span>
+              <select
+                value={directoryRole}
+                onChange={(event) => setDirectoryRole(event.target.value)}
+                className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-bold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-600 dark:bg-dark-900 dark:text-white"
+              >
+                <option value="all">All roles</option>
+                <option value="customer">Customers</option>
+                <option value="mechanic">Mechanics</option>
+                <option value="staff">Staff</option>
+                <option value="admin">Admins</option>
+                <option value="super_admin">Super admins</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
+            <span>
+              Showing {visibleUsers.length} of {(users || []).length} accounts
+            </span>
+            <span>
+              Last updated: {lastUpdated ? formatDateTime(lastUpdated) : '—'}
+            </span>
+          </div>
+        </section>
+
+        {error && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300">
+            {error}
+          </div>
+        )}
+
+        {loading ? (
+          <UserSkeleton />
+        ) : visibleUsers.length === 0 ? (
+          <div className="rounded-3xl border border-dashed border-gray-300 bg-white p-12 text-center text-gray-500 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-400">
+            No users match the current search.
+          </div>
+        ) : (
+          <section className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
+            <div className="hidden overflow-x-auto md:block">
+              <table className="min-w-full divide-y divide-gray-100 dark:divide-dark-700">
+                <thead className="bg-gray-50 dark:bg-dark-900/70">
+                  <tr className="text-left text-xs font-black uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    <th className="px-5 py-4">User</th>
+                    <th className="px-5 py-4">Role</th>
+                    <th className="px-5 py-4">Contact</th>
+                    <th className="px-5 py-4">Status</th>
+                    <th className="px-5 py-4">Joined</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-dark-700">
+                  {visibleUsers.map((profile) => (
+                    <tr key={profile.id} className="align-top">
+                      <td className="px-5 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-primary-50 font-black text-primary-700 dark:bg-primary-500/10 dark:text-primary-300">
+                            {profile.profile_photo_url ? (
+                              <img
+                                src={profile.profile_photo_url}
+                                alt=""
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              getInitials(profile)
+                            )}
+                          </div>
+                          <div>
+                            <p className="font-black text-gray-950 dark:text-white">
+                              {getFullName(profile)}
+                            </p>
+                            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                              ID: {String(profile.id || '').slice(0, 8)}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-4">
+                        <RoleBadge role={profile.role} />
+                      </td>
+                      <td className="px-5 py-4 text-sm text-gray-600 dark:text-gray-300">
+                        <p className="break-all">{profile.email || '—'}</p>
+                        <p className="mt-1">{profile.phone || '—'}</p>
+                      </td>
+                      <td className="px-5 py-4">
+                        <span
+                          className={`inline-flex rounded-full px-3 py-1 text-xs font-black ${
+                            profile.is_active === false
+                              ? 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300'
+                              : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
+                          }`}
+                        >
+                          {profile.is_active === false ? 'Inactive' : 'Active'}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 text-sm text-gray-600 dark:text-gray-300">
+                        {formatDate(profile.created_at)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="divide-y divide-gray-100 md:hidden dark:divide-dark-700">
+              {visibleUsers.map((profile) => (
+                <article key={profile.id} className="space-y-3 p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-black text-gray-950 dark:text-white">
+                        {getFullName(profile)}
+                      </p>
+                      <p className="mt-1 break-all text-xs text-gray-500 dark:text-gray-400">
+                        {profile.email || '—'}
+                      </p>
+                    </div>
+                    <RoleBadge role={profile.role} />
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <span className="rounded-full bg-gray-100 px-3 py-1 font-bold text-gray-600 dark:bg-dark-900 dark:text-gray-300">
+                      {profile.phone || 'No phone'}
+                    </span>
+                    <span className="rounded-full bg-gray-100 px-3 py-1 font-bold text-gray-600 dark:bg-dark-900 dark:text-gray-300">
+                      {profile.is_active === false ? 'Inactive' : 'Active'}
+                    </span>
+                    <span className="rounded-full bg-gray-100 px-3 py-1 font-bold text-gray-600 dark:bg-dark-900 dark:text-gray-300">
+                      Joined {formatDate(profile.created_at)}
+                    </span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
+    </main>
+  );
+}
+
 export default function AdminUsers() {
   const { user, profile: authProfile } = useAuth();
 
@@ -706,7 +933,7 @@ export default function AdminUsers() {
       .map(([key, value]) => `${key.replace('_', ' ')}: ${value}`)
       .join(', ');
 
-    if (!window.confirm(`Update this mechanic schedule? ${changeText}`)) {
+    if (!await confirmAction(`Update this mechanic schedule? ${changeText}`)) {
       return;
     }
 
@@ -735,7 +962,7 @@ export default function AdminUsers() {
   }
 
   async function removeFromSchedule(bookingId) {
-    if (!window.confirm('Unassign this mechanic from the booking?')) return;
+    if (!await confirmAction('Unassign this mechanic from the booking?')) return;
 
     setUpdatingScheduleId(bookingId);
 
@@ -824,7 +1051,7 @@ export default function AdminUsers() {
       return;
     }
 
-    if (!window.confirm(`Upload certificate "${cleanCertificateName}" for this mechanic?`)) {
+    if (!await confirmAction(`Upload certificate "${cleanCertificateName}" for this mechanic?`)) {
       return;
     }
 
@@ -879,7 +1106,7 @@ export default function AdminUsers() {
   }
 
   async function deleteCertificate(cert) {
-    if (!window.confirm(`Delete certificate "${cert.name}"?`)) return;
+    if (!await confirmAction(`Delete certificate "${cert.name}"?`)) return;
 
     setDeletingCertId(cert.id);
 
@@ -1035,14 +1262,14 @@ export default function AdminUsers() {
 
     if (
       roleChanged &&
-      !window.confirm(`Change ${getFullName(editingUser)} from ${editingUser.role} to ${cleanRole}?`)
+      !await confirmAction(`Change ${getFullName(editingUser)} from ${editingUser.role} to ${cleanRole}?`)
     ) {
       setSaving(false);
       return;
     }
 
     if (!roleChanged) {
-      const confirmed = window.confirm(
+      const confirmed = await confirmAction(
         `Save profile changes for ${getFullName(editingUser)}?`
       );
 
@@ -1152,7 +1379,7 @@ export default function AdminUsers() {
       return;
     }
 
-    if (!window.confirm(`Change password for ${getFullName(editingUser)}?`)) {
+    if (!await confirmAction(`Change password for ${getFullName(editingUser)}?`)) {
       return;
     }
 
@@ -1217,7 +1444,7 @@ export default function AdminUsers() {
       return;
     }
 
-    if (!window.confirm(`Remove ${currentRole} access and set to customer?`)) return;
+    if (!await confirmAction(`Remove ${currentRole} access and set to customer?`)) return;
 
     try {
       const { error } = await supabase.rpc('change_user_role', {
@@ -1274,7 +1501,7 @@ export default function AdminUsers() {
     }
 
     if (
-      !window.confirm(
+      !await confirmAction(
         `Deactivate ${getFullName(profile)}? This user will no longer be allowed to access MotoFix, but their records will be kept.`
       )
     ) {
@@ -1315,7 +1542,7 @@ export default function AdminUsers() {
     }
 
     if (
-      !window.confirm(
+      !await confirmAction(
         `Reactivate ${getFullName(profile)}? This user will be allowed to access MotoFix again.`
       )
     ) {
@@ -1389,7 +1616,7 @@ export default function AdminUsers() {
     }
 
     if (
-      !window.confirm(`Create ${cleanRole} account for ${cleanFirstName} ${cleanLastName}?`)
+      !await confirmAction(`Create ${cleanRole} account for ${cleanFirstName} ${cleanLastName}?`)
     ) {
       return;
     }
@@ -1567,6 +1794,19 @@ export default function AdminUsers() {
     setStatusFilter('active');
     setSortBy('newest');
     setCurrentPage(1);
+  }
+
+  // Normal admins can inspect the complete directory, but receive no mutation UI.
+  if (authProfile?.role === 'admin') {
+    return (
+      <ReadOnlyUserDirectory
+        users={users}
+        loading={loading}
+        error={fetchError}
+        lastUpdated={lastUpdated}
+        onRefresh={() => fetchUsers(false)}
+      />
+    );
   }
 
   return (
@@ -2218,98 +2458,146 @@ export default function AdminUsers() {
         </div>
       )}
 
-      {/* Edit slide-over */}
-      {editingUser && (
-        <div className="fixed inset-0 z-[100] flex justify-end" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closeEdit} />
+      {/* Edit user modal */}
+{editingUser && (
+  <div
+    className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm sm:p-6"
+    onMouseDown={(event) => {
+      if (
+        event.target === event.currentTarget &&
+        !saving &&
+        !changingPassword
+      ) {
+        closeEdit();
+      }
+    }}
+  >
+    <section
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="edit-user-title"
+      className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+    >
+      {/* Header */}
+      <header className="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-5 dark:border-dark-700 sm:px-8">
+        <div className="flex min-w-0 items-center gap-4">
+          <Avatar profile={editingUser} size="md" />
 
-          <div className="relative h-full w-full overflow-y-auto bg-white shadow-2xl dark:bg-dark-800 sm:max-w-lg">
-            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4 dark:border-dark-700 dark:bg-dark-800">
-              <div>
-                <h2 className="text-lg font-black text-gray-950 dark:text-white">
-                  Edit User
-                </h2>
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  {editingUser.email}
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-[0.15em] text-primary-600 dark:text-primary-400">
+              User management
+            </p>
+
+            <h2
+              id="edit-user-title"
+              className="mt-1 truncate text-xl font-black text-gray-950 dark:text-white sm:text-2xl"
+            >
+              Edit User
+            </h2>
+
+            <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
+              {editingUser.email || 'No email address'}
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          disabled={saving || changingPassword}
+          onClick={closeEdit}
+          aria-label="Close edit user modal"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 text-lg font-bold text-gray-500 transition hover:bg-gray-100 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white"
+        >
+          ✕
+        </button>
+      </header>
+
+      {/* Scrollable content */}
+      <div className="overflow-y-auto px-6 py-6 sm:px-8">
+        <div className="space-y-6">
+          {editError && (
+            <div
+              role="alert"
+              className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300"
+            >
+              {editError}
+            </div>
+          )}
+
+          {editSuccess && (
+            <div
+              role="status"
+              className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300"
+            >
+              {editSuccess}
+            </div>
+          )}
+
+          {/* Profile information */}
+          <form
+            id="edit-user-form"
+            onSubmit={handleSaveEdit}
+            className="space-y-5"
+          >
+            <section className="rounded-2xl border border-gray-200 bg-gray-50/70 p-5 dark:border-dark-700 dark:bg-dark-900/50">
+              <div className="mb-5">
+                <h3 className="font-black text-gray-950 dark:text-white">
+                  Profile information
+                </h3>
+
+                <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                  Update the user’s personal and account details.
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={closeEdit}
-                className="grid h-10 w-10 place-items-center rounded-2xl text-xl text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-6 p-6">
-              <form onSubmit={handleSaveEdit} className="space-y-4">
-                {editError && (
-                  <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
-                    {editError}
-                  </div>
-                )}
-
-                {editSuccess && (
-                  <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-sm font-semibold text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300">
-                    {editSuccess}
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-3">
-                  <TextInput
-                    label="First Name"
-                    value={editForm.first_name || ''}
-                    maxLength={50}
-                    onChange={(event) =>
-                      setEditForm((current) => ({
-                        ...current,
-                        first_name: sanitizeName(event.target.value),
-                      }))
-                    }
-                    required
-                  />
-
-                  <TextInput
-                    label="Last Name"
-                    value={editForm.last_name || ''}
-                    maxLength={50}
-                    onChange={(event) =>
-                      setEditForm((current) => ({
-                        ...current,
-                        last_name: sanitizeName(event.target.value),
-                      }))
-                    }
-                    required
-                  />
-                </div>
-
+              <div className="grid gap-4 sm:grid-cols-2">
                 <TextInput
-                  label="Email"
-                  value={editingUser.email || ''}
-                  disabled
-                  helper="Email cannot be changed here."
+                  label="First name"
+                  value={editForm.first_name || ''}
+                  onChange={(event) =>
+                    setEditForm((current) => ({
+                      ...current,
+                      first_name: sanitizeName(event.target.value),
+                    }))
+                  }
+                  placeholder="First name"
+                  autoComplete="given-name"
+                  required
                 />
 
                 <TextInput
-                  label="Phone"
+                  label="Last name"
+                  value={editForm.last_name || ''}
+                  onChange={(event) =>
+                    setEditForm((current) => ({
+                      ...current,
+                      last_name: sanitizeName(event.target.value),
+                    }))
+                  }
+                  placeholder="Last name"
+                  autoComplete="family-name"
+                  required
+                />
+
+                <TextInput
+                  label="Phone number"
                   value={editForm.phone || ''}
-                  inputMode="numeric"
-                  maxLength={11}
                   onChange={(event) =>
                     setEditForm((current) => ({
                       ...current,
                       phone: sanitizePhone(event.target.value),
                     }))
                   }
-                  placeholder="09XX XXX XXXX"
+                  placeholder="09XXXXXXXXX"
+                  inputMode="numeric"
+                  autoComplete="tel"
                 />
 
-                <div>
-                  <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                <label className="block">
+                  <span className="mb-2 block text-xs font-black uppercase tracking-wide text-gray-500 dark:text-gray-400">
                     Role
-                  </label>
+                  </span>
+
                   <select
                     value={editForm.role || 'customer'}
                     onChange={(event) =>
@@ -2318,260 +2606,362 @@ export default function AdminUsers() {
                         role: sanitizeRole(event.target.value),
                       }))
                     }
-                    disabled={!isCurrentUserSuperAdmin || editingUser.id === user?.id}
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                    disabled={
+                      !isCurrentUserSuperAdmin ||
+                      editingUser.id === user?.id
+                    }
+                    className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-600 dark:bg-dark-900 dark:text-white"
                   >
                     <option value="customer">Customer</option>
                     <option value="mechanic">Mechanic</option>
                     <option value="staff">Staff / Cashier</option>
-                    <option value="admin">Admin</option>
-                    <option value="super_admin">Super Admin</option>
+                    <option value="admin">Administrator</option>
+                    <option value="super_admin">
+                      Super Administrator
+                    </option>
                   </select>
-                  {(!isCurrentUserSuperAdmin || editingUser.id === user?.id) && (
+
+                  {(!isCurrentUserSuperAdmin ||
+                    editingUser.id === user?.id) && (
                     <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                      Role changes are restricted to super admins, and users cannot change their own role.
+                      Role changes are restricted to super admins. You
+                      cannot change your own role.
                     </p>
                   )}
-                </div>
+                </label>
+              </div>
+            </section>
 
-                {editForm.role === 'mechanic' && (
-                  <TextInput
-                    label="Specialization"
-                    value={editForm.specialization || ''}
-                    maxLength={80}
-                    onChange={(event) =>
-                      setEditForm((current) => ({
-                        ...current,
-                        specialization: sanitizeSpecialization(event.target.value),
-                      }))
-                    }
-                    placeholder="e.g. Engine Repair, Electrical"
-                  />
-                )}
+            {/* Mechanic information */}
+            {editForm.role === 'mechanic' && (
+              <section className="rounded-2xl border border-gray-200 bg-gray-50/70 p-5 dark:border-dark-700 dark:bg-dark-900/50">
+                <div className="mb-4">
+                  <h3 className="font-black text-gray-950 dark:text-white">
+                    Mechanic information
+                  </h3>
 
-                {editForm.role === 'customer' && (
-                  <div className="space-y-3 border-t border-gray-100 pt-4 dark:border-dark-700">
-                    <p className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                      Motorcycle Info
-                    </p>
-
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="col-span-2">
-                        <TextInput
-                          label="Make"
-                          value={editForm.moto_make || ''}
-                          maxLength={60}
-                          onChange={(event) =>
-                            setEditForm((current) => ({
-                              ...current,
-                              moto_make: sanitizeMotorcycleText(event.target.value),
-                            }))
-                          }
-                          placeholder="Honda, Yamaha..."
-                        />
-                      </div>
-
-                      <TextInput
-                        label="Year"
-                        value={editForm.moto_year || ''}
-                        inputMode="numeric"
-                        maxLength={4}
-                        onChange={(event) =>
-                          setEditForm((current) => ({
-                            ...current,
-                            moto_year: sanitizeYear(event.target.value),
-                          }))
-                        }
-                        placeholder="2022"
-                        type="text"
-                      />
-                    </div>
-
-                    <TextInput
-                      label="Model"
-                      value={editForm.moto_model || ''}
-                      maxLength={60}
-                      onChange={(event) =>
-                        setEditForm((current) => ({
-                          ...current,
-                          moto_model: sanitizeMotorcycleText(event.target.value),
-                        }))
-                      }
-                      placeholder="Click 125i, NMAX..."
-                    />
-                  </div>
-                )}
-
-                <div className="flex gap-3 pt-2">
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="flex-1 rounded-2xl bg-primary-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {saving ? 'Saving...' : 'Save Changes'}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={closeEdit}
-                    className="rounded-2xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700 transition hover:border-gray-300 dark:border-dark-700 dark:text-gray-300"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
-
-              {/* Change Password */}
-              <div className="border-t border-gray-100 pt-5 dark:border-dark-700">
-                <div className="mb-3 flex items-center gap-2">
-                  <span>🔑</span>
-                  <p className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    Change Password
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Describe the mechanic’s main area of expertise.
                   </p>
                 </div>
 
-                <form onSubmit={handleChangePassword} className="space-y-3">
-                  {passwordError && (
-                    <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
-                      {passwordError}
-                    </div>
-                  )}
+                <TextInput
+                  label="Specialization"
+                  value={editForm.specialization || ''}
+                  onChange={(event) =>
+                    setEditForm((current) => ({
+                      ...current,
+                      specialization: sanitizeSpecialization(
+                        event.target.value
+                      ),
+                    }))
+                  }
+                  placeholder="Engine repair, electrical, diagnostics..."
+                />
+              </section>
+            )}
 
-                  {passwordSuccess && (
-                    <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-sm font-semibold text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300">
-                      {passwordSuccess}
-                    </div>
-                  )}
+            {/* Customer motorcycle */}
+            {editForm.role === 'customer' && (
+              <section className="rounded-2xl border border-gray-200 bg-gray-50/70 p-5 dark:border-dark-700 dark:bg-dark-900/50">
+                <div className="mb-4">
+                  <h3 className="font-black text-gray-950 dark:text-white">
+                    Motorcycle information
+                  </h3>
+
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Record the customer’s primary motorcycle.
+                  </p>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <TextInput
+                    label="Motorcycle make"
+                    value={editForm.moto_make || ''}
+                    onChange={(event) =>
+                      setEditForm((current) => ({
+                        ...current,
+                        moto_make: sanitizeMotorcycleText(
+                          event.target.value
+                        ),
+                      }))
+                    }
+                    placeholder="Honda, Yamaha..."
+                  />
 
                   <TextInput
-                    label="New Password"
+                    label="Model year"
+                    value={editForm.moto_year || ''}
+                    onChange={(event) =>
+                      setEditForm((current) => ({
+                        ...current,
+                        moto_year: sanitizeYear(event.target.value),
+                      }))
+                    }
+                    placeholder="2024"
+                    inputMode="numeric"
+                  />
+
+                  <div className="sm:col-span-2">
+                    <TextInput
+                      label="Motorcycle model"
+                      value={editForm.moto_model || ''}
+                      onChange={(event) =>
+                        setEditForm((current) => ({
+                          ...current,
+                          moto_model: sanitizeMotorcycleText(
+                            event.target.value
+                          ),
+                        }))
+                      }
+                      placeholder="Click 125i, NMAX, Aerox..."
+                    />
+                  </div>
+                </div>
+              </section>
+            )}
+          </form>
+
+          {/* Password management */}
+          {isCurrentUserSuperAdmin &&
+            editingUser.id !== user?.id && (
+              <form
+                onSubmit={handleChangePassword}
+                className="rounded-2xl border border-amber-200 bg-amber-50/70 p-5 dark:border-amber-500/20 dark:bg-amber-500/5"
+              >
+                <div className="mb-5">
+                  <h3 className="font-black text-gray-950 dark:text-white">
+                    Change password
+                  </h3>
+
+                  <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                    Set a temporary password only when the user has
+                    authorized the change.
+                  </p>
+                </div>
+
+                {passwordError && (
+                  <div
+                    role="alert"
+                    className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300"
+                  >
+                    {passwordError}
+                  </div>
+                )}
+
+                {passwordSuccess && (
+                  <div
+                    role="status"
+                    className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300"
+                  >
+                    {passwordSuccess}
+                  </div>
+                )}
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <TextInput
+                    label="New password"
                     type="password"
                     value={newPassword}
-                    maxLength={MAX_PASSWORD_LENGTH}
                     onChange={(event) => {
-                      setNewPassword(sanitizePasswordInput(event.target.value));
+                      setNewPassword(
+                        sanitizePasswordInput(event.target.value)
+                      );
                       setPasswordError('');
                       setPasswordSuccess('');
                     }}
-                    placeholder="Min. 6 characters"
+                    placeholder="Minimum 6 characters"
                     autoComplete="new-password"
                   />
 
                   <TextInput
-                    label="Confirm New Password"
+                    label="Confirm new password"
                     type="password"
                     value={confirmNewPassword}
-                    maxLength={MAX_PASSWORD_LENGTH}
                     onChange={(event) => {
-                      setConfirmNewPassword(sanitizePasswordInput(event.target.value));
+                      setConfirmNewPassword(
+                        sanitizePasswordInput(event.target.value)
+                      );
                       setPasswordError('');
                       setPasswordSuccess('');
                     }}
-                    placeholder="Re-enter new password"
+                    placeholder="Repeat new password"
                     autoComplete="new-password"
                   />
+                </div>
 
+                <div className="mt-4 flex justify-end">
                   <button
                     type="submit"
-                    disabled={changingPassword || !newPassword}
-                    className="w-full rounded-2xl bg-yellow-500 px-4 py-3 text-sm font-black text-gray-950 shadow-lg shadow-yellow-500/20 transition hover:bg-yellow-400 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-yellow-400 dark:text-gray-950 dark:hover:bg-yellow-300"
+                    disabled={changingPassword}
+                    className="rounded-2xl border border-amber-300 bg-amber-500 px-5 py-3 text-sm font-black text-white transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-500"
                   >
-                    {changingPassword ? 'Updating Password...' : 'Update Password'}
+                    {changingPassword
+                      ? 'Updating password…'
+                      : 'Update Password'}
                   </button>
-                </form>
-
-                <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                  This action is audit-logged. The user will need to use the new password on their next login.
-                </p>
-              </div>
-            </div>
-          </div>
+                </div>
+              </form>
+            )}
         </div>
-      )}
+      </div>
+
+      {/* Sticky footer */}
+      <footer className="flex flex-col-reverse gap-3 border-t border-gray-100 bg-white px-6 py-5 dark:border-dark-700 dark:bg-dark-800 sm:flex-row sm:justify-end sm:px-8">
+        <button
+          type="button"
+          disabled={saving || changingPassword}
+          onClick={closeEdit}
+          className="rounded-2xl border border-gray-200 bg-white px-6 py-3 text-sm font-black text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-200 dark:hover:bg-dark-700"
+        >
+          Cancel
+        </button>
+
+        <button
+          form="edit-user-form"
+          type="submit"
+          disabled={saving || changingPassword}
+          className="rounded-2xl bg-primary-600 px-7 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {saving ? 'Saving changes…' : 'Save Changes'}
+        </button>
+      </footer>
+    </section>
+  </div>
+)}
 
       {/* Create account modal */}
-      {showCreate && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true">
-          <div
-            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-            onClick={() => setShowCreate(false)}
-          />
+{showCreate && (
+  <div
+    className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm sm:p-6"
+    onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !creating) {
+        setShowCreate(false);
+      }
+    }}
+  >
+    <section
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="create-personnel-title"
+      className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between border-b border-gray-100 px-6 py-5 dark:border-dark-700 sm:px-8">
+        <div className="flex items-start gap-4">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary-50 text-xl dark:bg-primary-500/10">
+            👤
+          </div>
 
-          <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800">
-            <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4 dark:border-dark-700">
-              <h2 className="text-lg font-black text-gray-950 dark:text-white">
-                Create Personnel Account
-              </h2>
+          <div>
+            <h2
+              id="create-personnel-title"
+              className="text-xl font-black text-gray-950 dark:text-white sm:text-2xl"
+            >
+              Create Personnel Account
+            </h2>
 
-              <button
-                type="button"
-                onClick={() => setShowCreate(false)}
-                className="grid h-10 w-10 place-items-center rounded-2xl text-xl text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white"
-              >
-                ✕
-              </button>
+            <p className="mt-1 text-sm leading-6 text-gray-500 dark:text-gray-400">
+              Add a mechanic, staff member, administrator, or super
+              administrator.
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          disabled={creating}
+          onClick={() => setShowCreate(false)}
+          aria-label="Close create account modal"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 text-lg font-bold text-gray-500 transition hover:bg-gray-100 hover:text-gray-950 disabled:opacity-50 dark:border-dark-600 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white"
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Scrollable body */}
+      <form
+        id="create-personnel-form"
+        onSubmit={handleCreateAccount}
+        className="overflow-y-auto"
+      >
+        <div className="space-y-6 px-6 py-6 sm:px-8">
+          {createError && (
+            <div
+              role="alert"
+              className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300"
+            >
+              {createError}
+            </div>
+          )}
+
+          {createSuccess && (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300">
+              {createSuccess}
+            </div>
+          )}
+
+          {/* Personal details */}
+          <section className="rounded-2xl border border-gray-200 bg-gray-50/70 p-5 dark:border-dark-700 dark:bg-dark-900/50">
+            <div className="mb-4">
+              <h3 className="font-black text-gray-950 dark:text-white">
+                Personal information
+              </h3>
+
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Enter the personnel member’s basic contact details.
+              </p>
             </div>
 
-            <form onSubmit={handleCreateAccount} className="space-y-4 p-6">
-              {createError && (
-                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
-                  {createError}
-                </div>
-              )}
-
-              {createSuccess && (
-                <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-sm font-semibold text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300">
-                  {createSuccess}
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-3">
-                <TextInput
-                  label="First Name"
-                  value={newAccount.firstName}
-                  maxLength={50}
-                  onChange={(event) =>
-                    setNewAccount((current) => ({
-                      ...current,
-                      firstName: sanitizeName(event.target.value),
-                    }))
-                  }
-                  required
-                />
-
-                <TextInput
-                  label="Last Name"
-                  value={newAccount.lastName}
-                  maxLength={50}
-                  onChange={(event) =>
-                    setNewAccount((current) => ({
-                      ...current,
-                      lastName: sanitizeName(event.target.value),
-                    }))
-                  }
-                  required
-                />
-              </div>
-
+            <div className="grid gap-4 sm:grid-cols-2">
               <TextInput
-                label="Email Address"
-                type="email"
-                value={newAccount.email}
-                maxLength={120}
+                label="First name"
+                value={newAccount.firstName}
                 onChange={(event) =>
                   setNewAccount((current) => ({
                     ...current,
-                    email: sanitizeEmail(event.target.value),
+                    firstName: sanitizeName(event.target.value),
                   }))
                 }
+                placeholder="Juan"
+                autoComplete="given-name"
                 required
               />
 
               <TextInput
-                label="Phone Number"
+                label="Last name"
+                value={newAccount.lastName}
+                onChange={(event) =>
+                  setNewAccount((current) => ({
+                    ...current,
+                    lastName: sanitizeName(event.target.value),
+                  }))
+                }
+                placeholder="Dela Cruz"
+                autoComplete="family-name"
+                required
+              />
+
+              <div className="sm:col-span-2">
+                <TextInput
+                  label="Email address"
+                  type="email"
+                  value={newAccount.email}
+                  onChange={(event) =>
+                    setNewAccount((current) => ({
+                      ...current,
+                      email: sanitizeEmail(event.target.value),
+                    }))
+                  }
+                  placeholder="name@example.com"
+                  autoComplete="email"
+                  required
+                />
+              </div>
+
+              <TextInput
+                label="Phone number"
                 value={newAccount.phone}
-                inputMode="numeric"
-                maxLength={11}
                 onChange={(event) =>
                   setNewAccount((current) => ({
                     ...current,
@@ -2579,12 +2969,15 @@ export default function AdminUsers() {
                   }))
                 }
                 placeholder="09XXXXXXXXX"
+                inputMode="numeric"
+                autoComplete="tel"
               />
 
-              <div>
-                <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                  Role Type
-                </label>
+              <label className="block">
+                <span className="mb-2 block text-xs font-black uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  Role type
+                </span>
+
                 <select
                   value={newAccount.role}
                   onChange={(event) =>
@@ -2593,56 +2986,89 @@ export default function AdminUsers() {
                       role: sanitizeCreateRole(event.target.value),
                     }))
                   }
-                  className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                  className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-600 dark:bg-dark-900 dark:text-white"
                 >
                   <option value="mechanic">Mechanic</option>
                   <option value="staff">Staff / Cashier</option>
-                  <option value="admin">Admin</option>
-                  <option value="super_admin">Super Admin</option>
+                  <option value="admin">Administrator</option>
+                  <option value="super_admin">Super Administrator</option>
                 </select>
-              </div>
+              </label>
+            </div>
+          </section>
 
-              <div className="grid grid-cols-2 gap-3">
-                <TextInput
-                  label="Password"
-                  type="password"
-                  value={newAccount.password}
-                  maxLength={MAX_PASSWORD_LENGTH}
-                  onChange={(event) =>
-                    setNewAccount((current) => ({
-                      ...current,
-                      password: sanitizePasswordInput(event.target.value),
-                    }))
-                  }
-                  required
-                />
+          {/* Security */}
+          <section className="rounded-2xl border border-gray-200 bg-gray-50/70 p-5 dark:border-dark-700 dark:bg-dark-900/50">
+            <div className="mb-4">
+              <h3 className="font-black text-gray-950 dark:text-white">
+                Account security
+              </h3>
 
-                <TextInput
-                  label="Confirm"
-                  type="password"
-                  value={newAccount.confirmPassword}
-                  maxLength={MAX_PASSWORD_LENGTH}
-                  onChange={(event) =>
-                    setNewAccount((current) => ({
-                      ...current,
-                      confirmPassword: sanitizePasswordInput(event.target.value),
-                    }))
-                  }
-                  required
-                />
-              </div>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Create a temporary password containing at least six characters.
+              </p>
+            </div>
 
-              <button
-                type="submit"
-                disabled={creating}
-                className="w-full rounded-2xl bg-primary-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {creating ? 'Creating Account...' : 'Create Account'}
-              </button>
-            </form>
-          </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <TextInput
+                label="Password"
+                type="password"
+                value={newAccount.password}
+                onChange={(event) =>
+                  setNewAccount((current) => ({
+                    ...current,
+                    password: sanitizePasswordInput(event.target.value),
+                  }))
+                }
+                placeholder="Enter password"
+                autoComplete="new-password"
+                required
+              />
+
+              <TextInput
+                label="Confirm password"
+                type="password"
+                value={newAccount.confirmPassword}
+                onChange={(event) =>
+                  setNewAccount((current) => ({
+                    ...current,
+                    confirmPassword: sanitizePasswordInput(
+                      event.target.value
+                    ),
+                  }))
+                }
+                placeholder="Repeat password"
+                autoComplete="new-password"
+                required
+              />
+            </div>
+          </section>
         </div>
-      )}
+      </form>
+
+      {/* Sticky footer */}
+      <div className="flex flex-col-reverse gap-3 border-t border-gray-100 bg-white px-6 py-5 dark:border-dark-700 dark:bg-dark-800 sm:flex-row sm:justify-end sm:px-8">
+        <button
+          type="button"
+          disabled={creating}
+          onClick={() => setShowCreate(false)}
+          className="rounded-2xl border border-gray-200 bg-white px-6 py-3 text-sm font-black text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-200 dark:hover:bg-dark-700"
+        >
+          Cancel
+        </button>
+
+        <button
+          form="create-personnel-form"
+          type="submit"
+          disabled={creating}
+          className="rounded-2xl bg-primary-600 px-7 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {creating ? 'Creating account…' : 'Create Account'}
+        </button>
+      </div>
+    </section>
+  </div>
+)}
 
       {/* Policy modal */}
       {showPolicy && (

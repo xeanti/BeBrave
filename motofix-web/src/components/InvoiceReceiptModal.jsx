@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { alertAction } from './ConfirmModal';
 
 function formatPeso(value) {
   const amount = Number(value) || 0;
@@ -1204,7 +1205,7 @@ function buildProfessionalDocumentHtml(data) {
                 <h2>
                   ${
                     data.documentType === 'receipt'
-                      ? 'OFFICIAL RECEIPT'
+                      ? 'PAYMENT RECEIPT'
                       : 'CUSTOMER INVOICE'
                   }
                 </h2>
@@ -1512,7 +1513,7 @@ export default function InvoiceReceiptModal({
 
   const status = getStatusDetails(data.status);
 
-  function handlePrint() {
+  async function handlePrint() {
     const printWindow = window.open(
       '',
       '_blank',
@@ -1520,7 +1521,7 @@ export default function InvoiceReceiptModal({
     );
 
     if (!printWindow) {
-      window.alert(
+      await alertAction(
         'Please allow pop-ups to print the document.'
       );
       return;
@@ -1559,7 +1560,7 @@ export default function InvoiceReceiptModal({
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-[0.22em] text-pink-600">
               {data.documentType === 'receipt'
-                ? 'Official Receipt'
+                ? 'Payment Receipt'
                 : 'Customer Invoice'}
             </p>
 

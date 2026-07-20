@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
+import { confirmAction } from '../../components/ConfirmModal';
 
 const STATUS_OPTIONS = ['pending', 'reviewed', 'converted'];
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
@@ -313,7 +314,7 @@ export default function AdminAssessments() {
     const motorcycle = assessment ? getMotorcycleLabel(assessment) : 'this assessment';
     const statusLabel = String(status || '').replace('_', ' ');
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `Are you sure you want to mark ${customerName}'s assessment for ${motorcycle} as "${statusLabel}"?`
     );
 
@@ -483,7 +484,7 @@ export default function AdminAssessments() {
     const totalAmount = Number(convertTarget.estimated_total) || 0;
     const reservationFee = Number(convertTarget.down_payment_required) || 0;
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `Convert ${customerName}'s pre-assessment for ${motorcycle} into a booking on ${convertForm.booking_date} at ${convertForm.booking_time}?`
     );
 
@@ -919,12 +920,26 @@ export default function AdminAssessments() {
         )}
       {convertTarget && (
         <div className="fixed inset-0 z-[80] grid place-items-center bg-gray-950/60 px-4 py-6 backdrop-blur-sm">
-          <div className="w-full max-w-xl overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="convert-assessment-title"
+            className="flex max-h-[90vh] shrink-0 flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+            style={{
+              width: '560px',
+              maxWidth: 'calc(100vw - 32px)',
+              minWidth: 0,
+              flex: '0 0 auto',
+            }}
+          >
             <div className="border-b border-gray-100 p-5 dark:border-dark-700">
               <p className="text-xs font-black uppercase tracking-[0.25em] text-primary-600 dark:text-primary-400">
                 Convert Assessment
               </p>
-              <h2 className="mt-1 text-2xl font-black text-gray-950 dark:text-white">
+              <h2
+                id="convert-assessment-title"
+                className="mt-1 text-2xl font-black text-gray-950 dark:text-white"
+              >
                 Create Booking
               </h2>
               <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-400">
@@ -932,7 +947,7 @@ export default function AdminAssessments() {
               </p>
             </div>
 
-            <div className="space-y-4 p-5">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
               <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-100 dark:bg-dark-900/60 dark:ring-dark-700">
                 <p className="text-sm font-black text-gray-950 dark:text-white">
                   {getCustomerName(convertTarget)}
@@ -1031,7 +1046,7 @@ export default function AdminAssessments() {
                 {converting ? 'Creating Booking...' : 'Create Booking'}
               </button>
             </div>
-          </div>
+          </section>
         </div>
       )}
       </div>

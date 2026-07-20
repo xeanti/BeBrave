@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StatusBar,
+  RefreshControl,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
@@ -17,37 +18,75 @@ export default function HomeScreen({ navigation }) {
   const [services, setServices] = useState([]);
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    fetchData();
+    fetchData({ showLoader: true });
   }, []);
 
-  async function fetchData() {
-    setLoading(true);
+  async function fetchData({ showLoader = false } = {}) {
+    if (showLoader) {
+      setLoading(true);
+    }
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    try {
+      const {
+        data: { user: currentUser },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-    setUser(user);
+      if (userError) {
+        throw userError;
+      }
 
-    const { data: servicesData } = await supabase
-      .from('services')
-      .select('*')
-      .eq('is_active', true)
-      .limit(4);
+      setUser(currentUser);
 
-    setServices(servicesData || []);
+      const { data: servicesData, error: servicesError } = await supabase
+        .from('services')
+        .select('*')
+        .eq('is_active', true)
+        .limit(4);
 
-    const { data: bookingsData } = await supabase
-      .from('bookings')
-      .select('*, services(name)')
-      .eq('customer_id', user?.id)
-      .order('created_at', { ascending: false })
-      .limit(3);
+      if (servicesError) {
+        throw servicesError;
+      }
 
-    setBookings(bookingsData || []);
-    setLoading(false);
+      setServices(servicesData || []);
+
+      if (!currentUser?.id) {
+        setBookings([]);
+        return;
+      }
+
+      const { data: bookingsData, error: bookingsError } = await supabase
+        .from('bookings')
+        .select('*, services(name)')
+        .eq('customer_id', currentUser.id)
+        .order('created_at', { ascending: false })
+        .limit(3);
+
+      if (bookingsError) {
+        throw bookingsError;
+      }
+
+      setBookings(bookingsData || []);
+    } catch (error) {
+      console.error('Failed to refresh home screen data:', error);
+    } finally {
+      if (showLoader) {
+        setLoading(false);
+      }
+    }
+  }
+
+  async function handleRefresh() {
+    setRefreshing(true);
+
+    try {
+      await fetchData();
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   const statusColor = (status) => {
@@ -74,7 +113,20 @@ export default function HomeScreen({ navigation }) {
   }
 
   return (
-    <ScrollView style={s.container} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={s.container}
+      showsVerticalScrollIndicator={false}
+      alwaysBounceVertical
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor={theme.primaryLight}
+          colors={[theme.primary]}
+          progressBackgroundColor={theme.card}
+        />
+      }
+    >
       <StatusBar
         barStyle={isDark ? 'light-content' : 'dark-content'}
         backgroundColor={theme.bg}

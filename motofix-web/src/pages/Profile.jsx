@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
+import { confirmAction } from '../components/ConfirmModal';
 
 const MAX_PHOTO_SIZE_MB = 5;
 const MAX_CERT_SIZE_MB = 10;
@@ -207,6 +208,17 @@ export default function Profile() {
     specialization: '',
   });
 
+  // Motorcycle catalog
+  const [motorcycleModels, setMotorcycleModels] = useState([]);
+  const [loadingMotorcycleModels, setLoadingMotorcycleModels] =
+    useState(false);
+  const [motorcycleCatalogError, setMotorcycleCatalogError] =
+    useState('');
+  const [selectedMotorcycleModelId, setSelectedMotorcycleModelId] =
+    useState('');
+  const [manualMotorcycleEntry, setManualMotorcycleEntry] =
+    useState(false);
+
   // User profile photo
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
@@ -264,6 +276,77 @@ export default function Profile() {
   }, [profile]);
 
   useEffect(() => {
+    if (!profile || profile.role === 'mechanic') return undefined;
+
+    let isMounted = true;
+
+    async function fetchMotorcycleModels() {
+      setLoadingMotorcycleModels(true);
+      setMotorcycleCatalogError('');
+
+      const { data, error: modelsError } = await supabase
+        .from('motorcycle_models')
+        .select('id, make, model')
+        .order('make', { ascending: true })
+        .order('model', { ascending: true });
+
+      if (!isMounted) return;
+
+      if (modelsError) {
+        setMotorcycleModels([]);
+        setSelectedMotorcycleModelId('');
+        setManualMotorcycleEntry(true);
+        setMotorcycleCatalogError(
+          modelsError.message ||
+            'The motorcycle catalog could not be loaded.'
+        );
+        setLoadingMotorcycleModels(false);
+        return;
+      }
+
+      const catalog = data || [];
+      setMotorcycleModels(catalog);
+
+      const savedMake = String(profile.moto_make || '')
+        .trim()
+        .toLowerCase();
+      const savedModel = String(profile.moto_model || '')
+        .trim()
+        .toLowerCase();
+
+      const matchedModel = catalog.find(
+        (item) =>
+          String(item.make || '').trim().toLowerCase() === savedMake &&
+          String(item.model || '').trim().toLowerCase() === savedModel
+      );
+
+      if (matchedModel) {
+        setSelectedMotorcycleModelId(String(matchedModel.id));
+        setManualMotorcycleEntry(false);
+      } else if (savedMake || savedModel) {
+        setSelectedMotorcycleModelId('__manual__');
+        setManualMotorcycleEntry(true);
+      } else {
+        setSelectedMotorcycleModelId('');
+        setManualMotorcycleEntry(false);
+      }
+
+      setLoadingMotorcycleModels(false);
+    }
+
+    fetchMotorcycleModels();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [
+    profile?.id,
+    profile?.role,
+    profile?.moto_make,
+    profile?.moto_model,
+  ]);
+
+  useEffect(() => {
     return () => {
       if (photoPreview?.startsWith('blob:')) {
         URL.revokeObjectURL(photoPreview);
@@ -314,12 +397,59 @@ export default function Profile() {
     }));
   }
 
+  function handleMotorcycleCatalogChange(event) {
+    const selectedValue = event.target.value;
+
+    setSelectedMotorcycleModelId(selectedValue);
+    setMessage('');
+    setError('');
+
+    if (selectedValue === '__manual__') {
+      setManualMotorcycleEntry(true);
+      return;
+    }
+
+    if (!selectedValue) {
+      setManualMotorcycleEntry(false);
+      setForm((current) => ({
+        ...current,
+        moto_make: '',
+        moto_model: '',
+      }));
+      return;
+    }
+
+    const selectedModel = motorcycleModels.find(
+      (item) => String(item.id) === String(selectedValue)
+    );
+
+    if (!selectedModel) return;
+
+    setManualMotorcycleEntry(false);
+    setForm((current) => ({
+      ...current,
+      moto_make: sanitizeMotorcycleText(selectedModel.make),
+      moto_model: sanitizeMotorcycleText(selectedModel.model),
+    }));
+  }
+
+  function handleManualMotorcycleChange(event) {
+    setSelectedMotorcycleModelId('__manual__');
+    setManualMotorcycleEntry(true);
+    handleChange(event);
+  }
+
   function validateImageFile(file, label) {
-    const allowedImageTypes = ['image/jpeg', 'image/png', 'image/webp'];
-    const allowedImageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
+    const allowedImageTypes = [
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'image/gif',
+    ];
+    const allowedImageExtensions = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
 
     if (!allowedImageTypes.includes(file.type)) {
-      setError(`Please choose a JPG, PNG, or WebP image for ${label}.`);
+      setError(`Please choose a JPG, PNG, WebP, or GIF image for ${label}.`);
       return false;
     }
 
@@ -373,7 +503,13 @@ export default function Profile() {
   }
 
   async function uploadImageFile(file, folder, filePrefix) {
-    const fileExt = getSafeFileExtension(file, ['jpg', 'jpeg', 'png', 'webp']);
+    const fileExt = getSafeFileExtension(file, [
+      'jpg',
+      'jpeg',
+      'png',
+      'webp',
+      'gif',
+    ]);
     const filePath = `${user.id}/${folder}/${filePrefix}_${Date.now()}.${fileExt}`;
 
     const { error: uploadError } = await supabase.storage
@@ -431,7 +567,20 @@ export default function Profile() {
 
   async function handleRemoveProfilePhoto() {
     if (!photoFile && !savedPhotoUrl && !profile?.profile_photo_url) return;
-    if (!confirm('Remove your profile picture?')) return;
+    const confirmed = await confirmAction({
+      title: 'Remove Profile Picture?',
+      message:
+        'Your current profile picture will be removed from your MotoFix account.',
+      details: [
+        'The photo will no longer appear on bookings, mechanic listings, or account menus.',
+        'You can upload another profile picture afterward.',
+      ],
+      confirmLabel: 'Remove Picture',
+      cancelLabel: 'Keep Picture',
+      tone: 'danger',
+    });
+
+    if (!confirmed) return;
 
     setMessage('');
     setError('');
@@ -473,7 +622,20 @@ export default function Profile() {
 
   async function handleRemoveMotoPhoto() {
     if (!motoPhotoFile && !savedMotoPhotoUrl && !profile?.moto_photo_url) return;
-    if (!confirm('Remove your motorcycle picture?')) return;
+    const confirmed = await confirmAction({
+      title: 'Remove Motorcycle Picture?',
+      message:
+        'Your saved motorcycle picture will be removed from your MotoFix profile.',
+      details: [
+        'The motorcycle card on your dashboard will no longer show this image.',
+        'You can upload a replacement picture afterward.',
+      ],
+      confirmLabel: 'Remove Picture',
+      cancelLabel: 'Keep Picture',
+      tone: 'danger',
+    });
+
+    if (!confirmed) return;
 
     setMessage('');
     setError('');
@@ -542,11 +704,56 @@ export default function Profile() {
 
     setMessage('');
     setError('');
+
+    let sanitizedProfile;
+
+    try {
+      sanitizedProfile = validateProfileForm(form, isMechanic);
+    } catch (validationError) {
+      setError(
+        validationError.message ||
+          'Please review your profile information before saving.'
+      );
+      return;
+    }
+
+    const changeSummary = [
+      `Name: ${sanitizedProfile.first_name} ${sanitizedProfile.last_name}`,
+      `Phone: ${sanitizedProfile.phone || 'Not provided'}`,
+      isMechanic
+        ? `Specialization: ${
+            sanitizedProfile.specialization || 'Not provided'
+          }`
+        : `Motorcycle: ${
+            [
+              sanitizedProfile.moto_make,
+              sanitizedProfile.moto_model,
+              sanitizedProfile.moto_year,
+            ]
+              .filter(Boolean)
+              .join(' ') || 'Not provided'
+          }`,
+      photoFile ? 'A new profile picture will be uploaded.' : null,
+      !isMechanic && motoPhotoFile
+        ? 'A new motorcycle picture will be uploaded.'
+        : null,
+    ].filter(Boolean);
+
+    const confirmed = await confirmAction({
+      title: 'Save Profile Changes?',
+      message:
+        'Review the information below before updating your MotoFix profile.',
+      details: changeSummary,
+      confirmLabel: 'Save Changes',
+      cancelLabel: 'Continue Editing',
+      tone: 'primary',
+    });
+
+    if (!confirmed) return;
+
     setSaving(true);
 
     try {
-      const sanitizedProfile = validateProfileForm(form, isMechanic);
-
       let newPhotoUrl = null;
       let newMotoPhotoUrl = null;
 
@@ -605,11 +812,26 @@ export default function Profile() {
     setCertError('');
     setCertSuccess('');
 
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
-    const allowedExtensions = ['jpg', 'jpeg', 'png', 'webp', 'pdf'];
+    const allowedTypes = [
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'image/gif',
+      'application/pdf',
+    ];
+    const allowedExtensions = [
+      'jpg',
+      'jpeg',
+      'png',
+      'webp',
+      'gif',
+      'pdf',
+    ];
 
     if (!allowedTypes.includes(file.type)) {
-      setCertError('Please upload a JPG, PNG, WebP, or PDF certificate.');
+      setCertError(
+        'Please upload a JPG, PNG, WebP, GIF, or PDF certificate.'
+      );
       return;
     }
 
@@ -653,7 +875,14 @@ export default function Profile() {
     setUploadingCert(true);
 
     try {
-      const fileExt = getSafeFileExtension(certFile, ['jpg', 'jpeg', 'png', 'webp', 'pdf']);
+      const fileExt = getSafeFileExtension(certFile, [
+        'jpg',
+        'jpeg',
+        'png',
+        'webp',
+        'gif',
+        'pdf',
+      ]);
       const filePath = `${user.id}/${Date.now()}.${fileExt}`;
 
       const { error: uploadError } = await supabase.storage
@@ -693,7 +922,19 @@ export default function Profile() {
   }
 
   async function handleDeleteCertificate(cert) {
-    if (!confirm(`Delete "${cert.name}"?`)) return;
+    const confirmed = await confirmAction({
+      title: 'Delete Certificate?',
+      message: `“${cert.name}” will be permanently removed from your mechanic profile.`,
+      details: [
+        'This action removes the certificate record.',
+        'Upload the file again if you need to restore it later.',
+      ],
+      confirmLabel: 'Delete Certificate',
+      cancelLabel: 'Keep Certificate',
+      tone: 'danger',
+    });
+
+    if (!confirmed) return;
 
     setDeletingCertId(cert.id);
 
@@ -709,16 +950,38 @@ export default function Profile() {
   const displayMotoPhoto = motoPhotoPreview || savedMotoPhotoUrl;
   const isMechanic = profile?.role === 'mechanic';
 
+  const selectedCatalogMotorcycle = useMemo(
+    () =>
+      motorcycleModels.find(
+        (item) =>
+          String(item.id) === String(selectedMotorcycleModelId)
+      ) || null,
+    [motorcycleModels, selectedMotorcycleModelId]
+  );
+
   const fullName = useMemo(() => {
-    const value = `${form.first_name || ''} ${form.last_name || ''}`.trim();
+    const value = `${profile?.first_name || ''} ${
+      profile?.last_name || ''
+    }`.trim();
+
     return value || 'Your Profile';
-  }, [form.first_name, form.last_name]);
+  }, [profile?.first_name, profile?.last_name]);
 
   const motorcycleLabel = useMemo(() => {
-    const value = `${form.moto_make || ''} ${form.moto_model || ''}`.trim();
-    if (!value && !form.moto_year) return 'Not set';
-    return `${value}${form.moto_year ? ` (${form.moto_year})` : ''}`.trim();
-  }, [form.moto_make, form.moto_model, form.moto_year]);
+    const value = `${profile?.moto_make || ''} ${
+      profile?.moto_model || ''
+    }`.trim();
+
+    if (!value && !profile?.moto_year) return 'Not set';
+
+    return `${value}${
+      profile?.moto_year ? ` (${profile.moto_year})` : ''
+    }`.trim();
+  }, [
+    profile?.moto_make,
+    profile?.moto_model,
+    profile?.moto_year,
+  ]);
 
   return (
     <div className="min-h-[calc(100vh-72px)] bg-gray-50 px-4 py-8 text-gray-900 dark:bg-dark-900 dark:text-white sm:px-6 lg:py-10">
@@ -740,7 +1003,7 @@ export default function Profile() {
                     />
                   ) : (
                     <div className="grid h-20 w-20 place-items-center rounded-3xl bg-primary-600 text-2xl font-black text-white shadow-sm">
-                      {getInitials(form.first_name, form.last_name)}
+                      {getInitials(profile?.first_name, profile?.last_name)}
                     </div>
                   )}
                 </div>
@@ -801,7 +1064,7 @@ export default function Profile() {
                     />
                   ) : (
                     <div className="grid h-36 w-36 place-items-center rounded-[2rem] border-4 border-white bg-primary-600 text-4xl font-black text-white shadow-xl ring-1 ring-gray-200 dark:border-dark-800 dark:ring-dark-700">
-                      {getInitials(form.first_name, form.last_name)}
+                      {getInitials(profile?.first_name, profile?.last_name)}
                     </div>
                   )}
 
@@ -817,7 +1080,7 @@ export default function Profile() {
                 <input
                   id="photo-upload"
                   type="file"
-                  accept="image/*"
+                  accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif"
                   onChange={handlePhotoChange}
                   className="hidden"
                 />
@@ -843,7 +1106,7 @@ export default function Profile() {
                 </div>
 
                 <p className="mt-3 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                  JPG, PNG, or WebP. Max {MAX_PHOTO_SIZE_MB}MB.
+                  JPG, PNG, WebP, or GIF. Max {MAX_PHOTO_SIZE_MB}MB.
                 </p>
 
                 {photoFile && (
@@ -888,7 +1151,7 @@ export default function Profile() {
                   <input
                     id="moto-photo-upload"
                     type="file"
-                    accept="image/*"
+                    accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif"
                     onChange={handleMotoPhotoChange}
                     className="hidden"
                   />
@@ -913,9 +1176,6 @@ export default function Profile() {
                     )}
                   </div>
 
-                  <p className="mt-3 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                    This saves to <span className="font-bold">profiles.moto_photo_url</span>.
-                  </p>
 
                   {motoPhotoFile && (
                     <p className="mt-3 rounded-2xl bg-green-50 px-4 py-3 text-xs font-bold text-green-700 ring-1 ring-green-100 dark:bg-green-500/10 dark:text-green-300 dark:ring-green-500/20">
@@ -1014,27 +1274,107 @@ export default function Profile() {
             {!isMechanic && (
               <SectionCard
                 title="My Motorcycle"
-                description="This helps MotoFix suggest compatible parts and services."
+                description="Choose a supported motorcycle from the MotoFix database or enter one manually."
                 icon="🏍️"
               >
-                <div className="grid gap-4 md:grid-cols-3">
-                  <TextInput
-                    label="Make"
-                    name="moto_make"
-                    value={form.moto_make}
-                    onChange={handleChange}
-                    placeholder="e.g. Yamaha"
-                    maxLength={60}
-                  />
+                <div className="space-y-5">
+                  <div>
+                    <label
+                      htmlFor="motorcycle-catalog"
+                      className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400"
+                    >
+                      Select Your Motorcycle
+                    </label>
 
-                  <TextInput
-                    label="Model"
-                    name="moto_model"
-                    value={form.moto_model}
-                    onChange={handleChange}
-                    placeholder="e.g. Aerox 155"
-                    maxLength={60}
-                  />
+                    <select
+                      id="motorcycle-catalog"
+                      value={selectedMotorcycleModelId}
+                      onChange={handleMotorcycleCatalogChange}
+                      disabled={loadingMotorcycleModels}
+                      className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 disabled:cursor-wait disabled:opacity-60 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:focus:border-primary-500"
+                    >
+                      <option value="">
+                        {loadingMotorcycleModels
+                          ? 'Loading motorcycle database...'
+                          : 'Choose make and model'}
+                      </option>
+
+                      {motorcycleModels.map((motorcycle) => (
+                        <option
+                          key={motorcycle.id}
+                          value={String(motorcycle.id)}
+                        >
+                          {motorcycle.make} — {motorcycle.model}
+                        </option>
+                      ))}
+
+                      <option value="__manual__">
+                        My motorcycle is not listed — enter manually
+                      </option>
+                    </select>
+
+                  </div>
+
+                  {motorcycleCatalogError && (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                      The catalog could not be loaded: {motorcycleCatalogError}
+                      <div className="mt-1 text-xs font-medium">
+                        You can still enter your motorcycle manually below.
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedCatalogMotorcycle &&
+                    !manualMotorcycleEntry && (
+                      <div className="rounded-3xl border border-primary-100 bg-primary-50 p-5 dark:border-primary-500/25 dark:bg-primary-500/10">
+                        <p className="text-[11px] font-black uppercase tracking-[0.18em] text-primary-600 dark:text-primary-400">
+                          Selected from MotoFix database
+                        </p>
+                        <div className="mt-2 flex items-center gap-3">
+                          <div className="grid h-11 w-11 flex-shrink-0 place-items-center rounded-2xl bg-primary-600 text-xl text-white">
+                            🏍️
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-lg font-black text-gray-950 dark:text-white">
+                              {selectedCatalogMotorcycle.make}{' '}
+                              {selectedCatalogMotorcycle.model}
+                            </p>
+                            <p className="text-xs text-gray-600 dark:text-gray-400">
+                              Make and model were filled automatically.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                  {(manualMotorcycleEntry ||
+                    motorcycleCatalogError) && (
+                    <div className="rounded-3xl border border-dashed border-gray-300 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900/60">
+                      <p className="mb-4 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                        Manual Motorcycle Details
+                      </p>
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <TextInput
+                          label="Make"
+                          name="moto_make"
+                          value={form.moto_make}
+                          onChange={handleManualMotorcycleChange}
+                          placeholder="e.g. Yamaha"
+                          maxLength={60}
+                        />
+
+                        <TextInput
+                          label="Model"
+                          name="moto_model"
+                          value={form.moto_model}
+                          onChange={handleManualMotorcycleChange}
+                          placeholder="e.g. Aerox 155"
+                          maxLength={60}
+                        />
+                      </div>
+                    </div>
+                  )}
 
                   <TextInput
                     label="Year"
@@ -1046,7 +1386,7 @@ export default function Profile() {
                     min="1950"
                     max={new Date().getFullYear() + 1}
                     maxLength={4}
-                    helper="Year must be between 1950 and next year."
+                    helper="Choose the model above, then enter your motorcycle's year."
                   />
                 </div>
               </SectionCard>
@@ -1103,12 +1443,12 @@ export default function Profile() {
                         </label>
                         <input
                           type="file"
-                          accept="image/*,application/pdf"
+                          accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,.jpg,.jpeg,.png,.webp,.gif,.pdf"
                           onChange={handleCertFileChange}
                           className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-xs font-semibold text-gray-600 file:mr-3 file:rounded-xl file:border-0 file:bg-primary-600 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white hover:file:bg-primary-700 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400"
                         />
                         <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                          Image or PDF. Max {MAX_CERT_SIZE_MB}MB.
+                          JPG, PNG, WebP, GIF, or PDF. Max {MAX_CERT_SIZE_MB}MB.
                         </p>
                       </div>
 

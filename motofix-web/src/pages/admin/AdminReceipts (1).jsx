@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { supabase } from '../../lib/supabaseClient';
+import { alertAction } from '../../components/ConfirmModal';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
@@ -1197,14 +1198,25 @@ export default function AdminReceipts() {
 
   function handlePrintReceipt(receipt = selectedReceipt, items = selectedItems) {
     if (!receipt) {
-      alert('Please select a receipt first.');
+      void alertAction({
+        title: 'No Receipt Selected',
+        message: 'Please select a receipt before printing.',
+        confirmLabel: 'Okay',
+        tone: 'warning',
+      });
       return;
     }
 
     const printWindow = window.open('', '_blank', 'width=850,height=900');
 
     if (!printWindow) {
-      alert('Please allow pop-ups to print the receipt.');
+      void alertAction({
+        title: 'Pop-up Blocked',
+        message:
+          'Please allow pop-ups for MotoFix, then try printing the receipt again.',
+        confirmLabel: 'Okay',
+        tone: 'warning',
+      });
       return;
     }
 

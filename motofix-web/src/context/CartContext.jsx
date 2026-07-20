@@ -7,6 +7,7 @@ import React, {
   useState,
 } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { alertAction } from '../components/ConfirmModal';
 
 const CartContext = createContext(null);
 
@@ -14,8 +15,16 @@ function money(value) {
   return Number(value) || 0;
 }
 
-function showMessage(_title, message) {
-  alert(message);
+function showMessage(title, message) {
+  const normalizedTitle = title || 'Notice';
+  const danger = /error|failed|unavailable/i.test(normalizedTitle);
+
+  void alertAction({
+    title: normalizedTitle,
+    message,
+    confirmLabel: 'Okay',
+    tone: danger ? 'danger' : 'warning',
+  });
 }
 
 function normalizeCartRow(row, part) {

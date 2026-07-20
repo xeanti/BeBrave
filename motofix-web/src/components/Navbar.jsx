@@ -551,7 +551,9 @@ export default function Navbar() {
   ];
 
   const adminLinks = [
-    { to: '/admin', label: 'Dashboard', icon: '📊' },
+  { to: '/staff', label: 'Operations / POS', icon: '🧰' },
+  { to: '/admin/users', label: 'Users (View Only)', icon: '👥' },
+{ to: '/admin', label: 'Dashboard', icon: '📊' },
     { to: '/admin/bookings', label: 'Bookings', icon: '📅' },
     { to: '/admin/walk-in-queue', label: 'Walk-ins', icon: '🎫' },
     { to: '/admin/orders', label: 'Orders', icon: '📦' },

@@ -6,6 +6,7 @@ import { supabase } from '../../../lib/supabaseClient';
 import { fetchPaymentsFor, summarizePayments } from '../../../lib/payments';
 import { generateOrSyncBookingInvoice } from '../../../lib/invoices';
 import { createReceiptHistory } from '../../../lib/receiptHistory';
+import { confirmAction } from '../../../components/ConfirmModal';
 
 import {
   Section,
@@ -1013,7 +1014,7 @@ export default function PendingPayments({ staffId, onReceipt }) {
       latestOnlinePayment
     );
 
-    const actionConfirmed = window.confirm(
+    const actionConfirmed = await confirmAction(
       `Verify this reservation payment?\n\n` +
         `Customer: ${getCustomerName(record)}\n` +
         `Amount: ${formatPeso(verifiedAmount)}\n` +
@@ -1326,7 +1327,7 @@ export default function PendingPayments({ staffId, onReceipt }) {
       }
     }
 
-    const actionConfirmed = window.confirm(
+    const actionConfirmed = await confirmAction(
       `Confirm ${formatPeso(paidAmount)} payment for ${customerName}?\n\n` +
         `Type: ${type === 'booking' ? 'Booking' : 'Order'}\n` +
         `Method: ${cleanMethod.replace(/_/g, ' ')}\n` +

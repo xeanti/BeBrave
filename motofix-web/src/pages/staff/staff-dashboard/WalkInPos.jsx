@@ -3,6 +3,7 @@ import { supabase } from '../../../lib/supabaseClient';
 import CustomerPicker from '../../../components/CustomerPicker';
 import { adjustPartStock } from '../../../lib/inventory';
 import { createReceiptHistory } from '../../../lib/receiptHistory';
+import { confirmAction } from '../../../components/ConfirmModal';
 
 import {
   Banner,
@@ -375,10 +376,10 @@ export default function WalkInPOS({ staffId, onReceipt }) {
     );
   }
 
-  function clearCart() {
+  async function clearCart() {
     if (safeCart.length === 0) return;
 
-    const confirmed = window.confirm('Clear all products from the cart?');
+    const confirmed = await confirmAction('Clear all products from the cart?');
     if (!confirmed) return;
 
     setCart([]);
@@ -400,11 +401,11 @@ export default function WalkInPOS({ staffId, onReceipt }) {
     clearProductPosDraft();
   }
 
-  function clearSale(options = {}) {
+  async function clearSale(options = {}) {
     const skipConfirm = options?.skipConfirm === true;
 
     if (!skipConfirm && hasSavedDraft) {
-      const confirmed = window.confirm('Reset this POS sale and clear the saved draft?');
+      const confirmed = await confirmAction('Reset this POS sale and clear the saved draft?');
       if (!confirmed) return;
     }
 
@@ -558,7 +559,7 @@ export default function WalkInPOS({ staffId, onReceipt }) {
       guestName: cleanGuestName,
     });
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       buildSaleSummary({
         customerName: saleCustomerName,
         cartItems: checkoutCart,

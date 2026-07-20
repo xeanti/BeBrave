@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
 import CustomerPicker from '../../../components/CustomerPicker';
+import { confirmAction } from '../../../components/ConfirmModal';
 
 import {
   Banner,
@@ -575,11 +576,11 @@ export default function CreateBooking({ staffId }) {
     );
   }
 
-  function resetForm({ askConfirmation = true } = {}) {
+  async function resetForm({ askConfirmation = true } = {}) {
     if (
       askConfirmation &&
       hasDraftContent() &&
-      !window.confirm('Clear this scheduled booking draft? Unsaved customer, service, schedule, notes, and products used will be removed.')
+      !await confirmAction('Clear this scheduled booking draft? Unsaved customer, service, schedule, notes, and products used will be removed.')
     ) {
       return;
     }
@@ -842,7 +843,7 @@ export default function CreateBooking({ staffId }) {
       `Total Bill: ${formatPeso(totalBill)}`,
     ];
 
-    const confirmed = window.confirm(confirmLines.join('\n'));
+    const confirmed = await confirmAction(confirmLines.join('\n'));
 
     if (!confirmed) return;
 

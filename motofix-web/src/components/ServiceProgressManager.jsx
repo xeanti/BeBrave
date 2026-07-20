@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { adjustPartStock } from '../lib/inventory';
+import { confirmAction } from './ConfirmModal';
 import {
   generateOrSyncBookingInvoice,
   getInvoiceForBooking,
@@ -571,7 +572,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
   async function updateProgress(step) {
     if (!bookingId || !step?.id) return;
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `Update service progress to "${step.label}"?\n\nProgress will be set to ${step.percent}%.`
     );
 
@@ -609,7 +610,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
   async function addPartUsed(part) {
     if (!bookingId || !part?.id) return;
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `Add "${part.name}" as product used?\n\nInventory stock will be deducted automatically.`
     );
 
@@ -768,7 +769,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
     const quantity = Number(line.quantity) || 1;
     const deducted = line.stock_deducted === true;
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       deducted
         ? `Remove ${line.name} and return ${quantity} to inventory?`
         : `Remove ${line.name} from the products used list?`
@@ -827,7 +828,7 @@ export default function ServiceProgressManager({ booking, onUpdated, compact = f
       ? `Cancel this appointment and return ${restorableProducts.length} deducted product line(s) back to inventory?`
       : 'Cancel this appointment?';
 
-    const confirmed = window.confirm(confirmText);
+    const confirmed = await confirmAction(confirmText);
     if (!confirmed) return;
 
     setSavingStatus('cancelled');

@@ -7,6 +7,7 @@ import ServiceProgressManager from '../../components/ServiceProgressManager';
 import InvoiceReceiptModal from '../../components/InvoiceReceiptModal';
 import { generateOrSyncBookingInvoice } from '../../lib/invoices';
 import { notifyUser } from '../../lib/notifications';
+import { alertAction, confirmAction, promptAction } from '../../components/ConfirmModal';
 
 const STATUS_STYLES = {
   pending:
@@ -807,7 +808,7 @@ export default function AdminBookingDetails() {
       ? getMechanicDisplayName(selectedMechanic)
       : 'Unassigned';
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `Update assigned mechanic?\n\nFrom: ${currentMechanicName}\nTo: ${nextMechanicName}\n\nThis will change who is responsible for this booking.`
     );
 
@@ -821,7 +822,7 @@ export default function AdminBookingDetails() {
       .eq('id', booking.id);
 
     if (error) {
-      window.alert(error.message || 'Failed to update assigned mechanic.');
+      await alertAction(error.message || 'Failed to update assigned mechanic.');
       setMechanicSaving(false);
       return;
     }
@@ -846,7 +847,7 @@ export default function AdminBookingDetails() {
     if (!booking?.id) return;
 
     if (mechanics.length === 0) {
-      window.alert('No mechanic accounts found.');
+      await alertAction('No mechanic accounts found.');
       return;
     }
 
@@ -859,7 +860,7 @@ export default function AdminBookingDetails() {
       .not('mechanic_id', 'is', null);
 
     if (activeError) {
-      window.alert(activeError.message || 'Failed to check mechanic workload.');
+      await alertAction(activeError.message || 'Failed to check mechanic workload.');
       setMechanicSaving(false);
       return;
     }
@@ -883,7 +884,7 @@ export default function AdminBookingDetails() {
     })[0];
 
     if (!bestMechanic) {
-      window.alert('No mechanic accounts found.');
+      await alertAction('No mechanic accounts found.');
       setMechanicSaving(false);
       return;
     }
@@ -933,21 +934,27 @@ export default function AdminBookingDetails() {
     const defaultReference = sanitizeReference(
       booking.payment_reference || latestOnlinePayment?.reference_number || ''
     );
-    const reference = window.prompt(
-      `Confirm down payment for ${getCustomerName(booking)}?\n\nMethod: ${methodLabel}\nAmount: ${formatPeso(reservationFee)}\n\nEnter receipt/reference number:`,
-      defaultReference
-    );
+    const reference = await promptAction({
+      title: 'Confirm Down Payment',
+      message: `Customer: ${getCustomerName(booking)}\nMethod: ${methodLabel}\nAmount: ${formatPeso(reservationFee)}`,
+      inputLabel: 'Receipt / Reference Number',
+      inputPlaceholder: 'Enter receipt or reference number',
+      defaultValue: defaultReference,
+      confirmLabel: 'Continue',
+      cancelLabel: 'Cancel',
+      tone: 'primary',
+    });
 
     if (reference === null) return;
 
     const cleanReference = sanitizeReference(reference);
 
     if (!cleanReference) {
-      window.alert('Receipt/reference number is required.');
+      await alertAction('Receipt/reference number is required.');
       return;
     }
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `Mark down payment as paid?\n\nCustomer: ${getCustomerName(booking)}\nAmount: ${formatPeso(reservationFee)}\nReference: ${cleanReference}\n\nThis will update the booking and create payment records.`
     );
 
@@ -969,7 +976,7 @@ export default function AdminBookingDetails() {
       .eq('id', booking.id);
 
     if (bookingError) {
-      window.alert(bookingError.message || 'Failed to confirm down payment.');
+      await alertAction(bookingError.message || 'Failed to confirm down payment.');
       setStatusSaving(false);
       return;
     }
@@ -1013,7 +1020,7 @@ export default function AdminBookingDetails() {
 
     setStatusSaving(false);
     fetchBookingDetails(false);
-    window.alert('Down payment confirmed. You can now confirm the booking.');
+    await alertAction('Down payment confirmed. You can now confirm the booking.');
   }
 
   async function insertAuditLog(action, details = {}) {
@@ -1107,14 +1114,14 @@ export default function AdminBookingDetails() {
     }
 
     if (cleanPaymentType !== 'refund' && amount > balance) {
-      const proceed = window.confirm(
+      const proceed = await confirmAction(
         `Payment amount is higher than the current balance (${formatPeso(balance)}). Continue?`
       );
 
       if (!proceed) return;
     }
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `${cleanPaymentType === 'refund' ? 'Record refund' : 'Record payment'}?\n\nCustomer: ${getCustomerName(booking)}\nAmount: ${formatPeso(amount)}\nType: ${getPaymentTypeLabel(cleanPaymentType)}\nMethod: ${getPaymentTypeLabel(cleanMethod)}\n\nPlease confirm before saving this payment record.`
     );
 
@@ -1220,7 +1227,7 @@ export default function AdminBookingDetails() {
     const validStatuses = Object.keys(STATUS_STYLES);
 
     if (!validStatuses.includes(cleanNextStatus)) {
-      window.alert('Invalid booking status selected.');
+      await alertAction('Invalid booking status selected.');
       return;
     }
 
@@ -1231,7 +1238,7 @@ export default function AdminBookingDetails() {
       bookingRequiresReservationPayment(booking) &&
       !isReservationPaid(booking)
     ) {
-      window.alert('This booking cannot be confirmed until the down payment is paid.');
+      await alertAction('This booking cannot be confirmed until the down payment is paid.');
       return;
     }
 
@@ -1246,7 +1253,7 @@ export default function AdminBookingDetails() {
           ? '\n\nThis is a risky action. Please make sure the booking details are correct before continuing.'
           : '';
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `Update booking status?\n\nFrom: ${getStatusLabel(currentBookingStatus)}\nTo: ${statusLabel}${warningLine}`
     );
 
@@ -1260,7 +1267,7 @@ export default function AdminBookingDetails() {
       .eq('id', booking.id);
 
     if (error) {
-      window.alert(error.message || 'Failed to update booking status.');
+      await alertAction(error.message || 'Failed to update booking status.');
       setStatusSaving(false);
       return;
     }

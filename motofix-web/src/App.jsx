@@ -391,7 +391,7 @@ export default function App() {
             <Route
               path="/admin/users"
               element={
-                <ProtectedRoute allowedRoles={SUPER_ADMIN_ONLY}>
+                <ProtectedRoute allowedRoles={ADMIN_PORTAL_ROLES}>
                   <AdminUsers />
                 </ProtectedRoute>
               }

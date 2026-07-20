@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
+import { confirmAction } from '../../../components/ConfirmModal';
 
 import {
   Banner,
@@ -265,7 +266,7 @@ export default function BookingServiceQueue() {
 
     const total = calculateBookingTotal(booking);
     const services = getBookingServicesSummary(booking);
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `Confirm this scheduled booking?\n\nCustomer: ${getCustomerName(booking)}\nService(s): ${services}\nSchedule: ${safeDisplay(booking.booking_date)} ${formatTime(booking.booking_time)}\nTotal: ${formatPeso(total)}\n\nThis will move the booking to confirmed/service progress.`
     );
 

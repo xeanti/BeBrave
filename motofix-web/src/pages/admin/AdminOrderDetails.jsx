@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import { notifyUser } from '../../lib/notifications';
 import { generateOrSyncOrderInvoice } from '../../lib/invoices';
 import InvoiceReceiptModal from '../../components/InvoiceReceiptModal';
+import { confirmAction } from '../../components/ConfirmModal';
 
 const STATUS_OPTIONS = ['pending', 'confirmed', 'processing', 'ready', 'completed', 'cancelled', 'returned'];
 const PAYMENT_TYPES = ['down_payment', 'balance', 'full'];
@@ -866,7 +867,7 @@ export default function AdminOrderDetails() {
       return;
     }
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       'Return this order to inventory?\n\nThis will add all ordered quantities back to stock and mark the order as returned.'
     );
 

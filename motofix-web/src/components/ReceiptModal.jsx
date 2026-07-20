@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { alertAction } from './ConfirmModal';
 
 function formatPeso(value) {
   const amount = Number(value) || 0;
@@ -679,7 +680,7 @@ function buildProfessionalReceiptHtml(receipt) {
               </div>
 
               <div class="document">
-                <h2>OFFICIAL RECEIPT</h2>
+                <h2>PAYMENT RECEIPT</h2>
 
                 <div class="receipt-number">
                   ${escapeHtml(data.receiptNumber)}
@@ -907,7 +908,7 @@ export default function ReceiptModal({ receipt, onClose }) {
   const data = normalizeReceipt(receipt);
   const status = getStatusDetails(data.status);
 
-  function handlePrint() {
+  async function handlePrint() {
     const printWindow = window.open(
       '',
       '_blank',
@@ -915,7 +916,7 @@ export default function ReceiptModal({ receipt, onClose }) {
     );
 
     if (!printWindow) {
-      window.alert('Please allow pop-ups to print the receipt.');
+      await alertAction('Please allow pop-ups to print the receipt.');
       return;
     }
 
@@ -951,7 +952,7 @@ export default function ReceiptModal({ receipt, onClose }) {
         <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-gray-200 bg-white/95 p-5 backdrop-blur">
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-[0.22em] text-pink-600">
-              Official Receipt
+              Payment Receipt
             </p>
 
             <h2

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 import { adjustPartStock } from '../../lib/inventory';
+import { confirmAction } from '../../components/ConfirmModal';
 
 const EMPTY_FORM = {
   name: '',
@@ -315,7 +316,6 @@ export default function AdminParts() {
 
   const [toast, setToast] = useState('');
   const [togglingId, setTogglingId] = useState(null);
-  const [deactivateConfirm, setDeactivateConfirm] = useState(null);
   const [stockEdits, setStockEdits] = useState({});
   const [updatingStockId, setUpdatingStockId] = useState(null);
 
@@ -810,7 +810,7 @@ export default function AdminParts() {
     const stockQuantity = parseInt(form.stock_quantity, 10);
     const cleanProductName = sanitizeProductName(form.name).trim();
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       editingId
         ? `Save changes to "${cleanProductName}"?`
         : `Add "${cleanProductName}" as a new product?`
@@ -946,7 +946,6 @@ export default function AdminParts() {
       showErrorPopup(message);
     } finally {
       setTogglingId(null);
-      setDeactivateConfirm(null);
     }
   }
 
@@ -989,14 +988,14 @@ export default function AdminParts() {
     }
   }
 
-  function adjustStock(part, delta) {
+  async function adjustStock(part, delta) {
     const currentStock = Number(part.stock_quantity) || 0;
     const next = Math.max(0, currentStock + delta);
 
     if (next === currentStock) return;
 
     const actionText = delta > 0 ? 'increase' : 'decrease';
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `Are you sure you want to ${actionText} stock for "${part.name}" from ${currentStock} to ${next}?`
     );
 
@@ -1011,7 +1010,7 @@ export default function AdminParts() {
     );
   }
 
-  function commitStockInput(part) {
+  async function commitStockInput(part) {
     const raw = stockEdits[part.id];
 
     if (raw === undefined) return;
@@ -1020,7 +1019,7 @@ export default function AdminParts() {
     const currentStock = Number(part.stock_quantity) || 0;
 
     if (!Number.isNaN(qty) && qty >= 0 && qty !== currentStock) {
-      const confirmed = window.confirm(
+      const confirmed = await confirmAction(
         `Update stock for "${part.name}" from ${currentStock} to ${qty}?`
       );
 
@@ -1193,7 +1192,7 @@ export default function AdminParts() {
       return;
     }
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       nextValue
         ? `Enable AI Preview for "${categoryName}"? Products in this category can use AI preview fields.`
         : `Disable AI Preview for "${categoryName}"? AI reference and preview fields will be cleared for products in this category.`
@@ -1233,7 +1232,7 @@ export default function AdminParts() {
   }
 
   async function deleteCategory(name) {
-    if (!window.confirm(`Remove category "${name}" from all products?`)) return;
+    if (!await confirmAction(`Remove category "${name}" from all products?`)) return;
 
     const categoryRecord = getCategoryRecord(name, categoryRecords);
 
@@ -1767,8 +1766,8 @@ export default function AdminParts() {
                     {inactive ? (
                       <button
                         type="button"
-                        onClick={() => {
-                          const confirmed = window.confirm(`Reactivate "${part.name}"?`);
+                        onClick={async () => {
+                          const confirmed = await confirmAction(`Reactivate "${part.name}"?`);
                           if (confirmed) setPartActive(part, true);
                         }}
                         disabled={togglingId === part.id}
@@ -1779,7 +1778,19 @@ export default function AdminParts() {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => setDeactivateConfirm(part)}
+                        onClick={async () => {
+                          const confirmed = await confirmAction({
+                            title: 'Deactivate Product?',
+                            message: `“${part.name}” will be hidden from customers but kept in your records. You can reactivate it at any time.`,
+                            confirmLabel: 'Deactivate',
+                            cancelLabel: 'Cancel',
+                            tone: 'danger',
+                          });
+
+                          if (confirmed) {
+                            await setPartActive(part, false);
+                          }
+                        }}
                         disabled={togglingId === part.id}
                         className="rounded-2xl bg-red-50 px-4 py-2 text-xs font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25 dark:hover:bg-red-500/20"
                       >
@@ -1880,59 +1891,29 @@ export default function AdminParts() {
         </div>
       )}
 
-      {/* Deactivate Confirmation */}
-      {deactivateConfirm && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center px-4">
-          <div
-            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-            onClick={() => setDeactivateConfirm(null)}
-          />
-
-          <div className="relative w-full max-w-sm rounded-3xl border border-gray-200 bg-white p-6 shadow-2xl dark:border-dark-700 dark:bg-dark-800">
-            <h3 className="mb-2 text-lg font-black text-gray-950 dark:text-white">
-              Deactivate Product?
-            </h3>
-            <p className="mb-6 text-sm leading-6 text-gray-600 dark:text-gray-400">
-              <span className="font-black text-gray-950 dark:text-white">
-                “{deactivateConfirm.name}”
-              </span>{' '}
-              will be hidden from customers but kept in your records. You can reactivate it anytime.
-            </p>
-
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => setDeactivateConfirm(null)}
-                className="flex-1 rounded-2xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700 transition hover:border-gray-300 dark:border-dark-700 dark:text-gray-300"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setPartActive(deactivateConfirm, false)}
-                disabled={togglingId === deactivateConfirm.id}
-                className="flex-1 rounded-2xl bg-red-600 px-4 py-3 text-sm font-black text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {togglingId === deactivateConfirm.id ? 'Deactivating...' : 'Deactivate'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Manage Categories */}
       {catPanelOpen && (
-        <div className="fixed inset-0 z-[100] flex justify-end" role="dialog" aria-modal="true">
-          <div
-            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-            onClick={() => setCatPanelOpen(false)}
-          />
-
-          <div className="relative flex h-full w-full flex-col overflow-y-auto bg-white shadow-2xl dark:bg-dark-800 sm:max-w-md">
-            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4 dark:border-dark-700 dark:bg-dark-800">
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm sm:p-6"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !catSaving) {
+              setCatPanelOpen(false);
+            }
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="manage-categories-title"
+            className="relative flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+          >
+            <div className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4 dark:border-dark-700 dark:bg-dark-800">
               <div>
-                <h2 className="text-lg font-black text-gray-950 dark:text-white">
+                <h2
+                  id="manage-categories-title"
+                  className="text-lg font-black text-gray-950 dark:text-white"
+                >
                   Manage Categories
                 </h2>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -1949,7 +1930,7 @@ export default function AdminParts() {
               </button>
             </div>
 
-            <div className="flex flex-1 flex-col gap-6 p-6">
+            <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-6">
               <div>
                 <p className="mb-2 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
                   Add Category
@@ -2122,31 +2103,65 @@ export default function AdminParts() {
                 )}
               </div>
             </div>
-          </div>
+          </section>
         </div>
       )}
 
       {/* Add/Edit Product */}
       {panelOpen && (
-        <div className="fixed inset-0 z-[100] flex justify-end" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closePanel} />
-
-          <div className="relative h-full w-full overflow-y-auto bg-white shadow-2xl dark:bg-dark-800 sm:max-w-lg">
-            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4 dark:border-dark-700 dark:bg-dark-800">
-              <h2 className="text-lg font-black text-gray-950 dark:text-white">
-                {editingId ? 'Edit Product' : 'Add New Product'}
-              </h2>
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm sm:p-6"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              !saving &&
+              !uploadingImage &&
+              !uploadingAiReference
+            ) {
+              closePanel();
+            }
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="product-modal-title"
+            className="relative flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+          >
+            <header className="flex items-start justify-between gap-4 border-b border-gray-200 bg-white px-6 py-5 dark:border-dark-700 dark:bg-dark-800 sm:px-8">
+              <div className="min-w-0">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-primary-600 dark:text-primary-400">
+                  Product Management
+                </p>
+                <h2
+                  id="product-modal-title"
+                  className="mt-1 text-xl font-black text-gray-950 dark:text-white sm:text-2xl"
+                >
+                  {editingId ? 'Edit Product' : 'Add New Product'}
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-gray-500 dark:text-gray-400">
+                  {editingId
+                    ? 'Update product details, inventory, compatibility, and AI preview information.'
+                    : 'Create a product and configure its inventory, compatible motorcycles, and preview settings.'}
+                </p>
+              </div>
 
               <button
                 type="button"
                 onClick={closePanel}
-                className="grid h-10 w-10 place-items-center rounded-2xl text-xl text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white"
+                disabled={saving || uploadingImage || uploadingAiReference}
+                aria-label="Close product modal"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-gray-200 text-lg font-black text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:hover:bg-dark-700 dark:hover:text-white"
               >
                 ✕
               </button>
-            </div>
+            </header>
 
-            <form onSubmit={handleSubmit} className="space-y-5 p-6">
+            <form
+              onSubmit={handleSubmit}
+              className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-6 sm:px-8"
+            >
               {formError && (
                 <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
                   {formError}
@@ -2343,7 +2358,7 @@ export default function AdminParts() {
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid gap-4 sm:grid-cols-3">
                     <TextInput
                       label="Color"
                       name="color"
@@ -2382,7 +2397,7 @@ export default function AdminParts() {
                 helper="Allowed: letters, numbers, spaces, ñ, and basic symbols only."
               />
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <TextInput
                   label="Price *"
                   name="price"
@@ -2479,25 +2494,30 @@ export default function AdminParts() {
                 )}
               </div>
 
-              <div className="sticky bottom-0 flex gap-3 border-t border-gray-200 bg-white pt-5 dark:border-dark-700 dark:bg-dark-800">
+              <footer className="sticky -bottom-6 -mx-6 mt-6 flex flex-col-reverse gap-3 border-t border-gray-200 bg-white px-6 py-5 dark:border-dark-700 dark:bg-dark-800 sm:-mx-8 sm:flex-row sm:justify-end sm:px-8">
                 <button
                   type="button"
                   onClick={closePanel}
-                  className="flex-1 rounded-2xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700 transition hover:border-gray-300 dark:border-dark-700 dark:text-gray-300"
+                  disabled={saving || uploadingImage || uploadingAiReference}
+                  className="rounded-2xl border border-gray-200 bg-white px-6 py-3 text-sm font-black text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-200 dark:hover:bg-dark-700"
                 >
                   Cancel
                 </button>
 
                 <button
                   type="submit"
-                  disabled={saving}
-                  className="flex-1 rounded-2xl bg-primary-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={saving || uploadingImage || uploadingAiReference}
+                  className="rounded-2xl bg-primary-600 px-7 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {saving ? 'Saving...' : editingId ? 'Save Changes' : '+ Add Product'}
+                  {saving
+                    ? 'Saving...'
+                    : editingId
+                    ? 'Save Changes'
+                    : '+ Add Product'}
                 </button>
-              </div>
+              </footer>
             </form>
-          </div>
+          </section>
         </div>
       )}
     </div>
