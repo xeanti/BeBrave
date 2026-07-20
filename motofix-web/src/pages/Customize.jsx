@@ -1,3 +1,4 @@
+import { getAiPreviewErrorMessage } from '../lib/aiPreviewError';
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
@@ -690,11 +691,11 @@ export default function Customize() {
 
       if (fnError) {
         console.error('Function invoke error:', fnError);
-        throw new Error(fnError.message || 'AI preview failed. Please try again.');
+        throw fnError;
       }
 
       if (fnData?.success === false) {
-        throw new Error(fnData.error || 'AI preview failed. Please try again.');
+        throw { code: 'AI_PREVIEW_REJECTED', context: fnData };
       }
 
       if (!fnData?.imageUrl) {
@@ -731,8 +732,13 @@ export default function Customize() {
         console.error('Failed to save customization:', saveError);
       }
     } catch (err) {
-      console.error(err);
-      setError(err.message || 'Failed to generate preview. Please try again.');
+      console.error('AI PREVIEW ERROR:', err);
+      setError(
+        getAiPreviewErrorMessage(
+          err,
+          'Unable to generate the AI preview right now. Please try again.'
+        )
+      );
     } finally {
       setLoading(false);
     }

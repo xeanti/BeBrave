@@ -546,7 +546,10 @@ function hasPaidReservationFee(booking) {
     booking?.payment_status || ''
   ).toLowerCase();
 
-  return PAID_RESERVATION_STATUSES.has(paymentStatus);
+  return (
+    booking?.payment_received === true ||
+    PAID_RESERVATION_STATUSES.has(paymentStatus)
+  );
 }
 
 async function getBlockingBooking(userId) {
@@ -555,6 +558,7 @@ async function getBlockingBooking(userId) {
     .select(`
       id,
       payment_status,
+          payment_received,
       status,
       booking_date,
       booking_time,

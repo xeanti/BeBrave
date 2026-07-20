@@ -352,6 +352,72 @@ function clearWalkinServiceDraft() {
   }
 }
 
+function normalizeMotorcycleCompatibilityLabel(value) {
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getCompatibleModelLabels(part) {
+  const value = part?.compatible_models;
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => getCompatibleModelLabels({
+      compatible_models: item,
+    }));
+  }
+
+  if (value && typeof value === 'object') {
+    const nested = value.models || value.compatible_models || Object.values(value);
+    return getCompatibleModelLabels({ compatible_models: nested });
+  }
+
+  if (typeof value !== 'string') return [];
+
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+
+  if (
+    (trimmed.startsWith('[') && trimmed.endsWith(']')) ||
+    (trimmed.startsWith('{') && trimmed.endsWith('}'))
+  ) {
+    try {
+      return getCompatibleModelLabels({
+        compatible_models: JSON.parse(trimmed),
+      });
+    } catch {
+      // Continue with delimiter parsing for legacy text values.
+    }
+  }
+
+  return trimmed
+    .split(/[,;|\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function isPartCompatibleWithMotorcycle(part, motorcycleLabel) {
+  const selected = normalizeMotorcycleCompatibilityLabel(motorcycleLabel);
+  if (!selected) return false;
+
+  return getCompatibleModelLabels(part).some((label) => {
+    const compatible = normalizeMotorcycleCompatibilityLabel(label);
+
+    if (!compatible) return false;
+    if (['all', 'any', 'universal'].includes(compatible)) return true;
+
+    return (
+      compatible === selected ||
+      compatible.endsWith(` ${selected}`) ||
+      selected.endsWith(` ${compatible}`)
+    );
+  });
+}
+
 export default function WalkInServicePOS({ staffId, onReceipt }) {
   const today = getLocalDateString();
   const draft = readWalkinServiceDraft();
@@ -477,7 +543,9 @@ export default function WalkInServicePOS({ staffId, onReceipt }) {
         .order('name', { ascending: true }),
       supabase
         .from('parts')
-        .select('id, name, category, image_url, price, stock_quantity, is_active')
+          .select(
+            'id, name, category, image_url, price, stock_quantity, is_active, compatible_models'
+          )
         .eq('is_active', true)
         .gt('stock_quantity', 0)
         .order('name', { ascending: true }),
@@ -561,6 +629,38 @@ export default function WalkInServicePOS({ staffId, onReceipt }) {
     (item) => item.queue_date === today && String(item.status) === 'completed'
   ).length;
 
+  useEffect(() => {
+    const selectedModel = sanitizeModel(motorcycleModel).trim();
+
+    if (!selectedModel) {
+      if (productCart.length > 0) {
+        setProductCart([]);
+        setMessage(
+          'Products were removed because a motorcycle model must be selected first.'
+        );
+      }
+      return;
+    }
+
+    // Do not clear a restored draft before the current product catalog loads.
+    if (parts.length === 0 || productCart.length === 0) return;
+
+    const compatibleCart = productCart.filter((item) => {
+      const latestPart = parts.find((part) => part.id === item.id);
+      return (
+        latestPart &&
+        isPartCompatibleWithMotorcycle(latestPart, selectedModel)
+      );
+    });
+
+    if (compatibleCart.length !== productCart.length) {
+      setProductCart(compatibleCart);
+      setMessage(
+        'Some products were removed because they are not compatible with the selected motorcycle model.'
+      );
+    }
+  }, [motorcycleModel, parts, productCart]);
+
   const filteredServices = useMemo(() => {
     const query = sanitizeShortText(serviceSearch, 80).trim().toLowerCase();
 
@@ -575,12 +675,22 @@ export default function WalkInServicePOS({ staffId, onReceipt }) {
     );
   }, [services, serviceSearch]);
 
+  const compatibleParts = useMemo(() => {
+    const selectedModel = sanitizeModel(motorcycleModel).trim();
+
+    if (!selectedModel) return [];
+
+    return parts.filter((part) =>
+      isPartCompatibleWithMotorcycle(part, selectedModel)
+    );
+  }, [parts, motorcycleModel]);
+
   const filteredParts = useMemo(() => {
     const query = sanitizeShortText(partSearch, 80).trim().toLowerCase();
 
-    if (!query) return parts.slice(0, 12);
+    if (!query) return compatibleParts.slice(0, 12);
 
-    return parts
+    return compatibleParts
       .filter((part) =>
         [part.name, part.category]
           .filter(Boolean)
@@ -589,7 +699,7 @@ export default function WalkInServicePOS({ staffId, onReceipt }) {
           .includes(query)
       )
       .slice(0, 12);
-  }, [parts, partSearch]);
+  }, [compatibleParts, partSearch]);
 
   function toggleService(service) {
     setMessage('');
@@ -611,6 +721,20 @@ export default function WalkInServicePOS({ staffId, onReceipt }) {
 
   function addProduct(part) {
     setMessage('');
+
+    const selectedModel = sanitizeModel(motorcycleModel).trim();
+
+    if (!selectedModel) {
+      setMessage('Error: Select a motorcycle model before adding products.');
+      return;
+    }
+
+    if (!isPartCompatibleWithMotorcycle(part, selectedModel)) {
+      setMessage(
+        `Error: ${part?.name || 'This product'} is not compatible with ${selectedModel}.`
+      );
+      return;
+    }
 
     const stock = Number(part.stock_quantity) || 0;
 
@@ -760,6 +884,22 @@ export default function WalkInServicePOS({ staffId, onReceipt }) {
 
     if (invalidProduct) {
       setMessage(`Error: Check product quantity for ${invalidProduct.name || 'selected product'}.`);
+      return;
+    }
+
+
+    const incompatibleProduct = productCart.find((item) => {
+      const latestPart = parts.find((part) => part.id === item.id);
+      return (
+        !latestPart ||
+        !isPartCompatibleWithMotorcycle(latestPart, cleanMotorcycleModel)
+      );
+    });
+
+    if (incompatibleProduct) {
+      setMessage(
+        `Error: ${incompatibleProduct.name || 'A selected product'} is not compatible with ${cleanMotorcycleModel}. Remove it before creating the walk-in queue.`
+      );
       return;
     }
 
