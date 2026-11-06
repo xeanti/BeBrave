@@ -122,18 +122,15 @@ td {
   max-width: 100vw;
 }
 
-.fixed.inset-0 > *,
-.absolute.inset-0 > * {
+/* Viewport fallbacks must not override a dialog's own max-w-* utilities.
+   Keep backdrops full size and let each panel control its scrolling. */
+:where(.fixed.inset-0, .absolute.inset-0) > :where(:not(.absolute.inset-0)) {
   max-width: calc(100vw - 24px);
 }
 
-[role='dialog'],
-.modal,
-.dialog {
-  width: min(100%, calc(100vw - 24px));
-  max-width: calc(100vw - 24px);
+:where(.fixed.inset-0 > [role='dialog'], .modal, .dialog) {
   max-height: calc(100vh - 24px);
-  overflow: auto;
+  max-height: calc(100dvh - 24px);
 }
 
 .rounded-3xl,

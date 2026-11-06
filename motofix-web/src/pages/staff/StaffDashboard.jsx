@@ -8,7 +8,7 @@ import { formatDateTime } from './staff-dashboard/StaffDashboardShared';
 import BookingServiceQueue from './staff-dashboard/BookingServiceQueue';
 import CreateBooking from './staff-dashboard/CreateBooking';
 import WalkInServicePOS from './staff-dashboard/WalkInServicePOS';
-import WalkInPOS from './staff-dashboard/WalkInPOS';
+import WalkInPOS from './staff-dashboard/WalkInPos';
 import PendingPayments from './staff-dashboard/PendingPayments';
 import StaffServiceProgress from './staff-dashboard/StaffServiceProgress';
 import StaffMechanicSchedule from './staff-dashboard/StaffMechanicSchedule';

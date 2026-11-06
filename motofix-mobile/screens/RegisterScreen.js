@@ -186,29 +186,32 @@ export default function RegisterScreen({ navigation }) {
 
     setLoading(true);
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: 'https://motofix.store/auth/callback',
-        data: {
-          first_name: firstName,
-          last_name: lastName,
-          phone: cleanPhone,
-          role: 'customer',
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim().toLowerCase(),
+        password,
+        options: {
+          emailRedirectTo: 'https://motofix.store/auth/callback',
+          data: {
+            first_name: firstName,
+            last_name: lastName,
+            phone: cleanPhone,
+            role: 'customer',
+          },
         },
-      },
-    });
+      });
 
-    await supabase.auth.signOut();
-    setLoading(false);
-
-    if (error) {
-      Alert.alert('Registration Failed', error.message);
-    } else {
-      Alert.alert('Success!', 'Account created. Please check your email to verify.', [
-        { text: 'OK', onPress: () => navigation.replace('Login') },
-      ]);
+      if (error) throw error;
+      if (!data?.session) {
+        Alert.alert('Success!', 'Account created. Please check your email to verify.', [
+          { text: 'OK', onPress: () => navigation.replace('Login') },
+        ]);
+      }
+      // When email confirmation is disabled, AuthProvider handles the new session.
+    } catch (error) {
+      Alert.alert('Registration Failed', error.message || 'Unable to register. Please try again.');
+    } finally {
+      setLoading(false);
     }
   }
 

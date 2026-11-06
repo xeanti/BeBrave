@@ -1,0 +1,100 @@
+/* Modal layout only. All colors continue to come from the existing theme. */
+.admin-dialog {
+  width: 100%;
+  max-width: 42rem;
+  max-height: min(90vh, 52rem);
+  max-height: min(90dvh, 52rem);
+  border-radius: 1.25rem;
+}
+
+.admin-dialog--compact {
+  max-width: 36rem;
+}
+
+.admin-dialog-header {
+  flex-shrink: 0;
+  padding: 1rem 1.5rem;
+}
+
+.admin-dialog-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding: 1.25rem 1.5rem;
+}
+
+.admin-dialog-footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+}
+
+.admin-dialog-footer > button {
+  min-height: 2.5rem;
+  padding: 0.625rem 1.25rem;
+}
+
+.admin-dialog :where(input:not([type='checkbox']):not([type='radio']):not([type='file']), select, textarea) {
+  border-radius: 0.75rem;
+  padding: 0.625rem 0.875rem;
+}
+
+.admin-dialog :where(button, label:has(input[type='file'])) {
+  border-radius: 0.75rem;
+}
+
+.admin-dialog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.admin-dialog-grid--three > :last-child {
+  grid-column: 1 / -1;
+}
+
+@media (min-width: 640px) {
+  .admin-dialog-grid--three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .admin-dialog-grid--three > :last-child {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 479px) {
+  .admin-dialog {
+    max-height: calc(100vh - 1.5rem);
+    max-height: calc(100dvh - 1.5rem);
+    border-radius: 1rem;
+  }
+
+  .admin-dialog-header,
+  .admin-dialog-footer {
+    padding: 1rem;
+  }
+
+  .admin-dialog-body {
+    padding: 1rem;
+  }
+
+  .admin-dialog-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-dialog-footer > button {
+    flex: 1 1 0;
+    min-height: 2.75rem;
+    padding-right: 0.75rem;
+    padding-left: 0.75rem;
+  }
+
+  .admin-dialog :where(input:not([type='checkbox']):not([type='radio']), select, textarea) {
+    font-size: 1rem;
+  }
+}

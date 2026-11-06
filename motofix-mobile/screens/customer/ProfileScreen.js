@@ -15,7 +15,6 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
-import { CommonActions } from '@react-navigation/native';
 import { useTheme } from '../../lib/ThemeContext';
 import { supabase } from '../../lib/supabase';
 import { unregisterPushToken } from '../../lib/pushNotifications';
@@ -617,30 +616,16 @@ export default function ProfileScreen({ navigation }) {
 
   async function logoutNow() {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (user?.id) {
-        await unregisterPushToken(user.id);
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.user?.id) {
+        await unregisterPushToken(data.session.user.id);
       }
-
-      await supabase.auth.signOut();
+      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      if (error) throw error;
+      // RootNav removes all protected screens after SIGNED_OUT.
     } catch (error) {
-      console.log('Logout error:', error.message);
+      Alert.alert('Logout Failed', error.message || 'Please try again.');
     }
-
-    const resetAction = CommonActions.reset({
-      index: 0,
-      routes: [{ name: 'Login' }],
-    });
-
-    const rootNavigation =
-      navigation.getParent()?.getParent() ||
-      navigation.getParent() ||
-      navigation;
-
-    rootNavigation.dispatch(resetAction);
   }
 
   async function pickCertFile() {
@@ -726,11 +711,11 @@ export default function ProfileScreen({ navigation }) {
       const filePath = `${profile.id}/${Date.now()}.${safeExt}`;
 
       const response = await fetch(certFile.uri);
-      const blob = await response.blob();
+      const arrayBuffer = await response.arrayBuffer();
 
       const { error: uploadError } = await supabase.storage
         .from('mechanic-certificates')
-        .upload(filePath, blob, {
+        .upload(filePath, arrayBuffer, {
           contentType: certFile.mimeType || getMimeFromExtension(safeExt),
         });
 

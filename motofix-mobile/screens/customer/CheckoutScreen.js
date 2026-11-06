@@ -348,8 +348,7 @@ export default function CheckoutScreen({ navigation }) {
 
       if (!user?.id) {
         setSubmitting(false);
-        Alert.alert('Login Required', 'Please login before placing an order.');
-        navigation.navigate('Login');
+        Alert.alert('Account Unavailable', 'Unable to verify your account. Check your connection and try again.');
         return;
       }
 
@@ -473,8 +472,17 @@ export default function CheckoutScreen({ navigation }) {
       }
 
       if (paymentMethod === 'paymongo_qrph') {
-        checkoutData = await createOrderQrphCheckout(order.id);
-        finalPaymentStatus = 'checkout_created';
+        try {
+          checkoutData = await createOrderQrphCheckout(order.id);
+          finalPaymentStatus = 'checkout_created';
+        } catch (paymentError) {
+          // The order and its stock changes already exist. Do not tell the
+          // customer to submit another order when only the payment link failed.
+          Alert.alert(
+            'Order Saved — Payment Pending',
+            `Order #${String(order.id).slice(0, 8).toUpperCase()} was saved, but the payment link could not be created. Check Order History or contact MotoFix to arrange payment. Please do not submit the order again.`
+          );
+        }
       }
 
       await Promise.allSettled([
@@ -482,7 +490,9 @@ export default function CheckoutScreen({ navigation }) {
           userId: user.id,
           title: 'Order Submitted',
           message:
-            paymentMethod === 'gcash_manual'
+            paymentMethod === 'paymongo_qrph'
+              ? 'Your order was submitted. Your online payment is pending; check your order confirmation for payment details.'
+              : paymentMethod === 'gcash_manual'
               ? 'Your order was submitted and is waiting for GCash payment verification.'
               : 'Your order was submitted. Please pay at the shop during pickup or release.',
           type: 'order',
@@ -494,7 +504,9 @@ export default function CheckoutScreen({ navigation }) {
           role: 'admin',
           title: 'New Product Order',
           message:
-            paymentMethod === 'gcash_manual'
+            paymentMethod === 'paymongo_qrph'
+              ? 'A customer submitted a mobile product order with online payment pending.'
+              : paymentMethod === 'gcash_manual'
               ? 'A customer submitted a mobile product order with GCash reference for verification.'
               : 'A customer submitted a mobile product order for counter payment.',
           type: 'order',
@@ -559,7 +571,11 @@ export default function CheckoutScreen({ navigation }) {
       });
 
       if (checkoutData?.checkout_url) {
-        await Linking.openURL(checkoutData.checkout_url);
+        try {
+          await Linking.openURL(checkoutData.checkout_url);
+        } catch (linkError) {
+          Alert.alert('Order Saved', 'The payment page could not open. Use Open PayMongo Checkout on your order confirmation to try again.');
+        }
       }
     } catch (error) {
       Alert.alert('Checkout Failed', error.message || 'Unable to submit order.');

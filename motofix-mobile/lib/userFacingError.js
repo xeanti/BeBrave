@@ -52,10 +52,10 @@ function collectMessages(value, depth = 0, seen = new Set()) {
 function cleanTechnicalText(value) {
   return String(value || '')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/\[nrt]/g, ' ')
-    .replace(/[{}[]"]/g, ' ')
-    .replace(/(?:status|statusCode|code|hint|details|error)s*:s*/gi, '')
-    .replace(/s+/g, ' ')
+    .replace(/\\[nrt]/g, ' ')
+    .replace(/[{}\[\]"]/g, ' ')
+    .replace(/\b(?:status|statusCode|code|hint|details|error)\s*:\s*/gi, '')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 

@@ -1528,9 +1528,9 @@ This action cannot be undone. If this model is already used by records, the data
             role="dialog"
             aria-modal="true"
             aria-labelledby="admin-service-modal-title"
-            className="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+            className="admin-dialog admin-dialog--compact relative flex w-full flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
           >
-            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4 dark:border-dark-700 dark:bg-dark-800 sm:px-8">
+            <div className="admin-dialog-header flex items-center justify-between gap-4 border-b border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
               <div className="min-w-0">
                 <p className="text-xs font-black uppercase tracking-[0.18em] text-primary-600 dark:text-primary-400">
                   {activeTab === 'services' ? 'Service Management' : 'Motorcycle Catalog'}
@@ -1548,178 +1548,182 @@ This action cannot be undone. If this model is already used by records, the data
               <button
                 type="button"
                 onClick={closePanel}
-                className="grid h-10 w-10 place-items-center rounded-2xl text-xl text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white"
+                aria-label="Close catalog modal"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl text-xl text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-5 px-6 py-6 sm:px-8">
-              {formError && (
-                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
-                  {formError}
-                </div>
-              )}
+            <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+              <div className="admin-dialog-body space-y-4">
+                {formError && (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                    {formError}
+                  </div>
+                )}
 
-              {activeTab === 'services' ? (
-                <>
-                  <TextInput
-                    label="Service Name *"
-                    name="name"
-                    value={serviceForm.name}
-                    onChange={handleServiceChange}
-                    required
-                    maxLength={80}
-                    placeholder="e.g. Oil Change"
-                    helper="Letters, numbers, spaces, and basic symbols only."
-                  />
-
-                  <div className="grid grid-cols-2 gap-4">
+                {activeTab === 'services' ? (
+                  <>
                     <TextInput
-                      label="Base Price *"
-                      name="base_price"
-                      type="text"
-                      inputMode="decimal"
-                      value={serviceForm.base_price}
+                      label="Service Name *"
+                      name="name"
+                      value={serviceForm.name}
                       onChange={handleServiceChange}
                       required
-                      helper="Numbers only, up to 2 decimal places."
+                      maxLength={80}
+                      placeholder="e.g. Oil Change"
+                      helper="Letters, numbers, spaces, and basic symbols only."
                     />
+
+                    <div className="admin-dialog-grid">
+                      <TextInput
+                        label="Base Price *"
+                        name="base_price"
+                        type="text"
+                        inputMode="decimal"
+                        value={serviceForm.base_price}
+                        onChange={handleServiceChange}
+                        required
+                        helper="Numbers only, up to 2 decimal places."
+                      />
+
+                      <TextInput
+                        label="Labor Cost"
+                        name="labor_cost"
+                        type="text"
+                        inputMode="decimal"
+                        value={serviceForm.labor_cost}
+                        onChange={handleServiceChange}
+                        helper="Numbers only, up to 2 decimal places."
+                      />
+                    </div>
 
                     <TextInput
-                      label="Labor Cost"
-                      name="labor_cost"
+                      label="Duration"
+                      name="estimated_duration_minutes"
                       type="text"
-                      inputMode="decimal"
-                      value={serviceForm.labor_cost}
+                      inputMode="numeric"
+                      value={serviceForm.estimated_duration_minutes}
                       onChange={handleServiceChange}
-                      helper="Numbers only, up to 2 decimal places."
+                      helper="Estimated duration in minutes. Numbers only, 1-1440."
                     />
-                  </div>
 
-                  <TextInput
-                    label="Duration"
-                    name="estimated_duration_minutes"
-                    type="text"
-                    inputMode="numeric"
-                    value={serviceForm.estimated_duration_minutes}
-                    onChange={handleServiceChange}
-                    helper="Estimated duration in minutes. Numbers only, 1-1440."
-                  />
+                    <div>
+                      <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                        Description
+                      </label>
+                      <textarea
+                        name="description"
+                        value={serviceForm.description}
+                        onChange={handleServiceChange}
+                        rows={3}
+                        maxLength={500}
+                        placeholder="Briefly describe what this service includes..."
+                        className="w-full resize-none rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                        Reference Photo Upload
+                      </label>
 
-                  <div>
-                    <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                      Description
-                    </label>
-                    <textarea
-                      name="description"
-                      value={serviceForm.description}
-                      onChange={handleServiceChange}
-                      rows={4}
-                      maxLength={500}
-                      placeholder="Briefly describe what this service includes..."
-                      className="w-full resize-none rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-gray-500"
-                    />
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div>
-                    <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                      Reference Photo Upload
-                    </label>
+                      <div className="flex items-start gap-3">
+                        <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
+                          {modelForm.reference_photo_url ? (
+                            <img
+                              src={modelForm.reference_photo_url}
+                              alt="Motorcycle reference"
+                              className="h-full w-full object-cover"
+                              onError={(event) => {
+                                event.currentTarget.style.display = 'none';
+                              }}
+                            />
+                          ) : (
+                            <div className="grid h-full w-full place-items-center text-3xl text-gray-400">
+                              🏍️
+                            </div>
+                          )}
+                        </div>
 
-                    <div className="flex items-start gap-3">
-                      <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
-                        {modelForm.reference_photo_url ? (
-                          <img
-                            src={modelForm.reference_photo_url}
-                            alt="Motorcycle reference"
-                            className="h-full w-full object-cover"
-                            onError={(event) => {
-                              event.currentTarget.style.display = 'none';
-                            }}
+                        <div className="flex-1">
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            onChange={handleModelReferenceUpload}
+                            disabled={uploadingModelImage}
+                            className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition file:mr-4 file:rounded-xl file:border-0 file:bg-primary-600 file:px-4 file:py-2 file:text-xs file:font-black file:text-white hover:file:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
                           />
-                        ) : (
-                          <div className="grid h-full w-full place-items-center text-3xl text-gray-400">
-                            🏍️
-                          </div>
-                        )}
-                      </div>
 
-                      <div className="flex-1">
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp,image/gif"
-                          onChange={handleModelReferenceUpload}
-                          disabled={uploadingModelImage}
-                          className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition file:mr-4 file:rounded-xl file:border-0 file:bg-primary-600 file:px-4 file:py-2 file:text-xs file:font-black file:text-white hover:file:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
-                        />
-
-                        <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                          Upload a motorcycle reference image instead of pasting a URL. JPG, PNG, WEBP, or GIF up to {MAX_MODEL_IMAGE_SIZE_MB}MB.
-                        </p>
-
-                        {uploadingModelImage && (
-                          <p className="mt-2 text-xs font-black text-primary-600 dark:text-primary-400">
-                            Uploading image...
+                          <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                            Upload a motorcycle reference image instead of pasting a URL. JPG, PNG, WEBP, or GIF up to {MAX_MODEL_IMAGE_SIZE_MB}MB.
                           </p>
-                        )}
 
-                        {modelForm.reference_photo_url && (
-                          <button
-                            type="button"
-                            onClick={removeModelReferencePhoto}
-                            className="mt-3 rounded-2xl bg-red-50 px-4 py-2 text-xs font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25 dark:hover:bg-red-500/20"
-                          >
-                            Remove Photo
-                          </button>
-                        )}
+                          {uploadingModelImage && (
+                            <p className="mt-2 text-xs font-black text-primary-600 dark:text-primary-400">
+                              Uploading image...
+                            </p>
+                          )}
+
+                          {modelForm.reference_photo_url && (
+                            <button
+                              type="button"
+                              onClick={removeModelReferencePhoto}
+                              className="mt-3 rounded-2xl bg-red-50 px-4 py-2 text-xs font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25 dark:hover:bg-red-500/20"
+                            >
+                              Remove Photo
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                    <div className="admin-dialog-grid">
+                      <TextInput
+                        label="Make *"
+                        name="make"
+                        value={modelForm.make}
+                        onChange={handleModelChange}
+                        required
+                        maxLength={80}
+                        placeholder="e.g. Yamaha"
+                        helper="Letters, numbers, spaces, and basic symbols only."
+                      />
+
+                      <TextInput
+                        label="Model *"
+                        name="model"
+                        value={modelForm.model}
+                        onChange={handleModelChange}
+                        required
+                        maxLength={80}
+                        placeholder="e.g. Aerox 155"
+                        helper="Letters, numbers, spaces, and basic symbols only."
+                      />
+                    </div>
+
                     <TextInput
-                      label="Make *"
-                      name="make"
-                      value={modelForm.make}
+                      label="Year Range"
+                      name="year_range"
+                      value={modelForm.year_range}
                       onChange={handleModelChange}
-                      required
-                      maxLength={80}
-                      placeholder="e.g. Yamaha"
-                      helper="Letters, numbers, spaces, and basic symbols only."
+                      maxLength={9}
+                      placeholder="e.g. 2021 or 2021-2024"
+                      helper={`Use a 4-digit year or range only. Allowed years: ${MIN_MOTORCYCLE_YEAR}-${MAX_MOTORCYCLE_YEAR}.`}
                     />
+                  </>
+                )}
 
-                    <TextInput
-                      label="Model *"
-                      name="model"
-                      value={modelForm.model}
-                      onChange={handleModelChange}
-                      required
-                      maxLength={80}
-                      placeholder="e.g. Aerox 155"
-                      helper="Letters, numbers, spaces, and basic symbols only."
-                    />
-                  </div>
+              </div>
 
-                  <TextInput
-                    label="Year Range"
-                    name="year_range"
-                    value={modelForm.year_range}
-                    onChange={handleModelChange}
-                    maxLength={9}
-                    placeholder="e.g. 2021 or 2021-2024"
-                    helper={`Use a 4-digit year or range only. Allowed years: ${MIN_MOTORCYCLE_YEAR}-${MAX_MOTORCYCLE_YEAR}.`}
-                  />
-                </>
-              )}
-
-              <div className="sticky bottom-0 flex gap-3 border-t border-gray-200 bg-white pt-5 dark:border-dark-700 dark:bg-dark-800">
+              <footer className="admin-dialog-footer border-t border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
                 <button
                   type="button"
                   onClick={closePanel}
-                  className="flex-1 rounded-2xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700 transition hover:border-gray-300 dark:border-dark-700 dark:text-gray-300"
+                  className="rounded-2xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700 transition hover:border-gray-300 dark:border-dark-700 dark:text-gray-300"
                 >
                   Cancel
                 </button>
@@ -1727,7 +1731,7 @@ This action cannot be undone. If this model is already used by records, the data
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex-1 rounded-2xl bg-primary-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-2xl bg-primary-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-primary-600/20 transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {saving
                     ? 'Saving...'
@@ -1735,7 +1739,7 @@ This action cannot be undone. If this model is already used by records, the data
                     ? 'Save Changes'
                     : `+ Add ${activeTab === 'services' ? 'Service' : 'Model'}`}
                 </button>
-              </div>
+              </footer>
             </form>
           </section>
         </div>

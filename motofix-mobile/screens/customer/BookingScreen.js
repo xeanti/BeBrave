@@ -648,8 +648,7 @@ const {
 
 if (!user?.id) {
   setSubmitting(false);
-  Alert.alert('Login Required', 'Please login before booking a service.');
-  navigation.navigate('Login');
+  Alert.alert('Account Unavailable', 'Unable to verify your account. Check your connection and try again.');
   return;
 }
 

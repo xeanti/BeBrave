@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
 import './index.css';
 import './styles/motofix-global-screen-fit.css';
+import './styles/motofix-dialogs.css';
 
 // Restore theme preference on reload
 const savedTheme = localStorage.getItem('theme');

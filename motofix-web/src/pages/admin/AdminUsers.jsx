@@ -2476,10 +2476,10 @@ export default function AdminUsers() {
       role="dialog"
       aria-modal="true"
       aria-labelledby="edit-user-title"
-      className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+      className="admin-dialog flex w-full flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
     >
       {/* Header */}
-      <header className="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-5 dark:border-dark-700 sm:px-8">
+      <header className="admin-dialog-header flex items-start justify-between gap-4 border-b border-gray-100 dark:border-dark-700">
         <div className="flex min-w-0 items-center gap-4">
           <Avatar profile={editingUser} size="md" />
 
@@ -2490,7 +2490,7 @@ export default function AdminUsers() {
 
             <h2
               id="edit-user-title"
-              className="mt-1 truncate text-xl font-black text-gray-950 dark:text-white sm:text-2xl"
+              className="mt-1 truncate text-xl font-black text-gray-950 dark:text-white"
             >
               Edit User
             </h2>
@@ -2513,8 +2513,8 @@ export default function AdminUsers() {
       </header>
 
       {/* Scrollable content */}
-      <div className="overflow-y-auto px-6 py-6 sm:px-8">
-        <div className="space-y-6">
+      <div className="admin-dialog-body">
+        <div className="space-y-5">
           {editError && (
             <div
               role="alert"
@@ -2550,7 +2550,7 @@ export default function AdminUsers() {
                 </p>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="admin-dialog-grid">
                 <TextInput
                   label="First name"
                   value={editForm.first_name || ''}
@@ -2674,7 +2674,7 @@ export default function AdminUsers() {
                   </p>
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="admin-dialog-grid">
                   <TextInput
                     label="Motorcycle make"
                     value={editForm.moto_make || ''}
@@ -2758,7 +2758,7 @@ export default function AdminUsers() {
                   </div>
                 )}
 
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="admin-dialog-grid">
                   <TextInput
                     label="New password"
                     type="password"
@@ -2807,7 +2807,7 @@ export default function AdminUsers() {
       </div>
 
       {/* Sticky footer */}
-      <footer className="flex flex-col-reverse gap-3 border-t border-gray-100 bg-white px-6 py-5 dark:border-dark-700 dark:bg-dark-800 sm:flex-row sm:justify-end sm:px-8">
+      <footer className="admin-dialog-footer border-t border-gray-100 bg-white dark:border-dark-700 dark:bg-dark-800">
         <button
           type="button"
           disabled={saving || changingPassword}
@@ -2844,10 +2844,10 @@ export default function AdminUsers() {
       role="dialog"
       aria-modal="true"
       aria-labelledby="create-personnel-title"
-      className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+      className="admin-dialog flex w-full flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
     >
       {/* Header */}
-      <div className="flex items-start justify-between border-b border-gray-100 px-6 py-5 dark:border-dark-700 sm:px-8">
+      <div className="admin-dialog-header flex items-start justify-between gap-4 border-b border-gray-100 dark:border-dark-700">
         <div className="flex items-start gap-4">
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary-50 text-xl dark:bg-primary-500/10">
             👤
@@ -2856,7 +2856,7 @@ export default function AdminUsers() {
           <div>
             <h2
               id="create-personnel-title"
-              className="text-xl font-black text-gray-950 dark:text-white sm:text-2xl"
+              className="text-xl font-black text-gray-950 dark:text-white"
             >
               Create Personnel Account
             </h2>
@@ -2883,9 +2883,9 @@ export default function AdminUsers() {
       <form
         id="create-personnel-form"
         onSubmit={handleCreateAccount}
-        className="overflow-y-auto"
+        className="admin-dialog-body"
       >
-        <div className="space-y-6 px-6 py-6 sm:px-8">
+        <div className="space-y-5">
           {createError && (
             <div
               role="alert"
@@ -2913,7 +2913,7 @@ export default function AdminUsers() {
               </p>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="admin-dialog-grid">
               <TextInput
                 label="First name"
                 value={newAccount.firstName}
@@ -3009,7 +3009,7 @@ export default function AdminUsers() {
               </p>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="admin-dialog-grid">
               <TextInput
                 label="Password"
                 type="password"
@@ -3047,7 +3047,7 @@ export default function AdminUsers() {
       </form>
 
       {/* Sticky footer */}
-      <div className="flex flex-col-reverse gap-3 border-t border-gray-100 bg-white px-6 py-5 dark:border-dark-700 dark:bg-dark-800 sm:flex-row sm:justify-end sm:px-8">
+      <div className="admin-dialog-footer border-t border-gray-100 bg-white dark:border-dark-700 dark:bg-dark-800">
         <button
           type="button"
           disabled={creating}

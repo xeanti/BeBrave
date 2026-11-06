@@ -1906,9 +1906,9 @@ export default function AdminParts() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="manage-categories-title"
-            className="relative flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+            className="admin-dialog admin-dialog--compact relative flex w-full flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
           >
-            <div className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4 dark:border-dark-700 dark:bg-dark-800">
+            <div className="admin-dialog-header flex items-center justify-between gap-4 border-b border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
               <div>
                 <h2
                   id="manage-categories-title"
@@ -1924,13 +1924,14 @@ export default function AdminParts() {
               <button
                 type="button"
                 onClick={() => setCatPanelOpen(false)}
-                className="grid h-10 w-10 place-items-center rounded-2xl text-xl text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white"
+                aria-label="Close category manager"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl text-xl text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white"
               >
                 ✕
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-6">
+            <div className="admin-dialog-body space-y-5">
               <div>
                 <p className="mb-2 text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
                   Add Category
@@ -2127,16 +2128,16 @@ export default function AdminParts() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="product-modal-title"
-            className="relative flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+            className="admin-dialog relative flex w-full flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-dark-700 dark:bg-dark-800"
           >
-            <header className="flex items-start justify-between gap-4 border-b border-gray-200 bg-white px-6 py-5 dark:border-dark-700 dark:bg-dark-800 sm:px-8">
+            <header className="admin-dialog-header flex items-start justify-between gap-4 border-b border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
               <div className="min-w-0">
                 <p className="text-xs font-black uppercase tracking-[0.18em] text-primary-600 dark:text-primary-400">
                   Product Management
                 </p>
                 <h2
                   id="product-modal-title"
-                  className="mt-1 text-xl font-black text-gray-950 dark:text-white sm:text-2xl"
+                  className="mt-1 text-xl font-black text-gray-950 dark:text-white"
                 >
                   {editingId ? 'Edit Product' : 'Add New Product'}
                 </h2>
@@ -2160,341 +2161,346 @@ export default function AdminParts() {
 
             <form
               onSubmit={handleSubmit}
-              className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-6 sm:px-8"
+              className="flex min-h-0 flex-1 flex-col"
             >
-              {formError && (
-                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
-                  {formError}
-                </div>
-              )}
-
-              <div>
-                <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                  Category First *
-                </label>
-
-                {allCategories.length > 0 && !showCategoryInput ? (
-                  <select
-                    name="category"
-                    value={allCategories.includes(form.category) ? form.category : ''}
-                    onChange={handleCategorySelect}
-                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
-                  >
-                    <option value="">— Select a category first —</option>
-                    {allCategories.map((category) => (
-                      <option key={category} value={category}>
-                        {category}
-                      </option>
-                    ))}
-                    <option value="__other__">Other (type new)…</option>
-                  </select>
-                ) : (
-                  <div className="flex gap-2">
-                    <input
-                      name="category"
-                      value={form.category}
-                      onChange={handleCategoryInputChange}
-                      placeholder="e.g. Exhaust, Mags, Seat, Oil"
-                      autoFocus={showCategoryInput}
-                      className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
-                    />
-
-                    {allCategories.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setShowCategoryInput(false)}
-                        className="rounded-2xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300"
-                      >
-                        List
-                      </button>
-                    )}
+              <div className="admin-dialog-body space-y-4">
+                {formError && (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                    {formError}
                   </div>
                 )}
 
-                <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900">
-                  <p className="text-sm font-black text-gray-900 dark:text-white">
-                    AI Preview Status: {categoryPreviewInfo.label}
-                  </p>
-                  <p className="mt-1 text-xs font-semibold leading-5 text-gray-500 dark:text-gray-400">
-                    {categoryPreviewInfo.helper}
-                  </p>
-                </div>
-              </div>
+                <div>
+                  <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                    Category First *
+                  </label>
 
-              <div>
-                <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                  Product Image
-                </label>
-
-                <div className="flex items-center gap-3">
-                  <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
-                    {form.image_url ? (
-                      <img
-                        src={form.image_url}
-                        alt=""
-                        className="h-full w-full object-cover"
-                        onError={(event) => {
-                          event.currentTarget.style.display = 'none';
-                        }}
-                      />
-                    ) : (
-                      <div className="grid h-full w-full place-items-center text-2xl text-gray-400">
-                        ⚙️
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <label
-                      className={`mb-2 inline-flex items-center justify-center rounded-2xl px-4 py-3 text-sm font-black text-white shadow-lg transition ${
-                        hasSelectedCategory
-                          ? 'cursor-pointer bg-primary-600 shadow-primary-600/20 hover:bg-primary-700'
-                          : 'cursor-not-allowed bg-gray-400 shadow-none'
-                      }`}
-                    >
-                      {!hasSelectedCategory
-                        ? 'Select Category First'
-                        : uploadingImage
-                        ? 'Uploading...'
-                        : 'Upload Product Image'}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleProductImageUpload}
-                        disabled={!hasSelectedCategory || uploadingImage || saving}
-                        className="hidden"
-                      />
-                    </label>
-                    <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                      Select the category first so the system can decide if this product is Previewable or Shop Only.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {categoryPreviewInfo.isPreviewable && (
-                <>
-                  <div>
-                    <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                      AI Reference Image
-                    </label>
-
-                    <div className="flex items-center gap-3">
-                      <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
-                        {form.ai_reference_url ? (
-                          <img
-                            src={form.ai_reference_url}
-                            alt=""
-                            className="h-full w-full object-cover"
-                            onError={(event) => {
-                              event.currentTarget.style.display = 'none';
-                            }}
-                          />
-                        ) : (
-                          <div className="grid h-full w-full place-items-center text-xs font-black text-gray-400">
-                            AI Ref
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="min-w-0 flex-1">
-                        <label className="mb-2 inline-flex cursor-pointer items-center justify-center rounded-2xl bg-accent-500 px-4 py-3 text-sm font-black text-white shadow-lg shadow-accent-500/20 transition hover:bg-accent-600">
-                          {uploadingAiReference ? 'Uploading...' : 'Upload AI Reference'}
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={handleAiReferenceUpload}
-                            disabled={uploadingAiReference || saving}
-                            className="hidden"
-                          />
-                        </label>
-                      </div>
-                    </div>
-
-                    <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                      Upload one clean cropped photo of the exact product only.
-                    </p>
-                  </div>
-
-                  <TextInput
-                    label="AI Prompt Description"
-                    name="prompt_description"
-                    value={form.prompt_description}
-                    onChange={handleChange}
-                    placeholder="e.g. gold Enkei 3-spoke mags with glossy metallic alloy finish"
-                    helper="Describe the exact shape, material, color, and finish. This helps the AI replace the real product instead of only recoloring it."
-                  />
-
-                  <div>
-                    <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                      Install Area
-                    </label>
-
+                  {allCategories.length > 0 && !showCategoryInput ? (
                     <select
-                      name="install_area"
-                      value={
-                        INSTALL_AREA_OPTIONS.includes(form.install_area)
-                          ? form.install_area
-                          : ''
-                      }
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          install_area: event.target.value,
-                        }))
-                      }
-                      className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                      name="category"
+                      value={allCategories.includes(form.category) ? form.category : ''}
+                      onChange={handleCategorySelect}
+                      className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
                     >
-                      <option value="">— Select install area —</option>
-                      {INSTALL_AREA_OPTIONS.map((area) => (
-                        <option key={area} value={area}>
-                          {area}
+                      <option value="">— Select a category first —</option>
+                      {allCategories.map((category) => (
+                        <option key={category} value={category}>
+                          {category}
                         </option>
                       ))}
+                      <option value="__other__">Other (type new)…</option>
                     </select>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input
+                        name="category"
+                        value={form.category}
+                        onChange={handleCategoryInputChange}
+                        placeholder="e.g. Exhaust, Mags, Seat, Oil"
+                        autoFocus={showCategoryInput}
+                        className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                      />
 
-                    <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                      Choose a predefined install area so AI Preview uses consistent placement instructions.
+                      {allCategories.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setShowCategoryInput(false)}
+                          className="rounded-2xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700 transition hover:border-primary-400 hover:text-primary-700 dark:border-dark-700 dark:text-gray-300"
+                        >
+                          List
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900">
+                    <p className="text-sm font-black text-gray-900 dark:text-white">
+                      AI Preview Status: {categoryPreviewInfo.label}
+                    </p>
+                    <p className="mt-1 text-xs font-semibold leading-5 text-gray-500 dark:text-gray-400">
+                      {categoryPreviewInfo.helper}
                     </p>
                   </div>
+                </div>
 
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    <TextInput
-                      label="Color"
-                      name="color"
-                      value={form.color}
-                      onChange={handleChange}
-                      placeholder="Gold"
-                    />
+                <div>
+                  <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                    Product Image
+                  </label>
 
-                    <TextInput
-                      label="Finish"
-                      name="finish"
-                      value={form.finish}
-                      onChange={handleChange}
-                      placeholder="Gloss metallic"
-                    />
+                  <div className="flex items-center gap-3">
+                    <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
+                      {form.image_url ? (
+                        <img
+                          src={form.image_url}
+                          alt=""
+                          className="h-full w-full object-cover"
+                          onError={(event) => {
+                            event.currentTarget.style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div className="grid h-full w-full place-items-center text-2xl text-gray-400">
+                          ⚙️
+                        </div>
+                      )}
+                    </div>
 
-                    <TextInput
-                      label="Material"
-                      name="material"
-                      value={form.material}
-                      onChange={handleChange}
-                      placeholder="Alloy"
-                    />
+                    <div className="min-w-0 flex-1">
+                      <label
+                        className={`mb-2 inline-flex items-center justify-center rounded-2xl px-4 py-3 text-sm font-black text-white shadow-lg transition ${
+                          hasSelectedCategory
+                            ? 'cursor-pointer bg-primary-600 shadow-primary-600/20 hover:bg-primary-700'
+                            : 'cursor-not-allowed bg-gray-400 shadow-none'
+                        }`}
+                      >
+                        {!hasSelectedCategory
+                          ? 'Select Category First'
+                          : uploadingImage
+                          ? 'Uploading...'
+                          : 'Upload Product Image'}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleProductImageUpload}
+                          disabled={!hasSelectedCategory || uploadingImage || saving}
+                          className="hidden"
+                        />
+                      </label>
+                      <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                        Select the category first so the system can decide if this product is Previewable or Shop Only.
+                      </p>
+                    </div>
                   </div>
-                </>
-              )}
+                </div>
 
-              <TextInput
-                label="Product Name *"
-                name="name"
-                value={form.name}
-                onChange={handleChange}
-                required
-                maxLength={100}
-                placeholder="e.g. Brake Pad Set"
-                helper="Allowed: letters, numbers, spaces, ñ, and basic symbols only."
-              />
+                {categoryPreviewInfo.isPreviewable && (
+                  <>
+                    <div>
+                      <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                        AI Reference Image
+                      </label>
 
-              <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="flex items-center gap-3">
+                        <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl bg-gray-50 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700">
+                          {form.ai_reference_url ? (
+                            <img
+                              src={form.ai_reference_url}
+                              alt=""
+                              className="h-full w-full object-cover"
+                              onError={(event) => {
+                                event.currentTarget.style.display = 'none';
+                              }}
+                            />
+                          ) : (
+                            <div className="grid h-full w-full place-items-center text-xs font-black text-gray-400">
+                              AI Ref
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <label className="mb-2 inline-flex cursor-pointer items-center justify-center rounded-2xl bg-accent-500 px-4 py-3 text-sm font-black text-white shadow-lg shadow-accent-500/20 transition hover:bg-accent-600">
+                            {uploadingAiReference ? 'Uploading...' : 'Upload AI Reference'}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={handleAiReferenceUpload}
+                              disabled={uploadingAiReference || saving}
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
+                      </div>
+
+                      <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                        Upload one clean cropped photo of the exact product only.
+                      </p>
+                    </div>
+
+                    <TextInput
+                      label="AI Prompt Description"
+                      name="prompt_description"
+                      value={form.prompt_description}
+                      onChange={handleChange}
+                      placeholder="e.g. gold Enkei 3-spoke mags with glossy metallic alloy finish"
+                      helper="Describe the exact shape, material, color, and finish. This helps the AI replace the real product instead of only recoloring it."
+                    />
+
+                    <div>
+                      <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                        Install Area
+                      </label>
+
+                      <select
+                        name="install_area"
+                        value={
+                          INSTALL_AREA_OPTIONS.includes(form.install_area)
+                            ? form.install_area
+                            : ''
+                        }
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            install_area: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                      >
+                        <option value="">— Select install area —</option>
+                        {INSTALL_AREA_OPTIONS.map((area) => (
+                          <option key={area} value={area}>
+                            {area}
+                          </option>
+                        ))}
+                      </select>
+
+                      <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                        Choose a predefined install area so AI Preview uses consistent placement instructions.
+                      </p>
+                    </div>
+
+                    <div className="admin-dialog-grid admin-dialog-grid--three">
+                      <TextInput
+                        label="Color"
+                        name="color"
+                        value={form.color}
+                        onChange={handleChange}
+                        placeholder="Gold"
+                      />
+
+                      <TextInput
+                        label="Finish"
+                        name="finish"
+                        value={form.finish}
+                        onChange={handleChange}
+                        placeholder="Gloss metallic"
+                      />
+
+                      <TextInput
+                        label="Material"
+                        name="material"
+                        value={form.material}
+                        onChange={handleChange}
+                        placeholder="Alloy"
+                      />
+                    </div>
+                  </>
+                )}
+
                 <TextInput
-                  label="Price *"
-                  name="price"
-                  type="text"
-                  inputMode="decimal"
-                  value={form.price}
+                  label="Product Name *"
+                  name="name"
+                  value={form.name}
                   onChange={handleChange}
                   required
-                  placeholder="0.00"
+                  maxLength={100}
+                  placeholder="e.g. Brake Pad Set"
+                  helper="Allowed: letters, numbers, spaces, ñ, and basic symbols only."
                 />
 
-                <TextInput
-                  label="Stock Quantity *"
-                  name="stock_quantity"
-                  type="text"
-                  inputMode="numeric"
-                  value={form.stock_quantity}
-                  onChange={handleChange}
-                  required
-                  placeholder="0"
-                />
-              </div>
+                <div className="admin-dialog-grid admin-dialog-grid--three">
+                  <TextInput
+                    label="Price *"
+                    name="price"
+                    type="text"
+                    inputMode="decimal"
+                    value={form.price}
+                    onChange={handleChange}
+                    required
+                    placeholder="0.00"
+                  />
 
-              <TextInput
-                label="Reorder Threshold"
-                name="reorder_threshold"
-                type="text"
-                inputMode="numeric"
-                value={form.reorder_threshold}
-                onChange={handleChange}
-                helper="Products at or below this quantity are flagged as low stock. Numbers only."
-              />
+                  <TextInput
+                    label="Stock Quantity *"
+                    name="stock_quantity"
+                    type="text"
+                    inputMode="numeric"
+                    value={form.stock_quantity}
+                    onChange={handleChange}
+                    required
+                    placeholder="0"
+                  />
 
-              <div>
-                <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
-                  Compatible Models
-                </label>
-
-                <select
-                  value=""
-                  onChange={(event) => {
-                    if (!event.target.value) return;
-                    toggleCompatibleModel(event.target.value);
-                  }}
-                  className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
-                >
-                  <option value="">
-                    {motorcycleModels.length > 0
-                      ? '— Select compatible motorcycle model —'
-                      : 'No motorcycle models found'}
-                  </option>
-                  {motorcycleModels.map((model) => {
-                    const selected = selectedCompatibleModels.some(
-                      (item) => item.toLowerCase() === model.label.toLowerCase()
-                    );
-
-                    return (
-                      <option key={model.id || model.label} value={model.label}>
-                        {selected ? '✓ ' : ''}{model.label}
-                      </option>
-                    );
-                  })}
-                </select>
-
-                <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                  Choose from predefined motorcycle models. Click a selected model below to remove it.
+                  <TextInput
+                    label="Reorder Threshold"
+                    name="reorder_threshold"
+                    type="text"
+                    inputMode="numeric"
+                    value={form.reorder_threshold}
+                    onChange={handleChange}
+                  />
+                </div>
+                <p className="text-xs leading-5 text-gray-500 dark:text-gray-400">
+                  Products at or below the reorder threshold are flagged as low stock. Numbers only.
                 </p>
 
-                {selectedCompatibleModels.length > 0 ? (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {selectedCompatibleModels.map((model) => (
-                      <button
-                        key={model}
-                        type="button"
-                        onClick={() => toggleCompatibleModel(model)}
-                        className="rounded-full bg-primary-100 px-3 py-1.5 text-xs font-black text-primary-700 ring-1 ring-primary-200 transition hover:bg-primary-200 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25"
-                      >
-                        {model} ✕
-                      </button>
-                    ))}
+                <div>
+                  <label className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                    Compatible Models
+                  </label>
 
-                    <button
-                      type="button"
-                      onClick={clearCompatibleModels}
-                      className="rounded-full bg-red-50 px-3 py-1.5 text-xs font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25"
-                    >
-                      Clear all
-                    </button>
-                  </div>
-                ) : (
-                  <div className="mt-3 rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 text-center text-xs font-semibold text-gray-500 dark:border-dark-700 dark:bg-dark-900/70 dark:text-gray-400">
-                    No compatible model selected yet.
-                  </div>
-                )}
+                  <select
+                    value=""
+                    onChange={(event) => {
+                      if (!event.target.value) return;
+                      toggleCompatibleModel(event.target.value);
+                    }}
+                    className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-4 focus:ring-primary-500/10 dark:border-dark-700 dark:bg-dark-900 dark:text-white"
+                  >
+                    <option value="">
+                      {motorcycleModels.length > 0
+                        ? '— Select compatible motorcycle model —'
+                        : 'No motorcycle models found'}
+                    </option>
+                    {motorcycleModels.map((model) => {
+                      const selected = selectedCompatibleModels.some(
+                        (item) => item.toLowerCase() === model.label.toLowerCase()
+                      );
+
+                      return (
+                        <option key={model.id || model.label} value={model.label}>
+                          {selected ? '✓ ' : ''}{model.label}
+                        </option>
+                      );
+                    })}
+                  </select>
+
+                  <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                    Choose from predefined motorcycle models. Click a selected model below to remove it.
+                  </p>
+
+                  {selectedCompatibleModels.length > 0 ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {selectedCompatibleModels.map((model) => (
+                        <button
+                          key={model}
+                          type="button"
+                          onClick={() => toggleCompatibleModel(model)}
+                          className="rounded-full bg-primary-100 px-3 py-1.5 text-xs font-black text-primary-700 ring-1 ring-primary-200 transition hover:bg-primary-200 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/25"
+                        >
+                          {model} ✕
+                        </button>
+                      ))}
+
+                      <button
+                        type="button"
+                        onClick={clearCompatibleModels}
+                        className="rounded-full bg-red-50 px-3 py-1.5 text-xs font-black text-red-700 ring-1 ring-red-200 transition hover:bg-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/25"
+                      >
+                        Clear all
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 text-center text-xs font-semibold text-gray-500 dark:border-dark-700 dark:bg-dark-900/70 dark:text-gray-400">
+                      No compatible model selected yet.
+                    </div>
+                  )}
+                </div>
+
               </div>
 
-              <footer className="sticky -bottom-6 -mx-6 mt-6 flex flex-col-reverse gap-3 border-t border-gray-200 bg-white px-6 py-5 dark:border-dark-700 dark:bg-dark-800 sm:-mx-8 sm:flex-row sm:justify-end sm:px-8">
+              <footer className="admin-dialog-footer border-t border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
                 <button
                   type="button"
                   onClick={closePanel}

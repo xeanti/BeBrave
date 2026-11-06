@@ -4,10 +4,13 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { Alert } from 'react-native';
 import { supabase } from './supabase';
+import { useAuth } from './AuthContext';
+import { getMobileHomeRoute } from './authSession';
 
 const CartContext = createContext(null);
 
@@ -42,10 +45,17 @@ function normalizeCartRow(row, part) {
 
 export function CartProvider({ children }) {
   const [cart, setCart] = useState([]);
-  const [userId, setUserId] = useState(null);
+  const { session, role } = useAuth();
+  const userId = getMobileHomeRoute(role) ? session?.user?.id || null : null;
+  const currentUserRef = useRef(userId);
+  currentUserRef.current = userId;
+  const requestRef = useRef(0);
   const [loadingCart, setLoadingCart] = useState(true);
 
   const fetchCart = useCallback(async (uid) => {
+    if (uid !== currentUserRef.current) return [];
+    const request = ++requestRef.current;
+    const isCurrent = () => currentUserRef.current === uid && requestRef.current === request;
     if (!uid) {
       setCart([]);
       setLoadingCart(false);
@@ -66,7 +76,7 @@ export function CartProvider({ children }) {
       const rows = cartRows || [];
 
       if (rows.length === 0) {
-        setCart([]);
+        if (isCurrent()) setCart([]);
         return [];
       }
 
@@ -97,7 +107,7 @@ export function CartProvider({ children }) {
         normalized.push(normalizeCartRow(row, part));
       }
 
-      if (invalidPartIds.length > 0) {
+      if (invalidPartIds.length > 0 && isCurrent()) {
         await supabase
           .from('cart_items')
           .delete()
@@ -105,53 +115,24 @@ export function CartProvider({ children }) {
           .in('part_id', invalidPartIds);
       }
 
-      setCart(normalized);
+      if (isCurrent()) setCart(normalized);
       return normalized;
     } catch (error) {
       console.log('Fetch cart error:', error?.message || error);
-      setCart([]);
+      // Keep the last loaded cart during a temporary connection failure.
       return [];
     } finally {
-      setLoadingCart(false);
+      if (isCurrent()) setLoadingCart(false);
     }
   }, []);
 
-  const refreshCart = useCallback(async () => {
-    const { data } = await supabase.auth.getSession();
-    const uid = data?.session?.user?.id || null;
-
-    setUserId(uid);
-    return fetchCart(uid);
-  }, [fetchCart]);
+  const refreshCart = useCallback(() => fetchCart(userId), [userId, fetchCart]);
 
   useEffect(() => {
-    let mounted = true;
-
-    async function initCart() {
-      const { data } = await supabase.auth.getSession();
-      const uid = data?.session?.user?.id || null;
-
-      if (!mounted) return;
-
-      setUserId(uid);
-      await fetchCart(uid);
-    }
-
-    initCart();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        const uid = session?.user?.id || null;
-        setUserId(uid);
-        await fetchCart(uid);
-      }
-    );
-
-    return () => {
-      mounted = false;
-      authListener?.subscription?.unsubscribe?.();
-    };
-  }, [fetchCart]);
+    setCart([]);
+    fetchCart(userId);
+    return () => { requestRef.current += 1; };
+  }, [userId, fetchCart]);
 
   useEffect(() => {
     if (!userId) return undefined;
@@ -185,18 +166,7 @@ export function CartProvider({ children }) {
   }, [userId, fetchCart]);
 
   async function getCurrentUserId() {
-    if (userId) return userId;
-
-    const { data, error } = await supabase.auth.getSession();
-
-    if (error) {
-      console.log('Get session error:', error.message);
-      return null;
-    }
-
-    const uid = data?.session?.user?.id || null;
-    setUserId(uid);
-    return uid;
+    return currentUserRef.current;
   }
 
   async function addToCart(part, quantity = 1) {

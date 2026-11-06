@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Platform } from 'react-native';
+import { ActivityIndicator, Alert, Platform, Text, TouchableOpacity, View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -10,6 +10,8 @@ import { ThemeProvider, useTheme } from './lib/ThemeContext';
 import { CartProvider, useCart } from './lib/CartContext';
 import RoleGuard from './lib/RoleGuard';
 import { supabase } from './lib/supabase';
+import { AuthProvider, useAuth } from './lib/AuthContext';
+import { getMobileHomeRoute } from './lib/authSession';
 import {
   registerForPushNotifications,
   addNotificationListeners,
@@ -361,45 +363,41 @@ function MechanicMainGuarded({ navigation }) {
 // PUSH NOTIFICATION SETUP
 // ════════════════════════════════════════════════════════════════════════════
 function PushNotificationSetup() {
+  const { session, role } = useAuth();
+  const userId = session?.user?.id;
+
+  useEffect(() => addNotificationListeners(), []);
+
   useEffect(() => {
-    let removeListeners = null;
-
-    async function setupPushNotifications() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (user?.id) {
-        await registerForPushNotifications(user.id);
-      }
-
-      removeListeners = addNotificationListeners({
-        onReceive: (notification) => {
-          console.log('Notification received:', notification);
-        },
-        onResponse: (response) => {
-          console.log('Notification opened:', response);
-        },
-      });
-    }
-
-    setupPushNotifications();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user?.id) {
-        await registerForPushNotifications(session.user.id);
-      }
-    });
-
-    return () => {
-      if (removeListeners) removeListeners();
-      subscription?.unsubscribe();
-    };
-  }, []);
+    if (!userId || !getMobileHomeRoute(role)) return;
+    // Run outside the auth callback and only when the account changes.
+    registerForPushNotifications(userId);
+  }, [userId, role]);
 
   return null;
+}
+
+function AccountStatus({ loading, title, message, onRetry, canLogout }) {
+  const { theme } = useTheme();
+
+  async function logout() {
+    try {
+      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      if (error) throw error;
+    } catch (error) {
+      Alert.alert('Logout Failed', error.message || 'Please try again.');
+    }
+  }
+
+  return (
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 28, backgroundColor: theme.bg }}>
+      {loading && <ActivityIndicator size="large" color={YELLOW} />}
+      <Text style={{ fontSize: 20, fontWeight: 'bold', color: theme.text, marginTop: 16 }}>{title}</Text>
+      {!!message && <Text style={{ color: theme.textMuted, marginTop: 12, textAlign: 'center' }}>{message}</Text>}
+      {!!onRetry && <TouchableOpacity onPress={onRetry} style={{ padding: 16 }}><Text style={{ color: YELLOW }}>Retry</Text></TouchableOpacity>}
+      {canLogout && <TouchableOpacity onPress={logout} style={{ padding: 16 }}><Text style={{ color: theme.text }}>Log out</Text></TouchableOpacity>}
+    </View>
+  );
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -408,13 +406,28 @@ function PushNotificationSetup() {
 export function RootNav() {
   const { theme } = useTheme();
 
+  const { session, role, loading, error, retry } = useAuth();
   const sharedHeader = getHeaderOptions(theme);
+  const homeRoute = getMobileHomeRoute(role);
+
+  if (loading) return <AccountStatus loading title="Restoring your account…" />;
+  if (error) return <AccountStatus title="Unable to load your account" message={error} onRetry={retry} canLogout={!!session} />;
+
+  if (!session) {
+    return (
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Login" component={LoginScreen} />
+        <Stack.Screen name="Register" component={RegisterScreen} />
+      </Stack.Navigator>
+    );
+  }
+
+  if (!homeRoute) {
+    return <AccountStatus title="Access Restricted" message="This account cannot use the mobile app. Admin, Super Admin, and Staff accounts must use the web portal." canLogout />;
+  }
 
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName="Login">
-      <Stack.Screen name="Login" component={LoginScreen} />
-
-      <Stack.Screen name="Register" component={RegisterScreen} />
+    <Stack.Navigator key={`${session.user.id}:${homeRoute}`} screenOptions={{ headerShown: false }} initialRouteName={homeRoute}>
 
       <Stack.Screen name="Main" component={CustomerMainGuarded} />
 
@@ -499,14 +512,16 @@ export function RootNav() {
 export default function App() {
   return (
     <ThemeProvider>
-      <CartProvider>
-        <SafeAreaProvider>
-          <NavigationContainer>
-            <PushNotificationSetup />
-            <RootNav />
-          </NavigationContainer>
-        </SafeAreaProvider>
-      </CartProvider>
+      <AuthProvider>
+        <CartProvider>
+          <SafeAreaProvider>
+            <NavigationContainer>
+              <PushNotificationSetup />
+              <RootNav />
+            </NavigationContainer>
+          </SafeAreaProvider>
+        </CartProvider>
+      </AuthProvider>
     </ThemeProvider>
   );
 }
